@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Save, Trash2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Save } from "lucide-react";
 import {
   officeProfileSchema,
   type OfficeProfile,
@@ -31,7 +31,6 @@ type Draft = {
   timezone: OfficeProfile["timezone"];
   mapUrl: string;
   days: DraftDay[];
-  employees: OfficeProfile["employees"];
 };
 
 const timePattern = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
@@ -108,11 +107,14 @@ function draftFrom(profile: VersionedOfficeProfile): Draft {
     timezone: profile.timezone,
     mapUrl: profile.mapUrl ?? "",
     days,
-    employees: profile.employees.map(employee => ({ ...employee })),
   };
 }
 
-function toProfile(draft: Draft, officeId: OfficeId): OfficeProfile {
+function toProfile(
+  draft: Draft,
+  officeId: OfficeId,
+  employees: OfficeProfile["employees"]
+): OfficeProfile {
   return {
     officeId,
     address: draft.address.trim(),
@@ -134,11 +136,7 @@ function toProfile(draft: Draft, officeId: OfficeId): OfficeProfile {
         },
       ];
     }),
-    employees: draft.employees.map(employee => ({
-      id: employee.id,
-      name: employee.name.trim(),
-      phone: employee.phone.trim(),
-    })),
+    employees,
   };
 }
 
@@ -199,62 +197,12 @@ export default function OfficeProfileEditor({
     setNotice("");
   };
 
-  const summary = useMemo(
-    () =>
-      draft.employees
-        .map(employee => `${employee.name.trim()} — ${employee.phone.trim()}`)
-        .filter(Boolean)
-        .join("\n"),
-    [draft.employees]
-  );
-
   const updateDay = (index: number, patch: Partial<DraftDay>) => {
     setChanged({
       ...draft,
       days: draft.days.map((day, dayIndex) =>
         dayIndex === index ? { ...day, ...patch } : day
       ),
-    });
-  };
-
-  const addContact = () => {
-    const name = window.prompt(c.employeeName) ?? "";
-    const phone = window.prompt(c.employeePhone) ?? "";
-    if (!name.trim() || !phone.trim()) {
-      setError(c.contactRequired);
-      return;
-    }
-    if (!validPhone(phone.trim())) {
-      setError(c.phoneInvalid);
-      return;
-    }
-    if (
-      !window.confirm(
-        `${c.contactPayload}\n${name.trim()} — ${phone.trim()}\n\n${c.confirm}?`
-      )
-    )
-      return;
-    setChanged({
-      ...draft,
-      employees: [
-        ...draft.employees,
-        { id: crypto.randomUUID(), name: name.trim(), phone: phone.trim() },
-      ],
-    });
-  };
-
-  const deleteContact = (id: string) => {
-    const contact = draft.employees.find(employee => employee.id === id);
-    if (!contact) return;
-    if (
-      !window.confirm(
-        `${c.deleteContact}\n${c.contactPayload}\n${contact.name} — ${contact.phone}\n\n${c.confirm}?`
-      )
-    )
-      return;
-    setChanged({
-      ...draft,
-      employees: draft.employees.filter(employee => employee.id !== id),
     });
   };
 
@@ -280,10 +228,6 @@ export default function OfficeProfileEditor({
       )
         return c.hoursInvalid;
     }
-    for (const employee of draft.employees) {
-      if (!employee.name.trim() || !validPhone(employee.phone.trim()))
-        return c.phoneInvalid;
-    }
     return "";
   };
 
@@ -298,14 +242,13 @@ export default function OfficeProfileEditor({
       setError(validation);
       return;
     }
-    const next = toProfile(draft, profile.officeId);
+    const next = toProfile(draft, profile.officeId, profile.employees);
     const parsed = officeProfileSchema.safeParse(next);
     if (!parsed.success) {
       setError(c.hoursInvalid);
       return;
     }
-    if (!window.confirm(`${c.saveConfirm}\n\n${summary || c.noSchedule}`))
-      return;
+    if (!window.confirm(`${c.saveConfirm}\n\n${c.noSchedule}`)) return;
     const result = await onSave(parsed.data, baseVersion);
     if (result && officeRef.current !== result.officeId) {
       officeDrafts.current.set(result.officeId, {
@@ -514,81 +457,6 @@ export default function OfficeProfileEditor({
               )}
             </div>
           ))}
-        </div>
-      </div>
-
-      <div className="mt-6 rounded-2xl border border-[#edf1f1] bg-[#fbfcfb] p-4">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h3 className="font-black text-[#092d50]">{c.employees}</h3>
-            <p className="mt-1 text-xs text-[#718088]">
-              {c.publicContactsNotice}
-            </p>
-          </div>
-          <button
-            type="button"
-            className={packingSecondaryClass}
-            disabled={!canEdit || pending}
-            onClick={addContact}
-          >
-            {c.addContact}
-          </button>
-        </div>
-        <div className="mt-4 grid gap-3">
-          {draft.employees.map(employee => (
-            <div
-              key={employee.id}
-              className="grid gap-3 rounded-xl border border-[#e5ecee] bg-white p-3 md:grid-cols-[1fr_1fr_auto] md:items-end"
-            >
-              <PackingField label={c.employeeName}>
-                <input
-                  className={packingInputClass}
-                  value={employee.name}
-                  disabled={!canEdit || pending}
-                  onChange={event =>
-                    setChanged({
-                      ...draft,
-                      employees: draft.employees.map(item =>
-                        item.id === employee.id
-                          ? { ...item, name: event.target.value }
-                          : item
-                      ),
-                    })
-                  }
-                />
-              </PackingField>
-              <PackingField label={c.employeePhone}>
-                <input
-                  dir="ltr"
-                  className={packingInputClass}
-                  value={employee.phone}
-                  disabled={!canEdit || pending}
-                  onChange={event =>
-                    setChanged({
-                      ...draft,
-                      employees: draft.employees.map(item =>
-                        item.id === employee.id
-                          ? { ...item, phone: event.target.value }
-                          : item
-                      ),
-                    })
-                  }
-                />
-              </PackingField>
-              <button
-                type="button"
-                className="inline-flex min-h-11 items-center justify-center rounded-xl p-2 text-red-700 hover:bg-red-50"
-                aria-label={c.deleteContact}
-                disabled={!canEdit || pending}
-                onClick={() => deleteContact(employee.id)}
-              >
-                <Trash2 size={17} />
-              </button>
-            </div>
-          ))}
-          {draft.employees.length === 0 && (
-            <p className="text-sm text-[#718088]">{c.noSchedule}</p>
-          )}
         </div>
       </div>
 
