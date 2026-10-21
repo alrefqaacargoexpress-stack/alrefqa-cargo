@@ -1,0 +1,16 @@
+{
+  "name": "نسخة الرفكة للشحن",
+  "short_name": "الرفكة",
+  "description": "مركز عمليات الرفكة للشحن والعمل دون اتصال",
+  "lang": "ar",
+  "dir": "rtl",
+  "theme_color": "#092d50",
+  "background_color": "#f7f8f5",
+  "display": "standalone",
+  "start_url": "/",
+  "scope": "/",
+  "icons": [
+    { "src": "https://www.alrefqaacargo.space/manus-storage/alrafkah-logo-final_cabb0750.webp", "sizes": "192x192", "type": "image/webp", "purpose": "any maskable" },
+    { "src": "https://www.alrefqaacargo.space/manus-storage/alrafkah-logo-final_cabb0750.webp", "sizes": "512x512", "type": "image/webp", "purpose": "any maskable" }
+  ]
+}
