@@ -20,7 +20,10 @@ async function startServer() {
   });
   app.get("/api/health", (_req, res) => res.json({ status: "ok" }));
   app.get("/api/platform/config.js", (_req, res) => {
-    res.set("Cache-Control", "no-store").type("application/javascript").send(publicPlatformScript());
+    res
+      .set("Cache-Control", "no-store")
+      .type("application/javascript")
+      .send(publicPlatformScript());
   });
   registerOAuthRoutes(app);
   // tRPC API
@@ -29,6 +32,20 @@ async function startServer() {
     createExpressMiddleware({
       router: appRouter,
       createContext,
+      onError({ path, error }) {
+        if (path !== "branches.update" && path !== "office.update") return;
+        const cause = error.cause as { code?: unknown } | undefined;
+        const databaseCode =
+          typeof cause?.code === "string" &&
+          /^[A-Z0-9_]{1,64}$/.test(cause.code)
+            ? cause.code
+            : undefined;
+        console.warn("[Settings save]", {
+          path,
+          code: error.code,
+          databaseCode,
+        });
+      },
     })
   );
   // Never let Vite/static SPA fallback turn an unknown API into HTML.
@@ -41,9 +58,18 @@ async function startServer() {
   }
 
   const port = Number(process.env.PORT || "3000");
-  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("Invalid PORT");
-  server.on("error", error => { console.error("Server failed:", error.message); process.exit(1); });
-  server.listen(port, "0.0.0.0", () => console.log(`Server listening on port ${port}`));
+  if (!Number.isInteger(port) || port < 1 || port > 65535)
+    throw new Error("Invalid PORT");
+  server.on("error", error => {
+    console.error("Server failed:", error.message);
+    process.exit(1);
+  });
+  server.listen(port, "0.0.0.0", () =>
+    console.log(`Server listening on port ${port}`)
+  );
 }
 
-startServer().catch(error => { console.error(error); process.exit(1); });
+startServer().catch(error => {
+  console.error(error);
+  process.exit(1);
+});

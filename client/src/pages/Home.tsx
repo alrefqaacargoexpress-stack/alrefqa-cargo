@@ -1,3 +1,4 @@
+import PublicWalletMethods from "@/components/offices/PublicWalletMethods";
 import { useEffect, useState } from "react";
 import { Link } from "wouter";
 import {
@@ -7,7 +8,6 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
-  Clipboard,
   Globe2,
   Mail,
   Menu,
@@ -41,12 +41,6 @@ type BeforeInstallPromptEvent = Event & {
 };
 
 const serviceIcons = [Truck, Zap, Ship, Truck] as const;
-const walletNumbers = [
-  { id: "bankily", value: "20066062" },
-  { id: "masrivi", value: "20066062" },
-  { id: "gazapay", value: "20066062" },
-  { id: "sedad", value: "22106435" },
-] as const;
 
 function whatsappHref(message: string, number = mainWhatsapp) {
   return `https://wa.me/${number.replace(/\D/g, "")}?text=${encodeURIComponent(message)}`;
@@ -74,8 +68,6 @@ export default function Home() {
   const [tracking, setTracking] = useState("");
   const [trackingError, setTrackingError] = useState(false);
   const [trackingOpened, setTrackingOpened] = useState(false);
-  const [copied, setCopied] = useState<string | null>(null);
-  const [copyError, setCopyError] = useState<string | null>(null);
   const [installPrompt, setInstallPrompt] =
     useState<BeforeInstallPromptEvent | null>(null);
   const [installed, setInstalled] = useState(isStandalone);
@@ -90,18 +82,7 @@ export default function Home() {
       setCachedProfiles(readCachedPublicProfiles());
     }
   }, [publicOffices.data]);
-  const officeProfiles = publicOffices.data?.some(profile =>
-    Boolean(
-      profile.address ||
-        profile.phone ||
-        profile.mapUrl ||
-        profile.gps ||
-        profile.hours.length ||
-        profile.employees.length
-    )
-  )
-    ? publicOffices.data
-    : cachedProfiles;
+  const officeProfiles = publicOffices.data ?? cachedProfiles;
   const nouakchottProfile = officeProfiles.find(
     profile => profile.officeId === "nouakchott"
   );
@@ -141,49 +122,6 @@ export default function Home() {
       setInstallMessage(copy.install.installed);
     } else {
       setInstallMessage(copy.install.dismissed);
-    }
-  };
-
-  const fallbackCopy = (value: string, key: string) => {
-    const textarea = document.createElement("textarea");
-    textarea.value = value;
-    textarea.setAttribute("readonly", "");
-    textarea.style.position = "fixed";
-    textarea.style.opacity = "0";
-    document.body.appendChild(textarea);
-    textarea.select();
-    let copiedByFallback = false;
-    try {
-      copiedByFallback = document.execCommand("copy");
-    } catch {
-      copiedByFallback = false;
-    }
-    textarea.remove();
-    if (copiedByFallback) {
-      setCopied(key);
-      window.setTimeout(() => setCopied(null), 1800);
-      return true;
-    }
-    return false;
-  };
-
-  const copyWallet = async (value: string, key: string) => {
-    setCopyError(null);
-    let success = false;
-    try {
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(value);
-        success = true;
-      }
-    } catch {
-      success = false;
-    }
-    if (!success) success = fallbackCopy(value, key);
-    if (success) {
-      setCopied(key);
-      window.setTimeout(() => setCopied(null), 1800);
-    } else {
-      setCopyError(key);
     }
   };
 
@@ -634,10 +572,11 @@ export default function Home() {
             loading={publicOffices.isLoading}
             error={Boolean(publicOffices.error)}
           />
+          <PublicWalletMethods />
         </section>
 
         <section id="contact" className="mx-auto max-w-7xl px-5 pb-20 lg:px-8">
-          <div className="grid gap-8 lg:grid-cols-[.7fr_1.3fr]">
+          <div className="grid gap-8">
             <div>
               <div className="mb-3 text-xs font-bold tracking-[0.18em] text-[#b17b1f]">
                 {copy.contact.eyebrow}
@@ -680,64 +619,6 @@ export default function Home() {
                     {copy.contact.emailValue}
                   </a>
                 </div>
-              </div>
-            </div>
-            <div className="rounded-3xl border border-[#e1e7e8] bg-white p-5 sm:p-6">
-              <div className="mb-3 text-sm font-bold text-[#092d50]">
-                {copy.wallet.title}
-              </div>
-              <div className="text-xs leading-6 text-[#7b898e]">
-                {copy.wallet.description}
-              </div>
-              <div className="mt-5 grid gap-3 sm:grid-cols-2">
-                {walletNumbers.map(wallet => {
-                  const label = copy.wallet.names[wallet.id];
-                  const hasError = copyError === wallet.id;
-                  return (
-                    <div
-                      key={wallet.id}
-                      className="rounded-2xl bg-[#f7f8f5] p-4"
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <div>
-                          <div className="font-bold text-[#092d50]">
-                            {label}
-                          </div>
-                          <input
-                            readOnly
-                            value={wallet.value}
-                            aria-label={`${label} number`}
-                            className="mt-1 w-28 bg-transparent text-xs text-[#77868b] outline-none"
-                            dir="ltr"
-                          />
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => copyWallet(wallet.value, wallet.id)}
-                          className="inline-flex shrink-0 items-center gap-2 rounded-xl bg-white px-3 py-2 text-xs font-bold text-[#2e6280] shadow-sm"
-                          aria-label={`${copy.wallet.copy} ${label}`}
-                        >
-                          {copied === wallet.id ? (
-                            <Check size={15} className="text-[#2b7b63]" />
-                          ) : (
-                            <Clipboard size={15} />
-                          )}
-                          {copied === wallet.id
-                            ? copy.wallet.copied
-                            : copy.wallet.copy}
-                        </button>
-                      </div>
-                      {hasError && (
-                        <p
-                          role="alert"
-                          className="mt-2 text-xs font-semibold leading-5 text-[#a34747]"
-                        >
-                          {copy.wallet.copyFailed}
-                        </p>
-                      )}
-                    </div>
-                  );
-                })}
               </div>
             </div>
           </div>

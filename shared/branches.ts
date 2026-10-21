@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { publicShippingRatesSchema } from "./publicShipping";
 import type {
   Account,
   AppRole,
@@ -95,6 +96,8 @@ export const officeProfileSchema = z
       .nullable(),
     hours: z.array(workDaySchema).max(7),
     employees: z.array(publicEmployeeSchema).max(100),
+    seaAddress: z.string().trim().max(2000).optional(),
+    shippingRates: publicShippingRatesSchema.optional(),
   })
   .strict()
   .superRefine((v, c) => {
@@ -113,6 +116,7 @@ export type OfficeProfile = z.infer<typeof officeProfileSchema>;
 export type VersionedOfficeProfile = OfficeProfile & { version: number };
 export const officeProfileUpdateSchema = officeProfileSchema.safeExtend({
   expectedVersion: z.number().int().nonnegative(),
+  baseProfile: officeProfileSchema.optional(),
 });
 export const assignedRoles = [
   "staff",

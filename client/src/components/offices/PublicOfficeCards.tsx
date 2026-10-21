@@ -21,6 +21,8 @@ import {
   safeTelHref,
   weekdayLabel,
 } from "@/lib/branchDashboardCopy";
+import { publicShippingCopyFor } from "@/lib/publicShippingCopy";
+import { shippingRateKeys } from "@shared/publicShipping";
 
 type LegacyOffice = (typeof officeConfig)[number];
 
@@ -36,15 +38,20 @@ export default function PublicOfficeCards({
   const { language } = useLanguage();
   const copy = publicCopy[language];
   const c = branchDashboardCopy(language);
+  const shippingCopy = publicShippingCopyFor(language);
   const confirmed = profiles ?? [];
   const byOffice = profileMap(confirmed);
   const hasConfirmedProfile = confirmed.some(profile =>
     Boolean(
       profile.address ||
         profile.phone ||
-        profile.mapUrl || profile.gps ||
+        profile.mapUrl ||
+        profile.gps ||
         profile.hours.length ||
-        profile.employees.length
+        profile.employees.length ||
+        profile.seaAddress?.trim() ||
+        (profile.shippingRates &&
+          shippingRateKeys.some(key => profile.shippingRates?.[key] !== null))
     )
   );
 
@@ -74,6 +81,7 @@ export default function PublicOfficeCards({
             profile={byOffice.get(office.id)}
             copy={copy}
             c={c}
+            shippingCopy={shippingCopy}
             language={language}
           />
         ))}
@@ -88,12 +96,14 @@ function PublicOfficeCard({
   profile,
   copy,
   c,
+  shippingCopy,
   language,
 }: {
   office: LegacyOffice;
   profile?: VersionedOfficeProfile;
   copy: PublicCopy;
   c: ReturnType<typeof branchDashboardCopy>;
+  shippingCopy: ReturnType<typeof publicShippingCopyFor>;
   language: Language;
 }) {
   const address = profile?.address?.trim() || "";
@@ -109,6 +119,11 @@ function PublicOfficeCard({
   const whatsappNumber = (legacyWhatsapp || legacyPhone || "").replace(
     /\D/g,
     ""
+  );
+  const seaAddress = profile?.seaAddress?.trim() || "";
+  const savedRates = profile?.shippingRates;
+  const hasSavedRates = Boolean(
+    savedRates && shippingRateKeys.some(key => savedRates[key] !== null)
   );
 
   return (
@@ -242,6 +257,45 @@ function PublicOfficeCard({
               );
             })}
           </div>
+        </div>
+      )}
+      {(seaAddress || hasSavedRates) && (
+        <div className="mt-4 border-t border-[#edf0f0] pt-4">
+          <div className="mb-2 text-xs font-bold text-[#092d50]">
+            {shippingCopy.savedRates}
+          </div>
+          {seaAddress && (
+            <div className="mb-3 text-sm text-[#63737a]">
+              <span className="font-semibold">
+                {shippingCopy.savedSeaAddress}:{" "}
+              </span>
+              {seaAddress}
+            </div>
+          )}
+          {hasSavedRates && (
+            <div className="space-y-1.5">
+              {shippingRateKeys.map(key => {
+                const rate = savedRates?.[key];
+                if (!rate) return null;
+                return (
+                  <div
+                    key={key}
+                    className="flex items-center justify-between gap-3 text-xs text-[#63737a]"
+                  >
+                    <span>{shippingCopy.serviceLabels[key]}</span>
+                    <span dir="ltr" className="font-semibold text-[#2e6280]">
+                      {rate.amount.toLocaleString(language)}{" "}
+                      {shippingCopy.currencies[rate.currency]} ·{" "}
+                      {shippingCopy.units[rate.unit]}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          <p className="mt-3 text-[11px] leading-5 text-[#6a542c]">
+            {shippingCopy.invoiceNotice}
+          </p>
         </div>
       )}
     </article>

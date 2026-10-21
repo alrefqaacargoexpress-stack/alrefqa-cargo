@@ -59,7 +59,9 @@ import {
 import {
   canonicalInvoicePayment,
   officeUpdateSchema,
+  publicOfficeSettings,
   readOfficeSettings,
+  sameOfficeMethods,
   settingsWithVersion,
 } from "./office";
 import { emptyState } from "./operations";
@@ -1247,6 +1249,10 @@ export const appRouter = router({
   }),
 
   office: router({
+    public: publicProcedure.query(async () => {
+      const db = await dbOrThrow();
+      return publicOfficeSettings(await readOfficeSettings(db));
+    }),
     get: protectedProcedure.query(async ({ ctx }) => {
       const role = await effectiveRole(ctx.user);
       if (!role || role === "viewer" || role === "tracking_staff")
@@ -1275,11 +1281,22 @@ export const appRouter = router({
             .limit(1)
             .for("update");
           const current = rows[0];
-          if (current && current.version !== input.expectedVersion)
+          if (current && current.version !== input.expectedVersion) {
+            const currentSettings = settingsWithVersion(current);
+            if (
+              currentSettings.office === input.office &&
+              sameOfficeMethods(currentSettings.methods, input.methods)
+            )
+              return {
+                office: currentSettings.office,
+                methods: currentSettings.methods,
+                version: currentSettings.version,
+              };
             throw new TRPCError({
               code: "CONFLICT",
               message: "office_settings_version_conflict",
             });
+          }
           if (!current && input.expectedVersion !== 0)
             throw new TRPCError({
               code: "CONFLICT",

@@ -1,4 +1,9 @@
 import { createHash } from "node:crypto";
+import {
+  mergeOfficeProfile,
+  sameOfficeProfile,
+  OfficeProfileMergeConflict,
+} from "@shared/officeProfileMerge";
 import { journeySchema } from "@shared/tracking";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
@@ -44,6 +49,7 @@ export type OfficeScope = {
 };
 export const officeProfileUpdateSchema = officeProfileSchema.safeExtend({
   expectedVersion: z.number().int().nonnegative(),
+  baseProfile: officeProfileSchema.optional(),
 });
 export const assignRecordSchema = z
   .object({
@@ -310,11 +316,47 @@ export async function updateProfile(
       .for("update");
     const current = rows[0];
     const expected = current?.version ?? 0;
-    if (expected !== input.expectedVersion)
+    const {
+      expectedVersion: _expectedVersion,
+      baseProfile,
+      ...profilePayload
+    } = input;
+    const requested = officeProfileSchema.parse(profilePayload);
+    const { version: _defaultVersion, ...emptyProfile } = defaultOfficeProfile(
+      input.officeId
+    );
+    const saved = current
+      ? officeProfileSchema.parse(current.profile)
+      : emptyProfile;
+    if (
+      expected !== input.expectedVersion &&
+      !baseProfile &&
+      !sameOfficeProfile(saved, requested)
+    )
       throw branchConflict("office_profile_version_conflict");
+    let profile: OfficeProfile;
+    try {
+      profile = baseProfile
+        ? mergeOfficeProfile(saved, requested, baseProfile)
+        : officeProfileSchema.parse({ ...saved, ...requested });
+    } catch (error) {
+      if (error instanceof OfficeProfileMergeConflict)
+        throw branchConflict(
+          `office_profile_version_conflict:${error.fields.join(",")}`
+        );
+      if (
+        error instanceof Error &&
+        error.message === "office_profile_base_mismatch"
+      )
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "office_profile_base_mismatch",
+        });
+      throw error;
+    }
+    if (current && sameOfficeProfile(saved, profile))
+      return { ...saved, version: expected };
     const nextVersion = expected + 1;
-    const { expectedVersion: _expectedVersion, ...profilePayload } = input;
-    const profile = officeProfileSchema.parse(profilePayload);
     const values = {
       officeId: input.officeId,
       version: nextVersion,

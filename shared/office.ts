@@ -4,8 +4,31 @@ export const paymentMethodSchema = z
     id: z.string().regex(/^[a-z0-9_-]{1,64}$/),
     label: z.string().trim().min(1).max(120),
     enabled: z.boolean(),
+    accountNumber: z
+      .string()
+      .trim()
+      .max(64)
+      .regex(/^\+?[0-9][0-9 -]*$/, "invalid_account_number")
+      .optional(),
+    accountName: z.string().trim().max(160).optional(),
+    instructions: z.string().trim().max(500).optional(),
+    showToCustomers: z.boolean().optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((method, ctx) => {
+    if (
+      method.id !== "cash" &&
+      method.enabled &&
+      method.showToCustomers === true &&
+      !method.accountNumber
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["accountNumber"],
+        message: "public_wallet_requires_account_number",
+      });
+    }
+  });
 export type PaymentMethod = z.infer<typeof paymentMethodSchema>;
 export const officeSettingsSchema = z
   .object({
@@ -21,11 +44,11 @@ export type OfficeSettings = z.infer<typeof officeSettingsSchema> & {
   version: number;
 };
 export const defaultPaymentMethods: PaymentMethod[] = [
-  { id: "bankily", label: "Bankily", enabled: true },
-  { id: "masrvi", label: "Masrvi", enabled: true },
-  { id: "gazapay", label: "Gazapay", enabled: true },
-  { id: "sedad", label: "Sedad", enabled: true },
-  { id: "cash", label: "نقدي", enabled: true },
+  { id: "bankily", label: "Bankily", enabled: true, showToCustomers: false },
+  { id: "masrvi", label: "Masrvi", enabled: true, showToCustomers: false },
+  { id: "gazapay", label: "Gazapay", enabled: true, showToCustomers: false },
+  { id: "sedad", label: "Sedad", enabled: true, showToCustomers: false },
+  { id: "cash", label: "نقدي", enabled: true, showToCustomers: false },
 ];
 export const invoicePaymentSchema = z
   .object({

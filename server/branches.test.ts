@@ -225,12 +225,12 @@ describe("Office backend protection and warehouse arrival", () => {
   });
   it("rejects stale office settings rather than replacing a newer profile", async () => {
     const f = fixture();
+    const { version, ...profile } = defaultOfficeProfile("china");
     f.profiles.push({
-      ...defaultOfficeProfile("china"),
-      profile: defaultOfficeProfile("china"),
+      officeId: "china",
+      profile: { ...profile, address: "Saved by another manager" },
       version: 2,
     });
-    const { version, ...profile } = defaultOfficeProfile("china");
     await expect(
       updateProfile(f.db, user, { ...profile, expectedVersion: 1 })
     ).rejects.toMatchObject({ code: "CONFLICT" });

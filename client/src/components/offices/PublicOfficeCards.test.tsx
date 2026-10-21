@@ -64,6 +64,34 @@ describe("Public office rendering", () => {
       renderToStaticMarkup(<PublicOfficeCards profiles={[profile]} />)
     ).toContain("https://maps.google.com/?q=1,2");
   });
+  it("shows saved sea address and rates even when the public office address is empty", () => {
+    const profile = {
+      ...defaultOfficeProfile("turkey"),
+      version: 2,
+      seaAddress: "Istanbul sea warehouse",
+      shippingRates: {
+        airRegular: {
+          amount: 12.5,
+          currency: "USD" as const,
+          unit: "kg" as const,
+        },
+        airExpress: null,
+        sensitive: {
+          amount: 45,
+          currency: "AED" as const,
+          unit: "shipment" as const,
+        },
+        sea: null,
+      },
+    };
+    const html = renderToStaticMarkup(
+      <PublicOfficeCards profiles={[profile]} />
+    );
+    expect(html).toContain("Istanbul sea warehouse");
+    expect(html).toContain("12.5");
+    expect(html).toContain("45");
+    expect(html).toContain("الأسعار العامة المحفوظة");
+  });
   it("keeps localized dictionaries complete with break information and does not allow non-phone links", () => {
     for (const language of ["en", "zh", "tr"] as const) {
       expect(Object.keys(officeDashboardCopy[language]).sort()).toEqual(

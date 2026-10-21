@@ -9,6 +9,15 @@ import {
 import { useLanguage } from "@/contexts/LanguageContext";
 import { branchSettingsCopyFor } from "@/lib/branchSettingsCopy";
 import {
+  publicShippingCopyFor,
+  type PublicShippingCopy,
+} from "@/lib/publicShippingCopy";
+import PublicShippingRatesEditor, {
+  shippingRateDraftsFrom,
+  shippingRatesFromDrafts,
+  type ShippingRateDrafts,
+} from "@/components/offices/PublicShippingRatesEditor";
+import {
   PackingField,
   packingInputClass,
   packingPrimaryClass,
@@ -30,7 +39,16 @@ type Draft = {
   phone: string;
   timezone: OfficeProfile["timezone"];
   mapUrl: string;
+  seaAddress: string;
+  shippingRates: ShippingRateDrafts;
   days: DraftDay[];
+};
+
+type CachedOfficeDraft = {
+  draft: Draft;
+  dirty: boolean;
+  baseVersion: number;
+  baseProfile: OfficeProfile;
 };
 
 const timePattern = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
@@ -71,8 +89,10 @@ export type OfficeProfileEditorProps = {
   pending?: boolean;
   onSave: (
     profile: OfficeProfile,
-    expectedVersion: number
+    expectedVersion: number,
+    baseProfile: OfficeProfile
   ) => Promise<VersionedOfficeProfile | null>;
+  onReload?: () => Promise<VersionedOfficeProfile | null>;
   onDirtyChange?: (dirty: boolean) => void;
 };
 
@@ -88,7 +108,12 @@ function emptyDay(): DraftDay {
   };
 }
 
-function draftFrom(profile: VersionedOfficeProfile): Draft {
+function profileWithoutVersion(profile: VersionedOfficeProfile): OfficeProfile {
+  const { version: _version, ...base } = profile;
+  return base;
+}
+
+function draftFrom(profile: VersionedOfficeProfile | OfficeProfile): Draft {
   const days = Array.from({ length: 7 }, emptyDay);
   for (const day of profile.hours) {
     const item = days[day.day];
@@ -106,22 +131,21 @@ function draftFrom(profile: VersionedOfficeProfile): Draft {
     phone: profile.phone,
     timezone: profile.timezone,
     mapUrl: profile.mapUrl ?? "",
+    seaAddress: profile.seaAddress ?? "",
+    shippingRates: shippingRateDraftsFrom(profile.shippingRates),
     days,
   };
 }
 
-function toProfile(
-  draft: Draft,
-  officeId: OfficeId,
-  employees: OfficeProfile["employees"]
-): OfficeProfile {
+function toProfile(draft: Draft, baseProfile: OfficeProfile): OfficeProfile {
   return {
-    officeId,
+    ...baseProfile,
     address: draft.address.trim(),
     phone: draft.phone.trim(),
     timezone: draft.timezone,
     mapUrl: draft.mapUrl.trim() || null,
-    gps: null,
+    seaAddress: draft.seaAddress.trim(),
+    shippingRates: shippingRatesFromDrafts(draft.shippingRates),
     hours: draft.days.flatMap((day, index) => {
       if (!day.enabled) return [];
       return [
@@ -136,7 +160,6 @@ function toProfile(
         },
       ];
     }),
-    employees,
   };
 }
 
@@ -148,22 +171,55 @@ function validPhone(value: string) {
   return phonePattern.test(value) && (value.match(/[0-9]/g)?.length ?? 0) >= 5;
 }
 
+function errorCode(caught: unknown): string | undefined {
+  if (!caught || typeof caught !== "object") return undefined;
+  const value = caught as {
+    code?: unknown;
+    data?: { code?: unknown };
+    shape?: { data?: { code?: unknown } };
+  };
+  for (const code of [value.data?.code, value.shape?.data?.code, value.code]) {
+    if (typeof code === "string") return code;
+  }
+  return undefined;
+}
+
+function errorCopy(caught: unknown, c: PublicShippingCopy) {
+  switch (errorCode(caught)) {
+    case "CONFLICT":
+      return c.conflictError;
+    case "FORBIDDEN":
+      return c.permissionError;
+    case "BAD_REQUEST":
+      return c.validationError;
+    case "UNAUTHORIZED":
+      return c.authError;
+    default:
+      return c.saveFailed;
+  }
+}
+
 export default function OfficeProfileEditor({
   profile,
   canEdit,
   online,
   pending = false,
   onSave,
+  onReload,
   onDirtyChange,
 }: OfficeProfileEditorProps) {
   const { language } = useLanguage();
   const c = branchSettingsCopyFor(language);
+  const shippingCopy = publicShippingCopyFor(language);
   const [draft, setDraft] = useState(() => draftFrom(profile));
   const [dirty, setDirty] = useState(false);
   const [baseVersion, setBaseVersion] = useState(profile.version);
-  const officeDrafts = useRef(
-    new Map<OfficeId, { draft: Draft; dirty: boolean; version: number }>()
+  const [baseProfile, setBaseProfile] = useState<OfficeProfile>(() =>
+    profileWithoutVersion(profile)
   );
+  const officeDrafts = useRef(new Map<OfficeId, CachedOfficeDraft>());
+  const trustedProfiles = useRef(new Map<OfficeId, VersionedOfficeProfile>());
+  const saveLock = useRef(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const officeRef = useRef(profile.officeId);
@@ -173,18 +229,34 @@ export default function OfficeProfileEditor({
       officeDrafts.current.set(officeRef.current, {
         draft,
         dirty,
-        version: baseVersion,
+        baseVersion,
+        baseProfile,
       });
       officeRef.current = profile.officeId;
       const cached = officeDrafts.current.get(profile.officeId);
-      setDraft(cached?.dirty ? cached.draft : draftFrom(profile));
-      setDirty(cached?.dirty ?? false);
-      setBaseVersion(cached?.dirty ? cached.version : profile.version);
+      if (cached) {
+        setDraft(cached.draft);
+        setDirty(cached.dirty);
+        setBaseVersion(cached.baseVersion);
+        setBaseProfile(cached.baseProfile);
+      } else {
+        setDraft(draftFrom(profile));
+        setDirty(false);
+        setBaseVersion(profile.version);
+        setBaseProfile(profileWithoutVersion(profile));
+      }
       setError("");
       setNotice("");
-    } else if (!dirty && !pending) {
+      return;
+    }
+
+    if (!dirty && !pending) {
+      const trusted = trustedProfiles.current.get(profile.officeId);
+      if (trusted && profile.version < trusted.version) return;
+      if (trusted) trustedProfiles.current.delete(profile.officeId);
       setDraft(draftFrom(profile));
       setBaseVersion(profile.version);
+      setBaseProfile(profileWithoutVersion(profile));
     }
   }, [profile, dirty, pending]);
 
@@ -228,11 +300,27 @@ export default function OfficeProfileEditor({
       )
         return c.hoursInvalid;
     }
+    for (const rate of Object.values(
+      shippingRatesFromDrafts(draft.shippingRates)
+    )) {
+      if (
+        rate &&
+        (!Number.isFinite(rate.amount) ||
+          rate.amount < 0 ||
+          rate.amount > 999999999)
+      )
+        return shippingCopy.validationError;
+      if (
+        rate &&
+        Math.abs(rate.amount * 100 - Math.round(rate.amount * 100)) > 0.00001
+      )
+        return shippingCopy.validationError;
+    }
     return "";
   };
 
   const save = async () => {
-    if (pending || !canEdit) return;
+    if (saveLock.current || pending || !canEdit) return;
     if (!online) {
       setError(c.onlineRequired);
       return;
@@ -242,29 +330,60 @@ export default function OfficeProfileEditor({
       setError(validation);
       return;
     }
-    const next = toProfile(draft, profile.officeId, profile.employees);
+    const next = toProfile(draft, baseProfile);
     const parsed = officeProfileSchema.safeParse(next);
     if (!parsed.success) {
-      setError(c.hoursInvalid);
+      setError(shippingCopy.validationError);
       return;
     }
     if (!window.confirm(`${c.saveConfirm}\n\n${c.noSchedule}`)) return;
-    const result = await onSave(parsed.data, baseVersion);
-    if (result && officeRef.current !== result.officeId) {
-      officeDrafts.current.set(result.officeId, {
-        draft: draftFrom(result),
-        dirty: false,
-        version: result.version,
-      });
-      return;
-    }
-    if (result) {
+    saveLock.current = true;
+    try {
+      const result = await onSave(parsed.data, baseVersion, baseProfile);
+      if (!result) {
+        setError(shippingCopy.saveFailed);
+        return;
+      }
+      trustedProfiles.current.set(result.officeId, result);
+      officeDrafts.current.delete(result.officeId);
       setDraft(draftFrom(result));
       setBaseVersion(result.version);
+      setBaseProfile(profileWithoutVersion(result));
       setDirty(false);
       setNotice(c.saved);
       setError("");
-    } else setError(c.conflictDetail);
+    } catch (caught) {
+      setError(errorCopy(caught, shippingCopy));
+    } finally {
+      saveLock.current = false;
+    }
+  };
+
+  const reload = async () => {
+    if (saveLock.current || pending || !onReload) return;
+    if (dirty && !window.confirm(shippingCopy.reloadLatestConfirm)) return;
+    setNotice("");
+    setError("");
+    saveLock.current = true;
+    try {
+      const result = await onReload();
+      if (!result) {
+        setError(shippingCopy.reloadFailed);
+        return;
+      }
+      trustedProfiles.current.set(result.officeId, result);
+      officeDrafts.current.delete(result.officeId);
+      setDraft(draftFrom(result));
+      setBaseVersion(result.version);
+      setBaseProfile(profileWithoutVersion(result));
+      setDirty(false);
+      setError("");
+      setNotice(shippingCopy.reloadLatestDiscarded);
+    } catch (caught) {
+      setError(errorCopy(caught, shippingCopy));
+    } finally {
+      saveLock.current = false;
+    }
   };
 
   return (
@@ -321,6 +440,37 @@ export default function OfficeProfileEditor({
             ))}
           </select>
         </PackingField>
+      </div>
+
+      <div className="mt-5 rounded-2xl border border-[#dce4e7] bg-[#f7fbfa] p-4">
+        <h3 className="font-black text-[#092d50]">
+          {shippingCopy.sectionTitle}
+        </h3>
+        <p className="mt-1 text-xs text-[#718088]">
+          {shippingCopy.sectionHint}
+        </p>
+        <div className="mt-4">
+          <PackingField label={shippingCopy.seaAddress}>
+            <input
+              className={packingInputClass}
+              value={draft.seaAddress}
+              placeholder={shippingCopy.seaAddressHint}
+              disabled={!canEdit || pending}
+              onChange={event =>
+                setChanged({ ...draft, seaAddress: event.target.value })
+              }
+            />
+          </PackingField>
+        </div>
+        <PublicShippingRatesEditor
+          value={draft.shippingRates}
+          copy={shippingCopy}
+          disabled={!canEdit || pending}
+          onChange={shippingRates => setChanged({ ...draft, shippingRates })}
+        />
+        <p className="mt-3 text-xs font-semibold text-[#6a542c]">
+          {shippingCopy.publicWarning}
+        </p>
       </div>
 
       <div className="mt-6 rounded-2xl border border-[#edf1f1] bg-[#fbfcfb] p-4">
@@ -485,16 +635,29 @@ export default function OfficeProfileEditor({
         <p className="text-xs text-[#718088]">
           {canEdit ? c.adminOnly : c.readOnly}
         </p>
-        {canEdit && (
-          <button
-            className={packingPrimaryClass}
-            disabled={!dirty || pending || !online}
-            onClick={() => void save()}
-          >
-            <Save size={16} className="me-2" />
-            {pending ? c.saving : c.saveProfile}
-          </button>
-        )}
+        <div className="flex flex-wrap gap-2">
+          {onReload && (
+            <button
+              type="button"
+              className={packingSecondaryClass}
+              disabled={saveLock.current || pending}
+              onClick={() => void reload()}
+            >
+              {shippingCopy.reloadLatest}
+            </button>
+          )}
+          {canEdit && (
+            <button
+              type="button"
+              className={packingPrimaryClass}
+              disabled={!dirty || pending || !online || saveLock.current}
+              onClick={() => void save()}
+            >
+              <Save size={16} className="me-2" />
+              {pending ? c.saving : c.saveProfile}
+            </button>
+          )}
+        </div>
       </div>
     </section>
   );
