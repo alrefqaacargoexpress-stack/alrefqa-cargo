@@ -97,6 +97,9 @@ export default function PublicShippingRatesEditor({
       <div className="mt-4 grid gap-3">
         {shippingRateKeys.map(key => {
           const rate = value[key];
+          const fieldLabel = ariaLabelPrefix
+            ? `${ariaLabelPrefix} ${copy.serviceLabels[key]}`
+            : undefined;
           return (
             <div
               key={key}
@@ -112,6 +115,9 @@ export default function PublicShippingRatesEditor({
                     step="0.01"
                     inputMode="decimal"
                     placeholder={copy.amountPlaceholder}
+                    aria-label={
+                      fieldLabel ? `${fieldLabel} ${copy.amount}` : undefined
+                    }
                     value={rate.amount}
                     disabled={disabled}
                     onChange={event =>
@@ -125,9 +131,7 @@ export default function PublicShippingRatesEditor({
                 <PackingField label={copy.currency}>
                   <select
                     aria-label={
-                      ariaLabelPrefix
-                        ? `${ariaLabelPrefix} ${copy.currency}`
-                        : undefined
+                      fieldLabel ? `${fieldLabel} ${copy.currency}` : undefined
                     }
                     className={packingInputClass}
                     value={fixedCurrency ?? rate.currency}
@@ -155,9 +159,7 @@ export default function PublicShippingRatesEditor({
                 <PackingField label={copy.unit}>
                   <select
                     aria-label={
-                      ariaLabelPrefix
-                        ? `${ariaLabelPrefix} ${copy.unit}`
-                        : undefined
+                      fieldLabel ? `${fieldLabel} ${copy.unit}` : undefined
                     }
                     className={packingInputClass}
                     value={rate.unit}

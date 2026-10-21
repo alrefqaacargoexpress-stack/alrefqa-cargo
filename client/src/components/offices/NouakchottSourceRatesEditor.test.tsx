@@ -44,13 +44,21 @@ describe("Nouakchott source rates", () => {
         onChange={() => undefined}
       />
     );
-    expect(html).toContain('aria-label="Shipping rate source"');
+    expect(html.match(/<fieldset/g)).toHaveLength(3);
+    expect(html.match(/<input/g)).toHaveLength(12);
+    expect(html.match(/aria-label="[^"]+ (Rate|Unit)"/g)).toHaveLength(24);
+    expect(html).not.toContain('aria-label="Shipping rate source"');
+    expect(html).not.toContain('<select aria-label="Shipping rate source"');
     expect(html).toContain("Dubai");
     expect(html).toContain("Turkey");
     expect(html).toContain("China");
-    expect(html).toContain('value="MRU"');
+    expect(
+      html.match(/<select[^>]*aria-label="[^"]+ Currency"[^>]*disabled[^>]*>/g)
+    ).toHaveLength(12);
+    expect(html.match(/<option value="MRU"/g)).toHaveLength(12);
     expect(html).not.toContain('value="USD"');
-    expect(html).toContain('aria-label="Dubai Unit"');
+    expect(html).toContain('aria-label="Dubai Regular air Rate"');
+    expect(html).toContain('aria-label="Dubai Regular air Unit"');
     expect(html).not.toContain('value="0"');
   });
 

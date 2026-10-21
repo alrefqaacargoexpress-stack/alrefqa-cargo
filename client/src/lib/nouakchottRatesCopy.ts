@@ -14,8 +14,9 @@ export type NouakchottRatesCopy = {
 };
 
 const ar: NouakchottRatesCopy = {
-  sectionTitle: "أسعار مصادر نواكشوط",
-  sectionHint: "أسعار ثابتة بالوقية الجديدة MRU حسب مصدر الشحنة.",
+  sectionTitle: "أسعار الشحن لنواكشوط",
+  sectionHint:
+    "أدخل أسعار الشحن للبلدان الثلاثة: دبي وتركيا والصين بالوقية الجديدة MRU دون اختيار مصدر.",
   source: "مصدر الشحنة",
   sourceAriaLabel: "مصدر أسعار الشحن",
   fromCountry: "من",
@@ -24,8 +25,9 @@ const ar: NouakchottRatesCopy = {
 };
 
 const en: NouakchottRatesCopy = {
-  sectionTitle: "Nouakchott source rates",
-  sectionHint: "Fixed new ouguiya (MRU) rates by shipment source.",
+  sectionTitle: "Nouakchott shipping rates",
+  sectionHint:
+    "Enter shipping rates for all three origins—Dubai, Turkey, and China—in MRU without selecting a source.",
   source: "Shipment source",
   sourceAriaLabel: "Shipping rate source",
   fromCountry: "From",
@@ -34,8 +36,9 @@ const en: NouakchottRatesCopy = {
 };
 
 const zh: NouakchottRatesCopy = {
-  sectionTitle: "努瓦克肖特来源价格",
-  sectionHint: "按货物来源设置固定的新乌吉亚（MRU）价格。",
+  sectionTitle: "努瓦克肖特运输价格",
+  sectionHint:
+    "请为迪拜、土耳其和中国这三个来源输入 MRU 运输价格，无需选择来源。",
   source: "货物来源",
   sourceAriaLabel: "运输价格来源",
   fromCountry: "来源",
@@ -44,8 +47,9 @@ const zh: NouakchottRatesCopy = {
 };
 
 const tr: NouakchottRatesCopy = {
-  sectionTitle: "Nuakşot kaynak ücretleri",
-  sectionHint: "Gönderi kaynağına göre sabit yeni uguiya (MRU) ücretleri.",
+  sectionTitle: "Nuakşot kargo ücretleri",
+  sectionHint:
+    "Kaynak seçmeden Dubai, Türkiye ve Çin olmak üzere üç kaynağın kargo ücretlerini MRU olarak girin.",
   source: "Gönderi kaynağı",
   sourceAriaLabel: "Kargo ücret kaynağı",
   fromCountry: "Kaynak",

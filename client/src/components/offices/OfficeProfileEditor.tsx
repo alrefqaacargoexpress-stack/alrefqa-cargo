@@ -483,10 +483,14 @@ export default function OfficeProfileEditor({
 
       <div className="mt-5 rounded-2xl border border-[#dce4e7] bg-[#f7fbfa] p-4">
         <h3 className="font-black text-[#092d50]">
-          {shippingCopy.sectionTitle}
+          {baseProfile.officeId === "nouakchott"
+            ? shippingCopy.seaAddress
+            : shippingCopy.sectionTitle}
         </h3>
         <p className="mt-1 text-xs text-[#718088]">
-          {shippingCopy.sectionHint}
+          {baseProfile.officeId === "nouakchott"
+            ? shippingCopy.seaAddressHint
+            : shippingCopy.sectionHint}
         </p>
         <div className="mt-4">
           <PackingField label={shippingCopy.seaAddress}>
@@ -501,15 +505,21 @@ export default function OfficeProfileEditor({
             />
           </PackingField>
         </div>
-        <PublicShippingRatesEditor
-          value={draft.shippingRates}
-          copy={shippingCopy}
-          disabled={!canEdit || pending}
-          onChange={shippingRates => setChanged({ ...draft, shippingRates })}
-        />
-        <p className="mt-3 text-xs font-semibold text-[#6a542c]">
-          {shippingCopy.publicWarning}
-        </p>
+        {baseProfile.officeId !== "nouakchott" && (
+          <>
+            <PublicShippingRatesEditor
+              value={draft.shippingRates}
+              copy={shippingCopy}
+              disabled={!canEdit || pending}
+              onChange={shippingRates =>
+                setChanged({ ...draft, shippingRates })
+              }
+            />
+            <p className="mt-3 text-xs font-semibold text-[#6a542c]">
+              {shippingCopy.publicWarning}
+            </p>
+          </>
+        )}
       </div>
 
       {baseProfile.officeId === "nouakchott" && (

@@ -140,7 +140,9 @@ function PublicOfficeCard({
   const seaAddress = profile?.seaAddress?.trim() || "";
   const savedRates = profile?.shippingRates;
   const hasSavedRates = Boolean(
-    savedRates && shippingRateKeys.some(key => savedRates[key] !== null)
+    office.id !== "nouakchott" &&
+      savedRates &&
+      shippingRateKeys.some(key => savedRates[key] !== null)
   );
   const sourceRates = profile?.sourceShippingRates;
   const savedSourceRates = office.id === "nouakchott" ? sourceRates : undefined;
@@ -287,7 +289,9 @@ function PublicOfficeCard({
       {(seaAddress || hasSavedRates) && (
         <div className="mt-4 border-t border-[#edf0f0] pt-4">
           <div className="mb-2 text-xs font-bold text-[#092d50]">
-            {shippingCopy.savedRates}
+            {office.id === "nouakchott"
+              ? shippingCopy.savedSeaAddress
+              : shippingCopy.savedRates}
           </div>
           {seaAddress && (
             <div className="mb-3 text-sm text-[#63737a]">
