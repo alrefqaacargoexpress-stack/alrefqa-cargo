@@ -24,9 +24,23 @@ export const memberRoles = mysqlTable("member_roles", {
   id: int("id").autoincrement().primaryKey(),
   userId: int("userId").notNull().references(() => users.id),
   role: mysqlEnum("role", appRoleValues).notNull(),
+  /** null preserves legacy unrestricted membership; JSON is an explicit office allow-list. */
+  offices: json("offices"),
+  /** Optimistic-concurrency version for admin membership edits. */
+  version: int("version").notNull().default(0),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 }, table => [uniqueIndex("member_roles_user_unique").on(table.userId)]);
+
+/** Four public office profiles; profile JSON is validated by shared/branches.ts at the API boundary. */
+export const officeProfiles = mysqlTable("office_profiles", {
+  officeId: varchar("officeId", { length: 32 }).primaryKey(),
+  version: int("version").notNull().default(0),
+  profile: json("profile").notNull(),
+  updatedBy: int("updatedBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, table => [uniqueIndex("office_profiles_office_unique").on(table.officeId)]);
 
 /** Generic records preserve the shared contract while keeping writes additive and versioned. */
 export const records = mysqlTable("records", {
@@ -69,7 +83,7 @@ export const officeSettings = mysqlTable("office_settings", {
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
-/** Hash-chained append-only audit events. Triggers in the additive migration reject updates/deletes. */
+/** Hash-chained append-only audit events; immutability is enforced by application transactions (TiDB has no unsupported triggers here). */
 export const auditEvents = mysqlTable("audit_events", {
   id: int("id").autoincrement().primaryKey(),
   sequence: int("sequence").notNull(),

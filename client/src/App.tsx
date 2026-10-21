@@ -15,6 +15,7 @@ const Customers = lazy(() => import("./pages/Customers"));
 const Reports = lazy(() => import("./pages/Reports"));
 const Tracking = lazy(() => import("./pages/Tracking"));
 const OfficeSettings = lazy(() => import("./pages/OfficeSettings"));
+const OfficeDashboard = lazy(() => import("./pages/OfficeDashboard"));
 function PageLoading() {
   const { language } = useLanguage();
   return (
@@ -42,6 +43,7 @@ function Router() {
       <Route path="/operations/reports" component={Reports} />
       <Route path="/operations/tracking/:id" component={Tracking} />
       <Route path="/operations/tracking" component={Tracking} />
+      <Route path="/operations/offices" component={OfficeDashboard} />
       <Route path="/operations/settings" component={OfficeSettings} />
       <Route path="/operations" component={Operations} />
       <Route path="/admin" component={Operations} />

@@ -1,3 +1,4 @@
+import { officeIdSchema } from "./branches";
 import { z } from "zod";
 import { packingSchema } from "./packing";
 import { journeySchema } from "./tracking";
@@ -10,6 +11,7 @@ const text = (max: number) => z.string().trim().min(1).max(max);
 const integer = z.number().finite().nonnegative().refine(Number.isSafeInteger);
 const money = z.number().finite().nonnegative().max(999999999);
 const meta = {
+  officeId: officeIdSchema.optional(),
   scope: z.enum(["shared", "local", "pending"]).optional(),
   version: integer.optional(),
 };
@@ -17,7 +19,7 @@ export const localAccountSchema = z
   .object({
     id: text(128),
     name: text(240),
-    phone: z.string().trim().min(1).max(64),
+    phone: z.string().trim().max(64),
     city: text(160),
     shipments: integer,
     balance: money,

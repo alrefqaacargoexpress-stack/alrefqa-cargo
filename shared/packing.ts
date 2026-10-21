@@ -1,3 +1,4 @@
+import { officeIdSchema, type OfficeId } from "./branches";
 import { z } from "zod";
 import type { Account, Shipment } from "./operations";
 export const sources = ["dubai", "turkey", "china"] as const;
@@ -181,6 +182,7 @@ export function createPackedShipment(
     source: PackingSource;
     pricePerKg: number;
     pricePerKgMRU?: number;
+    officeId?: OfficeId;
   },
   now = new Date().toISOString()
 ): PackedShipment {
@@ -206,6 +208,9 @@ export function createPackedShipment(
     eta: "غير محدد",
     amount: 0,
     scope: "pending",
+    ...(input.officeId === undefined
+      ? {}
+      : { officeId: officeIdSchema.parse(input.officeId) }),
     packing,
   };
 }
@@ -342,7 +347,7 @@ export function shipmentReports(
   shipments: readonly Shipment[],
   now = new Date()
 ) {
-  shipments = shipments.filter(shipment=>!shipment.deleted);
+  shipments = shipments.filter(shipment => !shipment.deleted);
   const isToday = (date: string) => {
     const value = new Date(date);
     return (

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "wouter";
 import {
   ArrowDownToLine,
@@ -62,6 +62,15 @@ import {
 } from "@/lib/operationsCopy";
 import { officeCopyFor } from "@/lib/officeCopy";
 import {
+  canReadOfficeRecord,
+  canWriteOfficeRecord,
+  officeIds,
+  officeNames,
+  ownerOffice,
+  recordBelongsToOffice,
+  type OfficeId,
+} from "@shared/branches";
+import {
   Field,
   inputClass,
   Modal,
@@ -74,7 +83,14 @@ const logo = "/icons/logo.webp";
 type Tab = "overview" | "shipments" | "accounts" | "invoices" | "access";
 type NoticeTone = "ok" | "error" | "info";
 type Notice = { tone: NoticeTone; text: string } | null;
-type OfflineProfile = { userId: string; name: string; role: AppRole | null };
+type OfficeFilter = OfficeId | "all" | "unassigned";
+type OfflineProfile = {
+  userId: string;
+  name: string;
+  role: AppRole | null;
+  offices?: OfficeId[] | null;
+};
+type AccessResponse = { role: AppRole | null; offices?: OfficeId[] | null };
 const MAX_MONEY = 999999999;
 const ROLE_VALUES: AppRole[] = [...APP_ROLES];
 const OFFLINE_PROFILE_KEY = "alrefqaa-operations-last-profile-v1";
@@ -104,6 +120,11 @@ function readOfflineProfile(): OfflineProfile | null {
       userId: String(value.userId),
       name: String(value.name ?? ""),
       role: value.role ?? null,
+      offices: Array.isArray(value.offices)
+        ? value.offices.filter((office: unknown): office is OfficeId =>
+            officeIds.includes(office as OfficeId)
+          )
+        : null,
     };
   } catch {
     return null;
@@ -126,20 +147,44 @@ function languageCopy(language: string): OperationsCopy {
 function roleText(role: AppRole | null, c: OperationsCopy, language = "ar") {
   if (!role) return c.noRole;
   if (role === "tracking_staff") {
-    return {
-      ar: "موظف تتبع",
-      en: "Tracking staff",
-      zh: "追踪员工",
-      tr: "Takip personeli",
-    }[language as "ar" | "en" | "zh" | "tr"] ?? "موظف تتبع";
+    return (
+      {
+        ar: "موظف تتبع",
+        en: "Tracking staff",
+        zh: "追踪员工",
+        tr: "Takip personeli",
+      }[language as "ar" | "en" | "zh" | "tr"] ?? "موظف تتبع"
+    );
   }
   if (role === "supervisor") {
-    return {
-      ar: "مشرف",
-      en: "Supervisor",
-      zh: "主管",
-      tr: "Süpervizör",
-    }[language as "ar" | "en" | "zh" | "tr"] ?? "مشرف";
+    return (
+      {
+        ar: "مشرف",
+        en: "Supervisor",
+        zh: "主管",
+        tr: "Süpervizör",
+      }[language as "ar" | "en" | "zh" | "tr"] ?? "مشرف"
+    );
+  }
+  if (role === "staff") {
+    return (
+      {
+        ar: "موظف مستودع",
+        en: "Warehouse staff",
+        zh: "仓库员工",
+        tr: "Depo personeli",
+      }[language as "ar" | "en" | "zh" | "tr"] ?? "موظف مستودع"
+    );
+  }
+  if (role === "accountant") {
+    return (
+      {
+        ar: "موظف حسابات",
+        en: "Accounts staff",
+        zh: "账务员工",
+        tr: "Muhasebe personeli",
+      }[language as "ar" | "en" | "zh" | "tr"] ?? "موظف حسابات"
+    );
   }
   return c[role];
 }
@@ -225,6 +270,47 @@ function serviceLabel(service: string, c: OperationsCopy) {
   return c.express;
 }
 
+function filterStateByOffice(
+  state: LocalState,
+  role: AppRole | null,
+  offices: OfficeId[] | null,
+  selected: OfficeFilter
+): LocalState {
+  const allowed = (entity: Entity, record: EntityRecord) => {
+    if (!canReadOfficeRecord(role, offices, entity, record)) return false;
+    if (selected === "all") return true;
+    if (selected === "unassigned") return ownerOffice(entity, record) === null;
+    return recordBelongsToOffice(entity, record, selected);
+  };
+  return {
+    ...state,
+    accounts: state.accounts.filter(record => allowed("account", record)),
+    shipments: state.shipments.filter(record => allowed("shipment", record)),
+    invoices: state.invoices.filter(record => allowed("invoice", record)),
+  };
+}
+function officeLabel(language: string, office: OfficeFilter) {
+  if (office === "all")
+    return (
+      {
+        ar: "كل المكاتب",
+        en: "All offices",
+        zh: "所有办公室",
+        tr: "Tüm ofisler",
+      }[language] ?? "All offices"
+    );
+  if (office === "unassigned")
+    return (
+      { ar: "غير مخصص", en: "Unassigned", zh: "未分配", tr: "Atanmamış" }[
+        language
+      ] ?? "Unassigned"
+    );
+  return officeNames[language as keyof typeof officeNames]?.[office] ?? office;
+}
+function allowedOfficeOptions(offices: OfficeId[] | null): OfficeId[] {
+  return offices === null ? [...officeIds] : offices;
+}
+
 export default function Operations() {
   const { language, dir } = useLanguage();
   const [location, setLocation] = useLocation();
@@ -239,7 +325,8 @@ export default function Operations() {
     enabled: Boolean(userId),
     retry: false,
   });
-  const role = access.data?.role ?? null;
+  const accessData = access.data as AccessResponse | undefined;
+  const role = accessData?.role ?? null;
   const snapshot = trpc.operations.snapshot.useQuery(undefined, {
     enabled: Boolean(userId && role),
     retry: false,
@@ -275,7 +362,12 @@ export default function Operations() {
   const effectiveUserId =
     userId ?? (offlineMode ? (offlineUser?.userId ?? null) : null);
   const effectiveRole = offlineMode ? (offlineUser?.role ?? null) : role;
+  const accessReady = offlineMode || Boolean(accessData);
+  const effectiveOffices: OfficeId[] | null = offlineMode
+    ? (offlineUser?.offices ?? null)
+    : (accessData?.offices ?? null);
   const showFinance = canViewFinance(effectiveRole);
+  const officeOptions = allowedOfficeOptions(effectiveOffices);
 
   useEffect(() => {
     const query = location.split("?")[1]?.split("#")[0];
@@ -289,6 +381,27 @@ export default function Operations() {
     )
       setTab(requested);
   }, [location]);
+
+  const officeFilter = useMemo<OfficeFilter>(() => {
+    const params = new URLSearchParams(
+      location.split("?")[1]?.split("#")[0] ?? ""
+    );
+    const requested = params.get("office");
+    if (requested === "unassigned" || requested === "all") return requested;
+    if (requested && officeIds.includes(requested as OfficeId)) {
+      const office = requested as OfficeId;
+      if (officeOptions.includes(office)) return office;
+    }
+    return "all";
+  }, [location, officeOptions.join(",")]);
+  const setOfficeFilter = (next: OfficeFilter) => {
+    const [path, hash = ""] = location.split("#");
+    const params = new URLSearchParams(path.split("?")[1] ?? "");
+    params.set("office", next);
+    setLocation(
+      `${path.split("?")[0]}?${params.toString()}${hash ? `#${hash}` : ""}`
+    );
+  };
 
   useEffect(() => {
     const on = () => setOnline(true);
@@ -314,20 +427,21 @@ export default function Operations() {
     }
   }, [effectiveUserId]);
   useEffect(() => {
-    if (!userId || !access.data) return;
+    if (!userId || !accessData) return;
     try {
       window.localStorage.setItem(
         OFFLINE_PROFILE_KEY,
         JSON.stringify({
           userId,
           name: me.data?.name ?? me.data?.email ?? "",
-          role: access.data.role,
+          role: accessData.role,
+          offices: accessData.offices ?? null,
         } satisfies OfflineProfile)
       );
     } catch {
       /* optional profile cache, no credentials */
     }
-  }, [access.data, me.data, userId]);
+  }, [accessData, me.data, userId]);
   useEffect(() => {
     let cancelled = false;
     if (!userId || !snapshot.data)
@@ -361,8 +475,53 @@ export default function Operations() {
   }, [snapshot.data, userId]);
 
   const rawState = workspace?.state ?? emptyState;
-  const state = displayState(rawState, showFinance);
-  const queue = workspace?.queue ?? [];
+  const globallyHiddenState =
+    effectiveRole === "supervisor"
+      ? { ...displayState(rawState, showFinance), accounts: [], invoices: [] }
+      : displayState(rawState, showFinance);
+  const state = accessReady
+    ? filterStateByOffice(
+        globallyHiddenState,
+        effectiveRole,
+        effectiveOffices,
+        officeFilter
+      )
+    : emptyState;
+  const rawQueue = workspace?.queue ?? [];
+  const queue = accessReady
+    ? rawQueue.filter(change =>
+        canReadOfficeRecord(
+          effectiveRole,
+          effectiveOffices,
+          change.entity,
+          change.data
+        )
+      )
+    : [];
+  const syncQueue = rawQueue.filter(change => {
+    const collection =
+      change.entity === "account"
+        ? rawState.accounts
+        : change.entity === "shipment"
+          ? rawState.shipments
+          : rawState.invoices;
+    const current =
+      collection.find(record => record.id === change.recordId) ?? change.data;
+    return (
+      canWriteOfficeRecord(
+        effectiveRole,
+        effectiveOffices,
+        change.entity,
+        current
+      ) &&
+      canWriteOfficeRecord(
+        effectiveRole,
+        effectiveOffices,
+        change.entity,
+        change.data
+      )
+    );
+  });
   const notify = (text: string, tone: NoticeTone = "ok") => {
     setNotice({ text, tone });
     window.setTimeout(() => setNotice(null), 4200);
@@ -373,7 +532,35 @@ export default function Operations() {
     label: string
   ) => {
     const current = workspaceRef.current;
-    if (!effectiveUserId || !current || !canWrite(effectiveRole, entity)) {
+    if (
+      !effectiveUserId ||
+      !current ||
+      !accessReady ||
+      !canWrite(effectiveRole, entity)
+    ) {
+      notify(c.accessDenied, "error");
+      return false;
+    }
+    const collection =
+      entity === "account"
+        ? current.state.accounts
+        : entity === "shipment"
+          ? current.state.shipments
+          : current.state.invoices;
+    const existing = collection.find(record => record.id === data.id) ?? null;
+    const candidate =
+      existing?.officeId && !data.officeId
+        ? ({ ...data, officeId: existing.officeId } as EntityRecord)
+        : data;
+    if (
+      !canWriteOfficeRecord(
+        effectiveRole,
+        effectiveOffices,
+        entity,
+        existing ?? candidate
+      ) ||
+      !canWriteOfficeRecord(effectiveRole, effectiveOffices, entity, candidate)
+    ) {
       notify(c.accessDenied, "error");
       return false;
     }
@@ -389,10 +576,10 @@ export default function Operations() {
     try {
       const safeData =
         !showFinance && entity === "account"
-          ? { ...(data as Account), balance: 0 }
+          ? { ...(candidate as Account), balance: 0 }
           : !showFinance && entity === "shipment"
-            ? { ...(data as Shipment), amount: 0 }
-            : data;
+            ? { ...(candidate as Shipment), amount: 0 }
+            : candidate;
       const next = stageChange(current, entity, safeData, label);
       await saveWorkspace(effectiveUserId, next);
       workspaceRef.current = next;
@@ -414,8 +601,12 @@ export default function Operations() {
       notify(c.noPending, "info");
       return;
     }
-    const batch = current.queue.slice(0, 500);
-    const remaining = current.queue.length - batch.length;
+    const batch = syncQueue.slice(0, 500);
+    if (!batch.length) {
+      notify(c.accessDenied, "error");
+      return;
+    }
+    const remaining = syncQueue.length - batch.length;
     if (
       !window.confirm(
         `${c.confirmSync}\n\n${batch.map(item => `• ${item.label}`).join("\n")}${remaining ? `\n\n${remaining} ${c.remaining}` : ""}`
@@ -454,6 +645,18 @@ export default function Operations() {
     if (!pending) return;
     try {
       if (useServer) {
+        if (
+          conflict.current &&
+          !canReadOfficeRecord(
+            effectiveRole,
+            effectiveOffices,
+            pending.entity,
+            conflict.current
+          )
+        ) {
+          notify(c.accessDenied, "error");
+          return;
+        }
         if (!conflict.current || !window.confirm(c.useServerConfirm)) return;
         downloadLocalArchive(userId);
       }
@@ -533,9 +736,21 @@ export default function Operations() {
       setImportPreview(null);
       return;
     }
-    const safeRows = available.map(row =>
-      showFinance ? row : { ...row, balance: 0 }
+    const scopedRows = available.map(row =>
+      row.officeId || officeFilter === "all" || officeFilter === "unassigned"
+        ? row
+        : { ...row, officeId: officeFilter }
     );
+    const safeRows = scopedRows
+      .filter(row =>
+        canWriteOfficeRecord(effectiveRole, effectiveOffices, "account", row)
+      )
+      .map(row => (showFinance ? row : { ...row, balance: 0 }));
+    if (safeRows.length !== scopedRows.length) notify(c.accessDenied, "error");
+    if (!safeRows.length) {
+      setImportPreview(null);
+      return;
+    }
     try {
       const nextState = {
         ...current.state,
@@ -773,7 +988,9 @@ export default function Operations() {
               {online ? c.online : c.offline}
             </span>
             <div className="hidden rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs sm:block">
-              {me.data?.name ?? me.data?.email ?? roleText(effectiveRole, c, language)}
+              {me.data?.name ??
+                me.data?.email ??
+                roleText(effectiveRole, c, language)}
             </div>
           </div>
         </header>
@@ -786,7 +1003,32 @@ export default function Operations() {
               <span>/</span>
               <span>{visibleTabs.find(item => item.id === tab)?.label}</span>
             </div>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              {(
+                ["admin", "staff", "accountant", "supervisor"] as AppRole[]
+              ).includes(effectiveRole as AppRole) && (
+                <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold">
+                  <span className="sr-only">Office</span>
+                  <select
+                    aria-label="Office"
+                    className="bg-transparent outline-none"
+                    value={officeFilter}
+                    onChange={event =>
+                      setOfficeFilter(event.target.value as OfficeFilter)
+                    }
+                  >
+                    <option value="all">{officeLabel(language, "all")}</option>
+                    <option value="unassigned">
+                      {officeLabel(language, "unassigned")}
+                    </option>
+                    {officeOptions.map(office => (
+                      <option key={office} value={office}>
+                        {officeLabel(language, office)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
               <Link
                 href="/operations/tracking"
                 className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold"
@@ -794,7 +1036,8 @@ export default function Operations() {
                 <ScanLine size={15} />
                 {officeC.tracking}
               </Link>
-              {(effectiveRole === "admin" || effectiveRole === "accountant") && (
+              {(effectiveRole === "admin" ||
+                effectiveRole === "accountant") && (
                 <Link
                   href="/operations/settings"
                   className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold"
@@ -824,7 +1067,11 @@ export default function Operations() {
                 {c.newAccount}
               </button>
               <button
-                onClick={() => setLocation("/operations/shipments/new")}
+                onClick={() =>
+                  setLocation(
+                    `/operations/shipments/new?office=${officeFilter}`
+                  )
+                }
                 disabled={!canWrite(effectiveRole, "shipment")}
                 className="inline-flex items-center gap-2 rounded-xl bg-sky-950 px-3 py-2 text-sm font-bold text-white disabled:opacity-40"
               >
@@ -917,7 +1164,7 @@ export default function Operations() {
               onEdit={item => {
                 if (item.packing)
                   setLocation(
-                    `/operations/shipments/${encodeURIComponent(item.id)}`
+                    `/operations/shipments/${encodeURIComponent(item.id)}?office=${officeFilter}`
                   );
                 else {
                   setEditing(item);
@@ -946,7 +1193,7 @@ export default function Operations() {
               onImport={() => inputRef.current?.click()}
               onExport={() =>
                 exportAccountsWorkbook(
-                  sanitizedAccounts(rawState.accounts, showFinance)
+                  sanitizedAccounts(state.accounts, showFinance)
                 )
               }
               onTemplate={exportAccountsTemplate}
@@ -1015,6 +1262,15 @@ export default function Operations() {
             if (await writeLocal(entity, data, label)) setModal(null);
           }}
           language={language}
+          role={effectiveRole}
+          allowedOffices={effectiveOffices}
+          selectedOffice={
+            officeFilter !== "all" && officeFilter !== "unassigned"
+              ? officeFilter
+              : effectiveOffices?.length === 1
+                ? effectiveOffices[0]
+                : null
+          }
         />
       )}
       {importPreview && (
@@ -1156,7 +1412,9 @@ function Overview({
         </section>
         <section className="rounded-2xl bg-sky-950 p-6 text-white">
           <ShieldCheck size={22} className="text-amber-300" />
-          <h2 className="mt-4 text-xl font-bold">{roleText(role, c, language)}</h2>
+          <h2 className="mt-4 text-xl font-bold">
+            {roleText(role, c, language)}
+          </h2>
           <p className="mt-3 text-sm leading-6 text-white/70">{c.reviewHint}</p>
           <div className="mt-6 text-sm text-white/70">{c.localData}</div>
         </section>
@@ -1471,7 +1729,9 @@ function Invoices({
                 {item.payment && (
                   <span className="block">
                     {officeC.paymentMethod}: {item.payment.methodLabel}
-                    {item.payment.reference ? ` · ${item.payment.reference}` : ""}
+                    {item.payment.reference
+                      ? ` · ${item.payment.reference}`
+                      : ""}
                   </span>
                 )}
               </div>
@@ -1572,6 +1832,9 @@ function EntityModal({
   c,
   showFinance,
   language,
+  role,
+  allowedOffices,
+  selectedOffice,
   onClose,
   onSave,
 }: {
@@ -1581,6 +1844,9 @@ function EntityModal({
   c: OperationsCopy;
   showFinance: boolean;
   language: string;
+  role: AppRole | null;
+  allowedOffices: OfficeId[] | null;
+  selectedOffice: OfficeId | null;
   onClose: () => void;
   onSave: (entity: Entity, data: EntityRecord, label: string) => void;
 }) {
@@ -1597,6 +1863,7 @@ function EntityModal({
           balance: 0,
           updatedAt: new Date().toISOString(),
           scope: "pending" as const,
+          ...(selectedOffice ? { officeId: selectedOffice } : {}),
         }
       : kind === "shipment"
         ? {
@@ -1609,6 +1876,7 @@ function EntityModal({
             eta: "",
             amount: 0,
             scope: "pending" as const,
+            ...(selectedOffice ? { officeId: selectedOffice } : {}),
           }
         : {
             id: generatedId,
@@ -1617,20 +1885,37 @@ function EntityModal({
             status: "بانتظار الدفع" as const,
             issuedAt: new Date().toISOString().slice(0, 10),
             scope: "pending" as const,
+            ...(selectedOffice ? { officeId: selectedOffice } : {}),
           });
   const [form, setForm] = useState<EntityRecord>(initial as EntityRecord);
   const [error, setError] = useState("");
   const officeC = officeCopyFor(language);
+  const formOffice = (form as EntityRecord).officeId;
+  const invoiceOffice =
+    kind === "invoice" ? (formOffice ?? selectedOffice ?? null) : null;
+  const showNktPayment =
+    kind === "invoice" &&
+    showFinance &&
+    (invoiceOffice === null || invoiceOffice === "nouakchott");
   const officeSettings = trpc.office.get.useQuery(undefined, {
-    enabled: kind === "invoice" && showFinance,
+    enabled: showNktPayment,
     retry: false,
     refetchOnWindowFocus: false,
   });
+  const selectableOffices = allowedOffices ?? [...officeIds];
+  const canChooseOffice = canWrite(role, kind) && selectableOffices.length > 0;
+  const existingOfficeLocked = Boolean(editing) && role !== "admin";
   const invoicePayment =
     kind === "invoice" ? (form as Invoice).payment : undefined;
   const paymentOptions = [
     ...(invoicePayment
-      ? [{ id: invoicePayment.methodId, label: invoicePayment.methodLabel, enabled: false }]
+      ? [
+          {
+            id: invoicePayment.methodId,
+            label: invoicePayment.methodLabel,
+            enabled: false,
+          },
+        ]
       : []),
     ...(officeSettings.data?.methods ?? []).filter(
       method => method.enabled && method.id !== invoicePayment?.methodId
@@ -1653,19 +1938,24 @@ function EntityModal({
       });
       return;
     }
-    const method = officeSettings.data?.methods.find(item => item.id === methodId);
+    const method = officeSettings.data?.methods.find(
+      item => item.id === methodId
+    );
     if (!method) return;
-    setForm(previous => ({
-      ...previous,
-      payment: {
-        office: "nouakchott",
-        methodId: method.id,
-        methodLabel: method.label,
-        ...((previous as Invoice).payment?.reference
-          ? { reference: (previous as Invoice).payment?.reference }
-          : {}),
-      },
-    }) as EntityRecord);
+    setForm(
+      previous =>
+        ({
+          ...previous,
+          payment: {
+            office: "nouakchott",
+            methodId: method.id,
+            methodLabel: method.label,
+            ...((previous as Invoice).payment?.reference
+              ? { reference: (previous as Invoice).payment?.reference }
+              : {}),
+          },
+        }) as EntityRecord
+    );
   };
   const setPaymentReference = (reference: string) => {
     setError("");
@@ -1816,6 +2106,38 @@ function EntityModal({
             }
           />
         </Field>
+        {canChooseOffice && (
+          <Field label={officeLabel(language, "all")}>
+            <select
+              className={inputClass}
+              value={value("officeId")}
+              required={!editing && allowedOffices !== null}
+              disabled={existingOfficeLocked}
+              onChange={event => {
+                setError("");
+                setForm(previous => {
+                  const next = { ...previous } as EntityRecord;
+                  if (event.target.value)
+                    next.officeId = event.target.value as OfficeId;
+                  else delete next.officeId;
+                  return next;
+                });
+              }}
+            >
+              <option value="">{officeLabel(language, "unassigned")}</option>
+              {selectableOffices.map(office => (
+                <option key={office} value={office}>
+                  {officeLabel(language, office)}
+                </option>
+              ))}
+            </select>
+            {existingOfficeLocked && (
+              <span className="text-xs font-normal text-slate-500">
+                {c.readOnly}
+              </span>
+            )}
+          </Field>
+        )}
         {kind === "account" && (
           <>
             <Field label={c.phone} required>
@@ -1942,18 +2264,27 @@ function EntityModal({
                 onChange={e => set("issuedAt", e.target.value)}
               />
             </Field>
-            {showFinance && (
+            {showNktPayment && (
               <Field label={officeC.paymentMethod}>
                 <select
                   className={inputClass}
                   value={invoicePayment?.methodId ?? ""}
-                  disabled={officeSettings.isLoading || officeSettings.isError || !officeSettings.data}
+                  disabled={
+                    officeSettings.isLoading ||
+                    officeSettings.isError ||
+                    !officeSettings.data
+                  }
                   onChange={event => setPaymentMethod(event.target.value)}
                 >
                   <option value="">{officeC.none}</option>
                   {paymentOptions.map(method => (
-                    <option key={method.id} value={method.id} disabled={!method.enabled}>
-                      {method.label}{!method.enabled ? ` · ${officeC.oldMethod}` : ""}
+                    <option
+                      key={method.id}
+                      value={method.id}
+                      disabled={!method.enabled}
+                    >
+                      {method.label}
+                      {!method.enabled ? ` · ${officeC.oldMethod}` : ""}
                     </option>
                   ))}
                 </select>
@@ -1961,11 +2292,13 @@ function EntityModal({
                   {officeC.officeCaption} {officeC.paymentHint}
                 </span>
                 {officeSettings.isError && (
-                  <span className="text-xs font-semibold text-red-700">{officeC.loadError}</span>
+                  <span className="text-xs font-semibold text-red-700">
+                    {officeC.loadError}
+                  </span>
                 )}
               </Field>
             )}
-            {showFinance && invoicePayment && (
+            {showNktPayment && invoicePayment && (
               <Field label={`${officeC.reference} (${officeC.optional})`}>
                 <input
                   className={inputClass}
@@ -1973,7 +2306,9 @@ function EntityModal({
                   value={invoicePayment.reference ?? ""}
                   onChange={event => setPaymentReference(event.target.value)}
                 />
-                <span className="text-xs font-normal text-slate-500">{officeC.referenceHint}</span>
+                <span className="text-xs font-normal text-slate-500">
+                  {officeC.referenceHint}
+                </span>
               </Field>
             )}
           </>

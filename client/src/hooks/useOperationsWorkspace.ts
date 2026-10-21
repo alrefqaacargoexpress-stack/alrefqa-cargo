@@ -16,6 +16,8 @@ import {
   canViewFinance,
   canWrite,
   type AppRole,
+  type Entity,
+  type EntityRecord,
   type LocalState,
   type Shipment,
   type SyncResult,
@@ -23,8 +25,21 @@ import {
 } from "@shared/operations";
 import { canonicalPackingShipment, normalizeTracking } from "@shared/packing";
 import { assertShipmentAction } from "@shared/shipmentDeletion";
+import {
+  canReadOfficeRecord,
+  canWriteOfficeRecord,
+  type OfficeId,
+  ownerOffice,
+  officeIds,
+} from "@shared/branches";
 const PROFILE = "alrefqaa-operations-last-profile-v1";
-type Profile = { userId: string; role: AppRole; name?: string };
+type Profile = {
+  userId: string;
+  role: AppRole;
+  name?: string;
+  offices?: OfficeId[] | null;
+};
+type AccessResponse = { role: AppRole | null; offices?: OfficeId[] | null };
 const words = {
   ar: {
     saved: "حُفظت التغييرات محليًا.",
@@ -40,6 +55,8 @@ const words = {
     useServer: "استبدال المسودة بنسخة الخادم؟ سننزل أرشيفًا قبل الاستبدال.",
     emptyReceipt: "لم يُقر الخادم أي تغيير. بقي الطابور محفوظًا.",
     duplicate: "رقم الشحنة مستخدم بالفعل.",
+    blocked:
+      "بعض التغييرات المعلقة ليست ضمن صلاحية المكتب الحالية، وقد تم الاحتفاظ بها للمراجعة.",
   },
   en: {
     saved: "Changes saved locally.",
@@ -58,6 +75,8 @@ const words = {
     emptyReceipt:
       "The server acknowledged no changes. The queue was preserved.",
     duplicate: "This shipment number is already used.",
+    blocked:
+      "Some pending changes are outside your current office access and were kept for review.",
   },
   zh: {
     saved: "更改已保存在本地。",
@@ -72,6 +91,7 @@ const words = {
     useServer: "用服务器版本替换草稿吗？将先下载存档。",
     emptyReceipt: "服务器未确认任何更改，队列已保留。",
     duplicate: "此货运编号已被使用。",
+    blocked: "部分待同步更改不在当前办公室权限内，已保留待审核。",
   },
   tr: {
     saved: "Değişiklikler yerel olarak kaydedildi.",
@@ -89,6 +109,8 @@ const words = {
       "Taslak sunucu sürümüyle değiştirilsin mi? Önce arşiv indirilecek.",
     emptyReceipt: "Sunucu değişiklik onaylamadı; kuyruk korundu.",
     duplicate: "Bu gönderi numarası zaten kullanılıyor.",
+    blocked:
+      "Bazı bekleyen değişiklikler mevcut ofis yetkinizde değil; inceleme için korundu.",
   },
 };
 function readProfile(): Profile | null {
@@ -97,7 +119,15 @@ function readProfile(): Profile | null {
     return value &&
       /^\d+$/.test(String(value.userId)) &&
       (APP_ROLES as readonly string[]).includes(value.role)
-      ? value
+      ? {
+          ...value,
+          // Older cached profiles had no office scope; retain compatibility as unrestricted.
+          offices: Array.isArray(value.offices)
+            ? value.offices.filter((office: unknown): office is OfficeId =>
+                officeIds.includes(office as OfficeId)
+              )
+            : null,
+        }
       : null;
   } catch {
     return null;
@@ -126,6 +156,61 @@ function hiddenState(state: LocalState, financial: boolean): LocalState {
     invoices: [],
   };
 }
+function stateCollection(state: LocalState, entity: Entity): EntityRecord[] {
+  return state[
+    `${entity}s` as "accounts" | "shipments" | "invoices"
+  ] as EntityRecord[];
+}
+
+function accessAllowsRecord(
+  role: AppRole | null,
+  offices: OfficeId[] | null,
+  entity: Entity,
+  record: EntityRecord
+) {
+  return canReadOfficeRecord(role, offices, entity, record);
+}
+
+export function filterStateByAccess(
+  state: LocalState,
+  role: AppRole | null,
+  offices: OfficeId[] | null
+): LocalState {
+  return {
+    ...state,
+    accounts: state.accounts.filter(record =>
+      accessAllowsRecord(role, offices, "account", record)
+    ),
+    shipments: state.shipments.filter(record =>
+      accessAllowsRecord(role, offices, "shipment", record)
+    ),
+    invoices: state.invoices.filter(record =>
+      accessAllowsRecord(role, offices, "invoice", record)
+    ),
+  };
+}
+
+function changeAllowed(
+  workspace: Workspace,
+  change: PendingChange,
+  role: AppRole | null,
+  offices: OfficeId[] | null
+) {
+  const current = stateCollection(workspace.state, change.entity).find(
+    record => record.id === change.recordId
+  );
+  // A pending upsert must remain in the queue unless both its prior/current
+  // scope and its submitted scope are writable. Never disclose blocked labels.
+  return Boolean(
+    canWriteOfficeRecord(
+      role,
+      offices,
+      change.entity,
+      current ?? change.data
+    ) && canWriteOfficeRecord(role, offices, change.entity, change.data)
+  );
+}
+
 export function useOperationsWorkspace() {
   const { language } = useLanguage();
   const w = words[language];
@@ -140,7 +225,12 @@ export function useOperationsWorkspace() {
     enabled: Boolean(activeId),
     retry: false,
   });
-  const role = activeId ? (access.data?.role ?? null) : (profile?.role ?? null);
+  const accessData = access.data as AccessResponse | undefined;
+  const role = activeId ? (accessData?.role ?? null) : (profile?.role ?? null);
+  const accessReady = !activeId || Boolean(accessData);
+  const offices: OfficeId[] | null = activeId
+    ? (accessData?.offices ?? null)
+    : (profile?.offices ?? null);
   const userId = activeId ?? profile?.userId ?? null;
   const localOnly = !activeId && Boolean(profile);
   const snapshot = trpc.operations.snapshot.useQuery(undefined, {
@@ -190,12 +280,17 @@ export function useOperationsWorkspace() {
     try {
       localStorage.setItem(
         PROFILE,
-        JSON.stringify({ userId: activeId, role, name: me.data?.name ?? "" })
+        JSON.stringify({
+          userId: activeId,
+          role,
+          name: me.data?.name ?? "",
+          offices: accessData?.offices ?? null,
+        })
       );
     } catch {
       /* no credentials are cached */
     }
-  }, [activeId, role, me.data?.name]);
+  }, [activeId, role, me.data?.name, accessData?.offices]);
   useEffect(() => {
     if (!snapshot.data || !activeId || !ref.current) return;
     let stopped = false;
@@ -223,32 +318,43 @@ export function useOperationsWorkspace() {
   ): Promise<boolean> => {
     const id = userId,
       current = ref.current;
-    if (!id || !current || !canWrite(role, "shipment")) {
+    if (!id || !current || !canWrite(role, "shipment") || !accessReady) {
+      setNotice(w.access);
+      return false;
+    }
+    const existing =
+      current.state.shipments.find(s => s.id === shipment.id) ?? null;
+    // Preserve an existing operational owner when a legacy editor omits it;
+    // never silently reassign an old row to the selected office.
+    const candidate =
+      existing?.officeId && !shipment.officeId
+        ? { ...shipment, officeId: existing.officeId }
+        : shipment;
+    if (
+      !canWriteOfficeRecord(role, offices, "shipment", existing ?? candidate) ||
+      !canWriteOfficeRecord(role, offices, "shipment", candidate)
+    ) {
       setNotice(w.access);
       return false;
     }
     if (
       current.state.shipments.some(
         s =>
-          s.id !== shipment.id &&
-          normalizeTracking(s.tracking) === normalizeTracking(shipment.tracking)
+          s.id !== candidate.id &&
+          normalizeTracking(s.tracking) ===
+            normalizeTracking(candidate.tracking)
       )
     ) {
       setNotice(w.duplicate);
       return false;
     }
     try {
-      assertShipmentAction(
-        role,
-        shipment,
-        current.state.shipments.find(s => s.id === shipment.id) ?? null,
-        action
-      );
+      assertShipmentAction(role, candidate, existing, action);
       const safe = canonicalPackingShipment(
         canViewFinance(role)
-          ? shipment
+          ? candidate
           : {
-              ...shipment,
+              ...candidate,
               amount: 0,
               ...(shipment.packing
                 ? {
@@ -267,7 +373,7 @@ export function useOperationsWorkspace() {
         current,
         "shipment",
         safe,
-        label ?? shipment.tracking,
+        label ?? candidate.tracking,
         action
       );
       await saveWorkspace(id, next);
@@ -293,7 +399,13 @@ export function useOperationsWorkspace() {
       setNotice(w.none);
       return null;
     }
-    const batch = current.queue.slice(0, 500);
+    const batch = current.queue
+      .filter(change => changeAllowed(current, change, role, offices))
+      .slice(0, 500);
+    if (!batch.length) {
+      setNotice(w.blocked);
+      return null;
+    }
     if (!confirm(`${w.review}\n\n${batch.map(c => c.label).join("\n")}`))
       return null;
     setBusy(true);
@@ -335,6 +447,14 @@ export function useOperationsWorkspace() {
     if (!id || !current) return;
     const change = current.queue.find(c => c.id === conflict.changeId);
     if (!change) return;
+    if (
+      useServer &&
+      conflict.current &&
+      !canReadOfficeRecord(role, offices, change.entity, conflict.current)
+    ) {
+      setNotice(w.blocked);
+      return;
+    }
     if (useServer && (!conflict.current || !confirm(w.useServer))) return;
     try {
       if (useServer) downloadLocalArchive(id);
@@ -377,31 +497,42 @@ export function useOperationsWorkspace() {
     const saved = readProfile();
     if (saved) setProfile(saved);
   };
+  const hidden =
+    role === "viewer" || role === "tracking_staff"
+      ? EMPTY_STATE
+      : hiddenState(
+          role === "supervisor"
+            ? {
+                ...(workspace?.state ?? EMPTY_STATE),
+                accounts: [],
+                invoices: [],
+              }
+            : (workspace?.state ?? EMPTY_STATE),
+          canViewFinance(role)
+        );
+  const scopedState = accessReady
+    ? filterStateByAccess(hidden, role, offices)
+    : EMPTY_STATE;
+  const visibleQueue =
+    accessReady && workspace
+      ? workspace.queue.filter(change =>
+          canReadOfficeRecord(role, offices, change.entity, change.data)
+        )
+      : [];
   return {
-    state:
-      role === "viewer" || role === "tracking_staff"
-        ? EMPTY_STATE
-        : hiddenState(
-            role === "supervisor"
-              ? {
-                  ...(workspace?.state ?? EMPTY_STATE),
-                  accounts: [],
-                  invoices: [],
-                }
-              : (workspace?.state ?? EMPTY_STATE),
-            canViewFinance(role)
-          ),
+    state: scopedState,
     workspace,
     userId,
     role,
-    canEditShipments: canWrite(role, "shipment"),
+    offices,
+    canEditShipments: accessReady && canWrite(role, "shipment"),
     showFinance: canViewFinance(role),
     online,
     localOnly,
     loading: (online && me.isLoading) || Boolean(activeId && access.isLoading),
     error,
     notice,
-    queue: workspace?.queue ?? [],
+    queue: visibleQueue,
     snapshotError: snapshot.error?.message ?? null,
     saveShipment,
     sync,

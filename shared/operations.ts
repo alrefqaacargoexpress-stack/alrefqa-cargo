@@ -1,3 +1,4 @@
+import type { OfficeId } from "./branches";
 import type { PackingSession } from "./packing";
 import type { ShipmentJourney } from "./tracking";
 import type { InvoicePayment } from "./office";
@@ -19,6 +20,7 @@ export type Account = {
   shipments: number;
   balance: number;
   updatedAt: string;
+  officeId?: OfficeId;
   scope?: DataScope;
   version?: number;
 };
@@ -40,6 +42,7 @@ export type Shipment = {
   packing?: PackingSession;
   journey?: ShipmentJourney;
   deleted?: { at: string; reason: string };
+  officeId?: OfficeId;
   scope?: DataScope;
   version?: number;
 };
@@ -50,6 +53,7 @@ export type Invoice = {
   status: "مدفوعة" | "بانتظار الدفع";
   issuedAt: string;
   payment?: InvoicePayment;
+  officeId?: OfficeId;
   scope?: DataScope;
   version?: number;
 };

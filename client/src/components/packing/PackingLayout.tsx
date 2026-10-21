@@ -65,6 +65,16 @@ export default function PackingLayout({
         tr: "Gönderi takibi",
       }[language],
     },
+    {
+      href: "/operations/offices",
+      label: null,
+      text: {
+        ar: "لوحات المكاتب",
+        en: "Office dashboards",
+        zh: "办公室面板",
+        tr: "Ofis panoları",
+      }[language],
+    },
     ...(workspace.role === "admin" || workspace.role === "accountant"
       ? [
           {

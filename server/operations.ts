@@ -24,6 +24,12 @@ import {
   type Shipment,
   type SyncResult,
 } from "@shared/operations";
+import {
+  canReadOfficeRecord,
+  canWriteOfficeRecord,
+  ownerOffice,
+  type OfficeId,
+} from "@shared/branches";
 
 const boundedString = (max: number) => z.string().trim().min(1).max(max);
 const safeNonNegative = z
@@ -33,6 +39,7 @@ const safeNonNegative = z
   .refine(Number.isSafeInteger, "must be a safe integer");
 const nonNegative = z.number().finite().nonnegative().max(999999999);
 const optionalMeta = {
+  officeId: z.enum(["nouakchott", "dubai", "china", "turkey"]).optional(),
   scope: z.enum(["shared", "local", "pending"]).optional(),
   version: safeNonNegative.optional(),
 };
@@ -228,6 +235,9 @@ export function prepareRecordForWrite(
   action?: PendingChange["action"]
 ): EntityRecord {
   let result = structuredClone(preserveStaffFinance(role, next, current));
+  // Old clients omit officeId; omission must not clear a stored assignment.
+  if (current?.officeId && !result.officeId)
+    result = { ...result, officeId: current.officeId } as EntityRecord;
   if (
     current &&
     "issuedAt" in current &&
@@ -377,6 +387,33 @@ export function prepareRecordForWrite(
       item.deleted = { ...item.deleted, at: acknowledgedAt };
   }
   return canonicalPackingShipment(result);
+}
+
+/** Validate an operation against the actor's explicit office allow-list. */
+export function assertOfficeRecordWrite(
+  role: AppRole | null,
+  offices: OfficeId[] | null,
+  entity: Entity,
+  record: EntityRecord,
+  current: EntityRecord | null,
+): void {
+  if (!role) throw new Error("forbidden");
+  if (role === "admin" || offices === null) return;
+  if (current?.officeId && record.officeId && current.officeId !== record.officeId)
+    throw new Error("office_change_forbidden");
+  const home = ownerOffice(entity, record);
+  if (!home || !offices.includes(home)) throw new Error("office_scope_forbidden");
+  if (!canWriteOfficeRecord(role, offices, entity, record))
+    throw new Error("office_scope_forbidden");
+}
+
+export function canReadScopedRecord(
+  role: AppRole | null,
+  offices: OfficeId[] | null,
+  entity: Entity,
+  record: EntityRecord,
+): boolean {
+  return canReadOfficeRecord(role, offices, entity, record);
 }
 
 /** Pure optimistic-concurrency helper used by tests and kept equivalent to the SQL transaction path. */

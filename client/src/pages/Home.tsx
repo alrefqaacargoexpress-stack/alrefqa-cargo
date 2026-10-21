@@ -23,11 +23,16 @@ import {
 import LanguageSwitcher from "@/components/LanguageSwitcher";
 import { useLanguage } from "@/contexts/LanguageContext";
 import {
-  officeConfig,
-  type OfficeId,
-  type PublicCopy,
   publicCopy,
 } from "@/lib/publicCopy";
+import PublicOfficeCards from "@/components/offices/PublicOfficeCards";
+import { trpc } from "@/lib/trpc";
+import {
+  branchDashboardCopy,
+  cachePublicProfiles,
+  readCachedPublicProfiles,
+  weekdayLabel,
+} from "@/lib/branchDashboardCopy";
 
 const logo = "/icons/logo.webp";
 const mainWhatsapp = "+22233331818";
@@ -47,12 +52,6 @@ const walletNumbers = [
 
 function whatsappHref(message: string, number = mainWhatsapp) {
   return `https://wa.me/${number.replace(/\D/g, "")}?text=${encodeURIComponent(message)}`;
-}
-
-function roleForOffice(id: OfficeId, copy: PublicCopy) {
-  if (id === "nouakchott") return copy.offices.mainOffice;
-  if (id === "dubai") return copy.offices.collection;
-  return copy.offices.servicePoint;
 }
 
 function isStandalone() {
@@ -83,6 +82,20 @@ export default function Home() {
     useState<BeforeInstallPromptEvent | null>(null);
   const [installed, setInstalled] = useState(isStandalone);
   const [installMessage, setInstallMessage] = useState("");
+  const publicOffices = trpc.branches.public.useQuery();
+  const [cachedProfiles, setCachedProfiles] = useState(readCachedPublicProfiles);
+  useEffect(() => {
+    if (publicOffices.data?.length) {
+      cachePublicProfiles(publicOffices.data);
+      setCachedProfiles(readCachedPublicProfiles());
+    }
+  }, [publicOffices.data]);
+  const officeProfiles = publicOffices.data?.some(profile =>
+    Boolean(profile.address || profile.phone || profile.gps || profile.hours.length || profile.employees.length)
+  )
+    ? publicOffices.data
+    : cachedProfiles;
+  const nouakchottProfile = officeProfiles.find(profile => profile.officeId === "nouakchott");
 
   useEffect(() => {
     const handleBeforeInstallPrompt = (event: Event) => {
@@ -598,66 +611,11 @@ export default function Home() {
               {copy.offices.description}
             </p>
           </div>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            {officeConfig.map(office => (
-              <article
-                key={office.id}
-                className="rounded-3xl border border-[#e1e7e8] bg-white p-5 shadow-sm"
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <span className="rounded-full bg-[#eef3f0] px-3 py-1 text-xs font-semibold text-[#456e61]">
-                    {roleForOffice(office.id, copy)}
-                  </span>
-                  <Globe2 size={19} className="text-[#2e6280]" />
-                </div>
-                <h3 className="mt-8 text-xl font-bold text-[#092d50]">
-                  {copy.offices.names[office.id]}
-                </h3>
-                <div className="mt-3 text-sm leading-6 text-[#63737a]">
-                  {office.address ?? copy.offices.addressPending}
-                </div>
-                <p className="mt-1 text-xs leading-5 text-[#87949a]">
-                  {copy.offices.addressPendingDetail}
-                </p>
-                <div className="mt-5 flex flex-col gap-2">
-                  {office.phone ? (
-                    <a
-                      href={`tel:${office.phone}`}
-                      dir="ltr"
-                      className="inline-flex items-center gap-2 text-sm font-semibold text-[#2e6280]"
-                    >
-                      <Phone size={15} />
-                      {office.phone}
-                    </a>
-                  ) : (
-                    <span className="inline-flex items-center gap-2 text-sm font-semibold text-[#2e6280]">
-                      <Phone size={15} />
-                      {copy.offices.noPhone}
-                    </span>
-                  )}
-                  <a
-                    href={whatsappHref(
-                      `${copy.offices.requestAddress}: ${copy.offices.names[office.id]}`,
-                      office.whatsapp
-                    )}
-                    className="inline-flex items-center gap-2 text-xs font-bold text-[#2b7656]"
-                  >
-                    <MessageIcon />
-                    {copy.offices.requestAddress}
-                  </a>
-                  {office.phone && (
-                    <a
-                      href={`mailto:${office.email}`}
-                      className="inline-flex items-center gap-2 text-xs font-semibold text-[#6c7b82]"
-                    >
-                      <Mail size={14} />
-                      {copy.offices.emailOffice}
-                    </a>
-                  )}
-                </div>
-              </article>
-            ))}
-          </div>
+          <PublicOfficeCards
+            profiles={officeProfiles}
+            loading={publicOffices.isLoading}
+            error={Boolean(publicOffices.error)}
+          />
         </section>
 
         <section id="contact" className="mx-auto max-w-7xl px-5 pb-20 lg:px-8">
@@ -785,8 +743,24 @@ export default function Home() {
               <div className="font-semibold text-[#092d50]">
                 {copy.hours.title}
               </div>
-              <div className="mt-1">{copy.hours.weekdays}</div>
-              <div>{copy.hours.sunday}</div>
+              {nouakchottProfile?.hours.length ? (
+                <div className="mt-1 space-y-0.5">
+                  {[...nouakchottProfile.hours]
+                    .sort((a, b) => a.day - b.day)
+                    .map(day => (
+                      <div key={day.day} className="flex gap-2">
+                        <span>{weekdayLabel(day.day, language)}</span>
+                        <span dir="ltr">
+                          {day.closed || !day.work
+                            ? branchDashboardCopy(language).closed
+                            : `${day.work.start}–${day.work.end}`}
+                        </span>
+                      </div>
+                    ))}
+                </div>
+              ) : (
+                <div className="mt-1">—</div>
+              )}
             </div>
             <div className="flex flex-col items-start gap-2 text-sm">
               <Link href="/operations" className="font-semibold text-[#2e6280]">

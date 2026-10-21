@@ -1,3 +1,4 @@
+import { hideForOfficeScope } from "./branches";
 import { and, eq, gt, sql } from "drizzle-orm";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
@@ -18,6 +19,7 @@ import type {
   Shipment,
   SyncResult,
 } from "@shared/operations";
+import { officeMembershipSchema, canWriteOfficeRecord } from "@shared/branches";
 import { canViewFinance, canWrite, EMPTY_STATE } from "@shared/operations";
 import { officeSettingsSchema } from "@shared/office";
 import {
@@ -43,6 +45,8 @@ import {
   roleForUser,
   setRoleInputSchema,
   syncInputSchema,
+  assertOfficeRecordWrite,
+  canReadScopedRecord,
 } from "./operations";
 import type { User } from "../drizzle/schema";
 import { appendAudit, readAudit } from "./audit";
@@ -59,6 +63,21 @@ import {
   settingsWithVersion,
 } from "./office";
 import { emptyState } from "./operations";
+import {
+  assignRecord,
+  assignRecordSchema,
+  branchForbidden,
+  confirmArrival,
+  confirmArrivalSchema,
+  dashboardData,
+  listMembers,
+  officeIsAssigned,
+  officeProfileUpdateSchema,
+  publicProfiles,
+  readOfficeScope,
+  readProfile,
+  updateProfile,
+} from "./branches";
 
 const unavailable = () =>
   new TRPCError({
@@ -132,17 +151,166 @@ export const appRouter = router({
       return { success: true } as const;
     }),
   }),
+  branches: router({
+    public: publicProcedure.query(async () => publicProfiles(await getDb())),
+    profiles: protectedProcedure.query(async ({ ctx }) => {
+      const db = await dbOrThrow();
+      const scope = await readOfficeScope(db, ctx.user);
+      if (!scope.role || scope.role === "viewer")
+        throw branchForbidden("Branch profiles are restricted");
+      return publicProfiles(db);
+    }),
+    update: protectedProcedure
+      .input(officeProfileUpdateSchema)
+      .mutation(async ({ ctx, input }) => {
+        const db = await dbOrThrow();
+        const scope = await readOfficeScope(db, ctx.user);
+        if (scope.role !== "admin")
+          throw branchForbidden("Only global admins may edit office profiles");
+        return updateProfile(db, ctx.user, input);
+      }),
+    dashboard: protectedProcedure
+      .input(
+        z
+          .object({
+            officeId: z.enum(["nouakchott", "dubai", "china", "turkey"]),
+          })
+          .strict()
+      )
+      .query(async ({ ctx, input }) => {
+        const db = await dbOrThrow();
+        return dashboardData(
+          db,
+          await readOfficeScope(db, ctx.user),
+          input.officeId
+        );
+      }),
+    members: protectedProcedure.query(async ({ ctx }) => {
+      const db = await dbOrThrow();
+      const scope = await readOfficeScope(db, ctx.user);
+      if (scope.role !== "admin")
+        throw branchForbidden("Only global admins may list members");
+      return listMembers(db);
+    }),
+    assignMember: protectedProcedure
+      .input(officeMembershipSchema)
+      .mutation(async ({ ctx, input }) => {
+        const db = await dbOrThrow();
+        const scope = await readOfficeScope(db, ctx.user);
+        if (scope.role !== "admin")
+          throw branchForbidden("Only global admins may assign members");
+        return db.transaction(async (tx: any) => {
+          const target = await tx
+            .select({
+              id: users.id,
+              openId: users.openId,
+              role: users.role,
+              name: users.name,
+              email: users.email,
+            })
+            .from(users)
+            .where(eq(users.id, input.userId))
+            .limit(1);
+          if (!target[0])
+            throw new TRPCError({
+              code: "NOT_FOUND",
+              message: "User not found",
+            });
+          if (
+            (ENV.ownerOpenId && target[0].openId === ENV.ownerOpenId) ||
+            target[0].role === "admin"
+          )
+            throw branchForbidden("The root admin cannot be changed");
+          const oldRows = await tx
+            .select()
+            .from(memberRoles)
+            .where(eq(memberRoles.userId, input.userId))
+            .limit(1)
+            .for("update");
+          const old = oldRows[0];
+          if ((old?.version ?? 0) !== input.expectedVersion)
+            throw new TRPCError({
+              code: "CONFLICT",
+              message: "member_version_conflict",
+            });
+          const nextVersion = (old?.version ?? 0) + 1;
+          if (!old)
+            await tx.insert(memberRoles).values({
+              userId: input.userId,
+              role: input.role,
+              offices: input.offices,
+              version: nextVersion,
+            });
+          else
+            await tx
+              .update(memberRoles)
+              .set({
+                role: input.role,
+                offices: input.offices,
+                version: nextVersion,
+              })
+              .where(eq(memberRoles.userId, input.userId));
+          await appendAudit(tx, {
+            actor: actor(ctx.user, "admin"),
+            entity: "member_membership",
+            recordId: String(input.userId),
+            action: "membership_assign",
+            before: old
+              ? { role: old.role, offices: old.offices, version: old.version }
+              : null,
+            after: {
+              role: input.role,
+              offices: input.offices,
+              version: nextVersion,
+            },
+            beforeVersion: old?.version ?? 0,
+            afterVersion: nextVersion,
+            requestKey: `member:${input.userId}:${nextVersion}`,
+          });
+          return {
+            userId: input.userId,
+            name: target[0].name ?? "",
+            email: target[0].email ?? "",
+            role: input.role,
+            offices: input.offices,
+            version: nextVersion,
+          };
+        });
+      }),
+    assignRecord: protectedProcedure
+      .input(assignRecordSchema)
+      .mutation(async ({ ctx, input }) => {
+        const db = await dbOrThrow();
+        const scope = await readOfficeScope(db, ctx.user);
+        if (scope.role !== "admin")
+          throw branchForbidden("Only global admins may assign record offices");
+        return assignRecord(db, ctx.user, input);
+      }),
+    confirmArrival: protectedProcedure
+      .input(confirmArrivalSchema)
+      .mutation(async ({ ctx, input }) => {
+        const db = await dbOrThrow();
+        return confirmArrival(
+          db,
+          ctx.user,
+          await readOfficeScope(db, ctx.user),
+          input
+        );
+      }),
+  }),
   operations: router({
-    access: protectedProcedure.query(async ({ ctx }) => ({
-      role: await effectiveRole(ctx.user),
-      userId: ctx.user.id,
-    })),
+    access: protectedProcedure.query(async ({ ctx }) => {
+      const db = await dbOrThrow();
+      const scope = await readOfficeScope(db, ctx.user);
+      return { role: scope.role, userId: ctx.user.id, offices: scope.offices };
+    }),
 
     snapshot: protectedProcedure.query(async ({ ctx }) => {
       const role = await effectiveRole(ctx.user);
       if (!role) throw forbidden();
       if (role === "viewer" || role === "tracking_staff") return emptyState();
       const db = await dbOrThrow();
+      const scope = await readOfficeScope(db, ctx.user);
       const rows = await db.select().from(records);
       const state: LocalState = {
         accounts: [],
@@ -151,10 +319,23 @@ export const appRouter = router({
         lastSyncedAt: new Date().toISOString(),
       };
       for (const row of rows) {
+        if (
+          !canReadScopedRecord(
+            scope.role,
+            scope.offices,
+            row.entity as Entity,
+            row.data as EntityRecord
+          )
+        )
+          continue;
         // Supervisors receive cargo only; financial/account entities stay out of the operations snapshot.
         if (role === "supervisor" && row.entity !== "shipment") continue;
         if (row.entity === "invoice" && !canViewFinance(role)) continue;
-        const record = hiddenCurrent(row, role);
+        const record = hideForOfficeScope(
+          hiddenCurrent(row, role),
+          role,
+          scope.offices
+        );
         if (row.entity === "account")
           state.accounts.push({
             ...record,
@@ -229,14 +410,29 @@ export const appRouter = router({
           )
             throw forbidden("The project owner/root admin cannot be changed");
           const previous = await tx
-            .select({ role: memberRoles.role })
+            .select({
+              role: memberRoles.role,
+              offices: memberRoles.offices,
+              version: memberRoles.version,
+            })
             .from(memberRoles)
             .where(eq(memberRoles.userId, input.userId))
-            .limit(1);
+            .limit(1)
+            .for("update");
           await tx
             .insert(memberRoles)
-            .values({ userId: input.userId, role: input.role })
-            .onDuplicateKeyUpdate({ set: { role: input.role } });
+            .values({
+              userId: input.userId,
+              role: input.role,
+              offices: previous[0]?.offices ?? null,
+              version: (previous[0]?.version ?? 0) + 1,
+            })
+            .onDuplicateKeyUpdate({
+              set: {
+                role: input.role,
+                version: (previous[0]?.version ?? 0) + 1,
+              },
+            });
           await appendAudit(tx, {
             actor: actor(ctx.user, "admin"),
             entity: "member_role",
@@ -263,14 +459,38 @@ export const appRouter = router({
         )
           throw forbidden("Use the tracking API for this role");
         const db = await dbOrThrow();
+        const scope = await readOfficeScope(db, ctx.user);
         const output: SyncResult = { applied: [], conflicts: [] };
         await db.transaction(async tx => {
           const office =
-            role === "admin" || role === "accountant"
+            role === "admin" ||
+            (role === "accountant" &&
+              (scope.offices === null || scope.offices.includes("nouakchott")))
               ? await readOfficeSettings(tx)
               : null;
           for (const rawChange of input.changes) {
             const change = parseChange(rawChange);
+            const scopeCurrentRows = await tx
+              .select()
+              .from(records)
+              .where(
+                and(
+                  eq(records.entity, change.entity),
+                  eq(records.recordId, change.recordId)
+                )
+              )
+              .limit(1);
+            const scopeCurrent = scopeCurrentRows[0] ?? null;
+            if (
+              scopeCurrent &&
+              !canReadScopedRecord(
+                scope.role,
+                scope.offices,
+                change.entity,
+                scopeCurrent.data as EntityRecord
+              )
+            )
+              throw forbidden("Record is outside your office scope");
             const existingReceipt = await tx
               .select()
               .from(syncReceipts)
@@ -284,6 +504,26 @@ export const appRouter = router({
               .for("update");
             if (existingReceipt[0]) {
               const replay = existingReceipt[0].result as unknown as SyncResult;
+              if (
+                (replay.applied ?? []).some(
+                  item =>
+                    item.entity !== change.entity ||
+                    item.record.id !== change.recordId ||
+                    !canReadScopedRecord(
+                      scope.role,
+                      scope.offices,
+                      item.entity,
+                      item.record
+                    )
+                )
+              ) {
+                output.conflicts.push({
+                  changeId: change.id,
+                  reason: "previously_applied_access_changed",
+                  current: null,
+                });
+                continue;
+              }
               for (const acknowledged of replay.applied ?? []) {
                 if (acknowledged.entity === "invoice" && !canViewFinance(role))
                   output.conflicts.push({
@@ -299,7 +539,11 @@ export const appRouter = router({
                   )
                   .map(item => ({
                     ...item,
-                    record: hideFinance(item.record, role),
+                    record: hideForOfficeScope(
+                      item.record,
+                      role,
+                      scope.offices
+                    ),
                   }))
               );
               output.conflicts.push(
@@ -307,8 +551,14 @@ export const appRouter = router({
                   ...item,
                   current:
                     item.current &&
-                    (change.entity !== "invoice" || canViewFinance(role))
-                      ? hideFinance(item.current, role)
+                    (change.entity !== "invoice" || canViewFinance(role)) &&
+                    canReadScopedRecord(
+                      scope.role,
+                      scope.offices,
+                      change.entity,
+                      item.current
+                    )
+                      ? hideForOfficeScope(item.current, role, scope.offices)
                       : null,
                 }))
               );
@@ -326,7 +576,13 @@ export const appRouter = router({
               .limit(1)
               .for("update");
             const current = currentRows[0] ?? null;
-            const currentPublic = current ? hiddenCurrent(current, role) : null;
+            const currentPublic = current
+              ? hideForOfficeScope(
+                  hiddenCurrent(current, role),
+                  role,
+                  scope.offices
+                )
+              : null;
             let result: SyncResult;
             if (!canWrite(role, change.entity))
               result = {
@@ -399,7 +655,24 @@ export const appRouter = router({
               let nextData: EntityRecord;
               try {
                 let candidate = change.data;
-                if (change.entity === "invoice" && office) {
+                if (
+                  change.entity === "invoice" &&
+                  (candidate as any).payment &&
+                  !office
+                )
+                  throw new Error("payment_office_scope_forbidden");
+                if (
+                  change.entity === "invoice" &&
+                  (candidate as any).payment &&
+                  (candidate as any).officeId &&
+                  (candidate as any).officeId !== "nouakchott"
+                )
+                  throw new Error("payment_office_mismatch");
+                if (
+                  change.entity === "invoice" &&
+                  office &&
+                  (candidate as any).payment !== undefined
+                ) {
                   const currentInvoice = current
                     ? (asEntityRecord(current.data) as any)
                     : null;
@@ -410,13 +683,20 @@ export const appRouter = router({
                   );
                   candidate = payment
                     ? ({ ...candidate, payment } as EntityRecord)
-                    : ({ ...candidate, payment: undefined } as EntityRecord);
+                    : candidate;
                 }
                 nextData = prepareRecordForWrite(
                   role,
                   candidate,
                   current ? asEntityRecord(current.data) : null,
                   change.action
+                );
+                assertOfficeRecordWrite(
+                  role,
+                  scope.offices,
+                  change.entity,
+                  nextData,
+                  current ? asEntityRecord(current.data) : null
                 );
               } catch (error) {
                 result = {
@@ -615,10 +895,20 @@ export const appRouter = router({
         const role = await effectiveRole(ctx.user);
         if (!role) throw forbidden();
         const db = await dbOrThrow();
+        const scope = await readOfficeScope(db, ctx.user);
         const search = input.search?.toLocaleLowerCase("ar");
         const rows = await db.select().from(records);
         const matching = rows.filter(row => {
           if (row.entity !== "shipment") return false;
+          if (
+            !canReadScopedRecord(
+              scope.role,
+              scope.offices,
+              "shipment",
+              row.data as Shipment
+            )
+          )
+            return false;
           if (!search) return true;
           const shipment = row.data as Shipment;
           return (
@@ -652,6 +942,7 @@ export const appRouter = router({
         if (!canTrackingDetails(role))
           throw forbidden("Tracking detail is not available to viewers");
         const db = await dbOrThrow();
+        const scope = await readOfficeScope(db, ctx.user);
         const row = (
           await db
             .select()
@@ -669,9 +960,19 @@ export const appRouter = router({
             code: "NOT_FOUND",
             message: "Shipment not found",
           });
-        return hideFinance(
+        if (
+          !canReadScopedRecord(
+            scope.role,
+            scope.offices,
+            "shipment",
+            row.data as Shipment
+          )
+        )
+          throw branchForbidden();
+        return hideForOfficeScope(
           { ...(row.data as Shipment), scope: "shared", version: row.version },
-          role
+          role,
+          scope.offices
         );
       }),
 
@@ -683,9 +984,31 @@ export const appRouter = router({
           throw forbidden("Tracking command is not available to viewers");
         const request = parseTrackingRequest(input);
         const db = await dbOrThrow();
+        const scope = await readOfficeScope(db, ctx.user);
         try {
           return await db.transaction(async tx => {
             const receiptKey = trackingReceiptKey(request.requestId);
+            const scopeRows = await tx
+              .select()
+              .from(records)
+              .where(
+                and(
+                  eq(records.entity, "shipment"),
+                  eq(records.recordId, request.shipmentId)
+                )
+              )
+              .limit(1)
+              .for("update");
+            if (!scopeRows[0]) throw new Error("tracking_not_found");
+            if (
+              !canReadScopedRecord(
+                scope.role,
+                scope.offices,
+                "shipment",
+                scopeRows[0].data as Shipment
+              )
+            )
+              throw new Error("tracking_forbidden");
             const existing = await tx
               .select()
               .from(syncReceipts)
@@ -703,9 +1026,19 @@ export const appRouter = router({
                 shipment: Shipment;
                 version: number;
               };
+              if (
+                old.shipment.id !== request.shipmentId ||
+                !canReadScopedRecord(
+                  scope.role,
+                  scope.offices,
+                  "shipment",
+                  old.shipment
+                )
+              )
+                throw new Error("tracking_forbidden");
               return {
                 requestId: old.requestId,
-                shipment: hideFinance(old.shipment, role),
+                shipment: hideForOfficeScope(old.shipment, role, scope.offices),
                 version: old.version,
               };
             }
@@ -723,6 +1056,26 @@ export const appRouter = router({
                 .for("update")
             )[0];
             if (!row) throw new Error("tracking_not_found");
+            if (
+              !canReadScopedRecord(
+                scope.role,
+                scope.offices,
+                "shipment",
+                row.data as Shipment
+              )
+            )
+              throw new Error("tracking_forbidden");
+            if (
+              scope.role !== "admin" &&
+              scope.offices !== null &&
+              !canWriteOfficeRecord(
+                scope.role,
+                scope.offices,
+                "shipment",
+                row.data as Shipment
+              )
+            )
+              throw new Error("tracking_forbidden");
             if (row.version !== request.expectedVersion)
               throw new Error("tracking_version_conflict");
             const mutation = applyTrackingCommand(
@@ -760,7 +1113,11 @@ export const appRouter = router({
               .values({ userId: ctx.user.id, changeId: receiptKey, result });
             return {
               requestId: result.requestId,
-              shipment: hideFinance(result.shipment, role),
+              shipment: hideForOfficeScope(
+                result.shipment,
+                role,
+                scope.offices
+              ),
               version: result.version,
             };
           });
@@ -777,12 +1134,19 @@ export const appRouter = router({
         const role = await effectiveRole(ctx.user);
         if (!canSuperviseTracking(role)) throw forbidden();
         const db = await dbOrThrow();
+        const scope = await readOfficeScope(db, ctx.user);
         const search = input.search?.toLocaleLowerCase("ar");
         const rows = await db.select().from(records);
         return rows
           .filter(
             row =>
               row.entity === "shipment" &&
+              canReadScopedRecord(
+                scope.role,
+                scope.offices,
+                "shipment",
+                row.data as Shipment
+              ) &&
               (!search ||
                 String((row.data as Shipment).id)
                   .toLocaleLowerCase()
@@ -806,7 +1170,35 @@ export const appRouter = router({
         const role = await effectiveRole(ctx.user);
         if (role !== "admin" && role !== "supervisor")
           throw forbidden("Audit access is restricted");
-        return readAudit(await dbOrThrow(), role, input);
+        const db = await dbOrThrow();
+        if (role !== "admin") {
+          if (!input.shipmentId)
+            throw forbidden("Shipment-specific audit access is required");
+          const scope = await readOfficeScope(db, ctx.user);
+          const row = (
+            await db
+              .select()
+              .from(records)
+              .where(
+                and(
+                  eq(records.entity, "shipment"),
+                  eq(records.recordId, input.shipmentId)
+                )
+              )
+              .limit(1)
+          )[0];
+          if (
+            !row ||
+            !canReadScopedRecord(
+              scope.role,
+              scope.offices,
+              "shipment",
+              row.data as Shipment
+            )
+          )
+            throw forbidden();
+        }
+        return readAudit(db, role, input);
       }),
   }),
 
@@ -823,6 +1215,33 @@ export const appRouter = router({
         if (role !== "admin" && role !== "supervisor")
           throw forbidden("Audit access is restricted");
         const db = await dbOrThrow();
+        if (role !== "admin") {
+          if (!input.shipmentId)
+            throw forbidden("Shipment-specific audit access is required");
+          const scope = await readOfficeScope(db, ctx.user);
+          const row = (
+            await db
+              .select()
+              .from(records)
+              .where(
+                and(
+                  eq(records.entity, "shipment"),
+                  eq(records.recordId, input.shipmentId)
+                )
+              )
+              .limit(1)
+          )[0];
+          if (
+            !row ||
+            !canReadScopedRecord(
+              scope.role,
+              scope.offices,
+              "shipment",
+              row.data as Shipment
+            )
+          )
+            throw forbidden();
+        }
         return readAudit(db, role, input);
       }),
   }),
@@ -832,7 +1251,15 @@ export const appRouter = router({
       const role = await effectiveRole(ctx.user);
       if (!role || role === "viewer" || role === "tracking_staff")
         throw forbidden();
-      return readOfficeSettings(await dbOrThrow());
+      const db = await dbOrThrow();
+      const scope = await readOfficeScope(db, ctx.user);
+      if (
+        role !== "admin" &&
+        scope.offices !== null &&
+        !scope.offices.includes("nouakchott")
+      )
+        throw forbidden("Nouakchott accounting scope required");
+      return readOfficeSettings(db);
     }),
     update: protectedProcedure
       .input(officeUpdateSchema)

@@ -190,8 +190,9 @@ export function useTrackingWorkspace(
         return [];
       }
     }
+    if (activeId && online) return [];
     return cache?.summaries ?? [];
-  }, [activeId, listQuery.data, cache]);
+  }, [activeId, online, listQuery.data, cache]);
   const detail: TrackingShipment | null = useMemo(() => {
     if (activeId && detailQuery.data && canTrackingDetails(role)) {
       try {
@@ -200,8 +201,9 @@ export function useTrackingWorkspace(
         return null;
       }
     }
+    if (!canTrackingDetails(role) || (activeId && online)) return null;
     return selectedId ? (cache?.details[selectedId] ?? null) : null;
-  }, [activeId, detailQuery.data, role, selectedId, cache]);
+  }, [activeId, online, detailQuery.data, role, selectedId, cache]);
   const auditState = useMemo(() => {
     if (!auditQuery.data || !canSuperviseTracking(role))
       return { value: null, error: false };

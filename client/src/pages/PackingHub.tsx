@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useRoute, useSearch } from "wouter";
 import { Plus, Search } from "lucide-react";
 import ShipmentDeleteActions from "@/components/packing/ShipmentDeleteActions";
@@ -16,6 +16,13 @@ import {
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useOperationsWorkspace } from "@/hooks/useOperationsWorkspace";
 import { copyFor } from "@/lib/packingCopy";
+import {
+  officeIds,
+  officeNames,
+  ownerOffice,
+  recordBelongsToOffice,
+  type OfficeId,
+} from "@shared/branches";
 import {
   createPackedShipment,
   isPackedShipment,
@@ -38,19 +45,75 @@ export default function PackingHub() {
   const [message, setMessage] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [tracking, setTracking] = useState("");
-  const [source, setSource] = useState<PackingSource>("dubai");
+  const query = useSearch();
+  const requestedOffice = new URLSearchParams(query).get("office");
+  const officeOptions: OfficeId[] =
+    workspace.offices === null ? [...officeIds] : workspace.offices;
+  const selectedOffice: OfficeId | null =
+    officeIds.includes(requestedOffice as OfficeId) &&
+    officeOptions.includes(requestedOffice as OfficeId)
+      ? (requestedOffice as OfficeId)
+      : !requestedOffice && officeOptions.length === 1
+        ? officeOptions[0]
+        : null;
+  const officeFilter: OfficeId | "all" | "unassigned" =
+    requestedOffice === "unassigned" ? "unassigned" : (selectedOffice ?? "all");
+  const [source, setSource] = useState<PackingSource>(
+    selectedOffice && selectedOffice !== "nouakchott" ? selectedOffice : "dubai"
+  );
   const [pricePerKg, setPricePerKg] = useState("0");
   const [pricePerKgMRU, setPricePerKgMRU] = useState("");
   const [saving, setSaving] = useState(false);
-  const query = useSearch();
   const showDeletedShipments =
     new URLSearchParams(query).get("deleted") === "1";
-  const setShowDeletedShipments = (value: boolean) =>
-    navigate(
-      value ? "/operations/shipments?deleted=1" : "/operations/shipments"
+  const setShowDeletedShipments = (value: boolean) => {
+    const params = new URLSearchParams(query);
+    if (value) params.set("deleted", "1");
+    else params.delete("deleted");
+    navigate(`/operations/shipments${params.toString() ? `?${params}` : ""}`);
+  };
+  useEffect(() => {
+    if (selectedOffice && selectedOffice !== "nouakchott")
+      setSource(selectedOffice);
+  }, [selectedOffice]);
+  const setOfficeFilter = (office: OfficeId | "all" | "unassigned") => {
+    const params = new URLSearchParams(query);
+    if (office === "all") params.delete("office");
+    else params.set("office", office);
+    navigate(`/operations/shipments${params.toString() ? `?${params}` : ""}`);
+  };
+  const officeLabel = (office: OfficeId | "all" | "unassigned") => {
+    if (office === "all")
+      return (
+        {
+          ar: "كل المكاتب",
+          en: "All offices",
+          zh: "所有办公室",
+          tr: "Tüm ofisler",
+        }[language] ?? "All offices"
+      );
+    if (office === "unassigned")
+      return (
+        { ar: "غير مخصص", en: "Unassigned", zh: "未分配", tr: "Atanmamış" }[
+          language
+        ] ?? "Unassigned"
+      );
+    return (
+      officeNames[language as keyof typeof officeNames]?.[office] ?? office
     );
+  };
   const savingRef = useRef(false);
-  const allShipments = workspace.state.shipments;
+  const allShipments = useMemo(
+    () =>
+      workspace.state.shipments.filter(shipment =>
+        officeFilter === "unassigned"
+          ? ownerOffice("shipment", shipment) === null
+          : officeFilter === "all"
+            ? true
+            : recordBelongsToOffice("shipment", shipment, officeFilter)
+      ),
+    [workspace.state.shipments, officeFilter]
+  );
   const visibleShipments = useMemo(
     () =>
       allShipments.filter(
@@ -87,6 +150,13 @@ export default function PackingHub() {
     event.preventDefault();
     if (savingRef.current) return;
     setFormError(null);
+    if (
+      officeIds.includes(requestedOffice as OfficeId) &&
+      !officeOptions.includes(requestedOffice as OfficeId)
+    ) {
+      setFormError(c.canNotEdit);
+      return;
+    }
     if (!workspace.canEditShipments) {
       setFormError(c.canNotEdit);
       return;
@@ -124,6 +194,9 @@ export default function PackingHub() {
       const shipment = createPackedShipment({
         tracking: cleanTracking,
         source,
+        ...(selectedOffice
+          ? { officeId: selectedOffice }
+          : { officeId: source }),
         pricePerKg: workspace.showFinance ? numericRate : 0,
         ...(workspace.showFinance && numericMru !== undefined
           ? { pricePerKgMRU: numericMru }
@@ -141,7 +214,9 @@ export default function PackingHub() {
       setTracking("");
       setPricePerKg("0");
       setPricePerKgMRU("");
-      navigate(`/operations/shipments/${shipment.id}`);
+      navigate(
+        `/operations/shipments/${shipment.id}${query ? `?${query}` : ""}`
+      );
     } catch (error) {
       setFormError(
         error instanceof Error && error.message === "invalid_tracking"
@@ -170,7 +245,7 @@ export default function PackingHub() {
               <p className="text-sm text-[#718088]">{c.createHelp}</p>
             </div>
             <Link
-              href="/operations/shipments/new"
+              href={`/operations/shipments/new${query ? `?${query}` : ""}`}
               className={`${packingPrimaryClass} gap-2`}
             >
               <Plus size={17} />
@@ -202,6 +277,27 @@ export default function PackingHub() {
             >
               {c.deletedShipments} ({deletedCount})
             </button>
+            <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold">
+              <span className="sr-only">Office</span>
+              <select
+                aria-label="Office"
+                className="bg-transparent outline-none"
+                value={officeFilter}
+                onChange={event =>
+                  setOfficeFilter(
+                    event.target.value as OfficeId | "all" | "unassigned"
+                  )
+                }
+              >
+                <option value="all">{officeLabel("all")}</option>
+                <option value="unassigned">{officeLabel("unassigned")}</option>
+                {officeOptions.map(office => (
+                  <option key={office} value={office}>
+                    {officeLabel(office)}
+                  </option>
+                ))}
+              </select>
+            </label>
             <label className="relative min-w-[220px] flex-1">
               <Search
                 size={16}
@@ -227,6 +323,7 @@ export default function PackingHub() {
                   language={language}
                   showFinance={workspace.showFinance}
                   workspace={workspace}
+                  officeQuery={query}
                 />
               ))}
             </div>
@@ -249,7 +346,7 @@ export default function PackingHub() {
                 </h2>
                 <p className="text-sm text-[#718088]">{c.legacySummary}</p>
                 <Link
-                  href="/operations/shipments"
+                  href={`/operations/shipments${query ? `?${query}` : ""}`}
                   className="mt-2 inline-block text-sm font-bold text-[#2d6380] underline"
                 >
                   {c.manageShipments}
@@ -279,8 +376,8 @@ export default function PackingHub() {
                         className="font-bold text-[#2d6380] underline"
                         href={
                           shipment.deleted
-                            ? `/operations/shipments/${shipment.id}`
-                            : "/operations"
+                            ? `/operations/shipments/${shipment.id}${query ? `?${query}` : ""}`
+                            : `/operations?${query}`
                         }
                       >
                         {shipment.deleted
@@ -309,6 +406,10 @@ export default function PackingHub() {
           setTracking={setTracking}
           source={source}
           setSource={setSource}
+          sourceLocked={Boolean(
+            selectedOffice && selectedOffice !== "nouakchott"
+          )}
+          selectedOffice={selectedOffice}
           pricePerKg={pricePerKg}
           setPricePerKg={setPricePerKg}
           pricePerKgMRU={pricePerKgMRU}
@@ -330,6 +431,8 @@ function NewShipmentForm({
   setTracking,
   source,
   setSource,
+  sourceLocked,
+  selectedOffice,
   pricePerKg,
   setPricePerKg,
   pricePerKgMRU,
@@ -345,6 +448,8 @@ function NewShipmentForm({
   setTracking: (v: string) => void;
   source: PackingSource;
   setSource: (v: PackingSource) => void;
+  sourceLocked: boolean;
+  selectedOffice: OfficeId | null;
   pricePerKg: string;
   setPricePerKg: (v: string) => void;
   pricePerKgMRU: string;
@@ -378,7 +483,7 @@ function NewShipmentForm({
           <select
             aria-label={c.source}
             required
-            disabled={saving}
+            disabled={saving || sourceLocked}
             className={packingInputClass}
             value={source}
             onChange={event => setSource(event.target.value as PackingSource)}
@@ -463,12 +568,14 @@ function ShipmentRow({
   language,
   showFinance,
   workspace,
+  officeQuery,
 }: {
   shipment: ReturnType<typeof import("@shared/packing").createPackedShipment>;
   c: ReturnType<typeof copyFor>;
   language: string;
   showFinance: boolean;
   workspace: ReturnType<typeof useOperationsWorkspace>;
+  officeQuery: string;
 }) {
   const totals = packingTotals(shipment.packing);
   const mruTotals = packingTotalsMRU(shipment.packing);
@@ -478,7 +585,7 @@ function ShipmentRow({
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <Link
-          href={`/operations/shipments/${shipment.id}`}
+          href={`/operations/shipments/${shipment.id}${officeQuery ? `?${officeQuery}` : ""}`}
           className="min-w-0 flex-1 rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-[#d9a441]"
         >
           <div className="min-w-0">
