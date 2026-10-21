@@ -17,6 +17,7 @@ export type BranchSettingsCopy = {
   timezone: string;
   gps: string;
   gpsHint: string;
+  mapLink: string;
   latitude: string;
   longitude: string;
   manualGpsOnly: string;
@@ -101,13 +102,17 @@ const ar: BranchSettingsCopy = {
   chooseOffice: "اختر المكتب",
   profile: "الملف العام للمكتب",
   profileHint: "هذه البيانات عامة بعد الحفظ ولا تشمل بيانات الدخول أو الحساب.",
-  publicNotice: "سيظهر العنوان والدوام والموقع وأسماء وأرقام الموظفين للعامة بعد الحفظ",
-  publicContactsNotice: "جهات الاتصال هذه عامة فقط ولا تمنح الموظف صلاحية دخول.",
+  publicNotice:
+    "سيظهر العنوان والدوام والموقع وأسماء وأرقام الموظفين للعامة بعد الحفظ",
+  publicContactsNotice:
+    "جهات الاتصال هذه عامة فقط ولا تمنح الموظف صلاحية دخول.",
   address: "العنوان العام",
   phone: "هاتف المكتب العام",
   timezone: "المنطقة الزمنية",
   gps: "الموقع الجغرافي",
-  gpsHint: "أدخل الإحداثيات يدويًا فقط؛ لن نطلب إذن موقع المتصفح ولن نخمن الإحداثيات.",
+  gpsHint:
+    "ألصق رابط موقع المكتب من خرائط Google أو أي خريطة أخرى يدويًا فقط. لن نطلب إذن موقع الجهاز.",
+  mapLink: "رابط الموقع على الخريطة",
   latitude: "خط العرض",
   longitude: "خط الطول",
   manualGpsOnly: "إدخال يدوي، اختياري",
@@ -128,22 +133,25 @@ const ar: BranchSettingsCopy = {
   contactPayload: "سيُنشر الاسم والرقم التاليان للعامة:",
   contactRequired: "أدخل اسم الموظف ورقمه قبل الإضافة.",
   phoneInvalid: "أدخل رقمًا صالحًا من 5 إلى 40 رمزًا.",
-  gpsInvalid: "أدخل خطي عرض وطول صالحين معًا، أو اتركهما فارغين.",
+  gpsInvalid: "أدخل رابط خريطة HTTPS صالحًا أو اتركه فارغًا.",
   hoursInvalid: "تحقق من ترتيب الساعات وأن تكون الاستراحة داخل ساعات العمل.",
   saveProfile: "حفظ الملف العام",
   saving: "جارٍ الحفظ…",
   saved: "تم حفظ الملف العام",
-  saveConfirm: "سيُنشر هذا الملف العام وجهات الاتصال التالية. هل تريد المتابعة؟",
+  saveConfirm:
+    "سيُنشر هذا الملف العام وجهات الاتصال التالية. هل تريد المتابعة؟",
   readOnly: "وضع القراءة فقط",
   adminOnly: "تعديل ملف المكتب متاح للمدير فقط.",
-  onlineRequired: "لا يمكن حفظ إعدادات المكتب دون اتصال بالإنترنت. لم تُحفظ مسودة محلية.",
+  onlineRequired:
+    "لا يمكن حفظ إعدادات المكتب دون اتصال بالإنترنت. لم تُحفظ مسودة محلية.",
   loading: "جارٍ تحميل إعدادات المكاتب…",
   loadError: "تعذر تحميل إعدادات المكاتب.",
   retry: "إعادة المحاولة",
   dirty: "تغييرات غير محفوظة",
   reloadConfirm: "إعادة تحميل نسخة الخادم واستبدال التغييرات غير المحفوظة؟",
   conflict: "تعارض في النسخة",
-  conflictDetail: "تغير الملف على الخادم. أعد التحميل وراجع تغييراتك قبل الحفظ.",
+  conflictDetail:
+    "تغير الملف على الخادم. أعد التحميل وراجع تغييراتك قبل الحفظ.",
   reload: "إعادة تحميل",
   noProfile: "لا يوجد ملف لهذا المكتب.",
   memberships: "صلاحيات الموظفين",
@@ -166,7 +174,8 @@ const ar: BranchSettingsCopy = {
   paymentMethods: "طرق الدفع اليدوية",
   paymentMethodsNouakchottOnly: "تظهر طرق الدفع القديمة لمكتب نواكشوط فقط.",
   paymentMethodsReadOnly: "هذه الطرق للقراءة فقط لهذا الدور.",
-  paymentMethodsAdminOnly: "تعديل طرق الدفع متاح للمدير المالي أو المدير وفق واجهة الدفع القديمة.",
+  paymentMethodsAdminOnly:
+    "تعديل طرق الدفع متاح للمدير المالي أو المدير وفق واجهة الدفع القديمة.",
   enabled: "مفعّلة",
   disabled: "معطّلة",
   methodId: "المعرّف",
@@ -191,19 +200,25 @@ const en: BranchSettingsCopy = {
   office: "Office",
   chooseOffice: "Choose office",
   profile: "Public office profile",
-  profileHint: "This data is public after saving and excludes login or account data.",
-  publicNotice: "The address, hours, location, and employee names and phone numbers will be public after saving",
-  publicContactsNotice: "These contacts are public only and do not grant the employee login access.",
+  profileHint:
+    "This data is public after saving and excludes login or account data.",
+  publicNotice:
+    "The address, hours, location, and employee names and phone numbers will be public after saving",
+  publicContactsNotice:
+    "These contacts are public only and do not grant the employee login access.",
   address: "Public address",
   phone: "Public office phone",
   timezone: "Time zone",
   gps: "GPS location",
-  gpsHint: "Enter coordinates manually; we never request browser location permission or guess coordinates.",
+  gpsHint:
+    "Paste the office map link manually. We never request device location permission.",
+  mapLink: "Map location link",
   latitude: "Latitude",
   longitude: "Longitude",
   manualGpsOnly: "Manual entry, optional",
   workHours: "Work hours",
-  workHoursHint: "No fake default hours are added. Leave a day unset until its schedule is known.",
+  workHoursHint:
+    "No fake default hours are added. Leave a day unset until its schedule is known.",
   setSchedule: "Set work schedule",
   closed: "Closed",
   open: "Open",
@@ -219,26 +234,30 @@ const en: BranchSettingsCopy = {
   contactPayload: "The following name and phone will be public:",
   contactRequired: "Enter an employee name and phone before adding.",
   phoneInvalid: "Enter a valid phone number with 5–40 characters.",
-  gpsInvalid: "Enter both valid latitude and longitude values, or leave both empty.",
+  gpsInvalid: "Enter a valid HTTPS map link, or leave it empty.",
   hoursInvalid: "Check time order and keep the break inside work hours.",
   saveProfile: "Save public profile",
   saving: "Saving…",
   saved: "Public profile saved",
-  saveConfirm: "This public profile and the following contacts will be published. Continue?",
+  saveConfirm:
+    "This public profile and the following contacts will be published. Continue?",
   readOnly: "Read-only mode",
   adminOnly: "Only an administrator can edit the office profile.",
-  onlineRequired: "Office settings cannot be saved offline. No local draft was stored.",
+  onlineRequired:
+    "Office settings cannot be saved offline. No local draft was stored.",
   loading: "Loading office settings…",
   loadError: "Could not load office settings.",
   retry: "Retry",
   dirty: "Unsaved changes",
   reloadConfirm: "Reload the server version and replace unsaved changes?",
   conflict: "Version conflict",
-  conflictDetail: "The profile changed on the server. Reload and review your changes before saving.",
+  conflictDetail:
+    "The profile changed on the server. Reload and review your changes before saving.",
   reload: "Reload",
   noProfile: "No profile exists for this office.",
   memberships: "Employee access",
-  membershipsHint: "Membership grants app access only; it does not publish an employee phone number.",
+  membershipsHint:
+    "Membership grants app access only; it does not publish an employee phone number.",
   member: "Employee",
   email: "Email",
   role: "Role",
@@ -247,17 +266,21 @@ const en: BranchSettingsCopy = {
   memberSaved: "Employee access saved",
   memberLoadError: "Could not load team members.",
   memberSaveError: "Could not save employee access.",
-  globalLegacy: "Legacy global access has not been split; saving will explicitly change its scope.",
-  employeeLoginRequired: "The employee must sign in first, then link them to the office",
+  globalLegacy:
+    "Legacy global access has not been split; saving will explicitly change its scope.",
+  employeeLoginRequired:
+    "The employee must sign in first, then link them to the office",
   contactNoAccess: "A public contact does not grant login access.",
   rootAdminLocked: "The root administrator cannot be changed or promoted here.",
   noMemberAccess: "Membership management is available to administrators only.",
   noOfficeAccess: "You do not have read access to this office.",
   publicProfile: "Public profile information",
   paymentMethods: "Manual payment methods",
-  paymentMethodsNouakchottOnly: "The legacy payment section is shown for Nouakchott only.",
+  paymentMethodsNouakchottOnly:
+    "The legacy payment section is shown for Nouakchott only.",
   paymentMethodsReadOnly: "These methods are read-only for this role.",
-  paymentMethodsAdminOnly: "Payment editing follows the existing administrator/finance payment API.",
+  paymentMethodsAdminOnly:
+    "Payment editing follows the existing administrator/finance payment API.",
   enabled: "Enabled",
   disabled: "Disabled",
   methodId: "Identifier",
@@ -289,7 +312,8 @@ const zh: BranchSettingsCopy = {
   phone: "办公室公开电话",
   timezone: "时区",
   gps: "GPS 位置",
-  gpsHint: "请手动输入坐标；我们不会请求浏览器定位权限，也不会猜测坐标。",
+  gpsHint: "请仅手动粘贴办公室地图链接；我们不会请求设备定位权限。",
+  mapLink: "地图位置链接",
   latitude: "纬度",
   longitude: "经度",
   manualGpsOnly: "手动输入，可选",
@@ -310,7 +334,7 @@ const zh: BranchSettingsCopy = {
   contactPayload: "以下姓名和电话将公开：",
   contactRequired: "添加前请输入员工姓名和电话。",
   phoneInvalid: "请输入 5–40 个字符的有效电话号码。",
-  gpsInvalid: "请输入成对的有效经纬度，或将两项都留空。",
+  gpsInvalid: "请输入有效的 HTTPS 地图链接，或留空。",
   hoursInvalid: "请检查时间顺序，并确保休息时间在工作时间内。",
   saveProfile: "保存公开资料",
   saving: "正在保存…",
@@ -369,23 +393,30 @@ const zh: BranchSettingsCopy = {
 
 const tr: BranchSettingsCopy = {
   title: "Ofis ayarları",
-  description: "Her ofis için herkese açık profil, çalışma saatleri ve üyelikler",
+  description:
+    "Her ofis için herkese açık profil, çalışma saatleri ve üyelikler",
   office: "Ofis",
   chooseOffice: "Ofis seçin",
   profile: "Herkese açık ofis profili",
-  profileHint: "Bu bilgiler kaydedildikten sonra herkese açıktır; giriş ve hesap bilgileri dahil değildir.",
-  publicNotice: "Adres, çalışma saatleri, konum ve çalışan adları ile telefonları kaydedildikten sonra herkese açık olur",
-  publicContactsNotice: "Bu kişiler yalnızca herkese açıktır ve çalışana giriş yetkisi vermez.",
+  profileHint:
+    "Bu bilgiler kaydedildikten sonra herkese açıktır; giriş ve hesap bilgileri dahil değildir.",
+  publicNotice:
+    "Adres, çalışma saatleri, konum ve çalışan adları ile telefonları kaydedildikten sonra herkese açık olur",
+  publicContactsNotice:
+    "Bu kişiler yalnızca herkese açıktır ve çalışana giriş yetkisi vermez.",
   address: "Herkese açık adres",
   phone: "Herkese açık ofis telefonu",
   timezone: "Saat dilimi",
   gps: "GPS konumu",
-  gpsHint: "Koordinatları elle girin; tarayıcı konum izni istemeyiz ve koordinat tahmin etmeyiz.",
+  gpsHint:
+    "Koordinatları elle girin; tarayıcı konum izni istemeyiz ve koordinat tahmin etmeyiz.",
+  mapLink: "Harita konum bağlantısı",
   latitude: "Enlem",
   longitude: "Boylam",
   manualGpsOnly: "Elle giriş, isteğe bağlı",
   workHours: "Çalışma saatleri",
-  workHoursHint: "Sahte varsayılan saat eklenmez. Saat bilinmiyorsa günü ayarlanmamış bırakın.",
+  workHoursHint:
+    "Sahte varsayılan saat eklenmez. Saat bilinmiyorsa günü ayarlanmamış bırakın.",
   setSchedule: "Çalışma programını belirle",
   closed: "Kapalı",
   open: "Açık",
@@ -401,26 +432,33 @@ const tr: BranchSettingsCopy = {
   contactPayload: "Aşağıdaki ad ve telefon herkese açık olacaktır:",
   contactRequired: "Eklemek için çalışan adı ve telefonu girin.",
   phoneInvalid: "5–40 karakterlik geçerli bir telefon girin.",
-  gpsInvalid: "İki geçerli enlem-boylam değeri girin veya ikisini de boş bırakın.",
-  hoursInvalid: "Saat sırasını kontrol edin ve molayı çalışma saatleri içinde tutun.",
+  gpsInvalid:
+    "İki geçerli enlem-boylam değeri girin veya ikisini de boş bırakın.",
+  hoursInvalid:
+    "Saat sırasını kontrol edin ve molayı çalışma saatleri içinde tutun.",
   saveProfile: "Herkese açık profili kaydet",
   saving: "Kaydediliyor…",
   saved: "Herkese açık profil kaydedildi",
-  saveConfirm: "Bu herkese açık profil ve aşağıdaki kişiler yayınlanacak. Devam edilsin mi?",
+  saveConfirm:
+    "Bu herkese açık profil ve aşağıdaki kişiler yayınlanacak. Devam edilsin mi?",
   readOnly: "Salt okunur mod",
   adminOnly: "Ofis profilini yalnızca yönetici düzenleyebilir.",
-  onlineRequired: "Ofis ayarları çevrimdışı kaydedilemez. Yerel taslak saklanmadı.",
+  onlineRequired:
+    "Ofis ayarları çevrimdışı kaydedilemez. Yerel taslak saklanmadı.",
   loading: "Ofis ayarları yükleniyor…",
   loadError: "Ofis ayarları yüklenemedi.",
   retry: "Tekrar dene",
   dirty: "Kaydedilmemiş değişiklikler",
-  reloadConfirm: "Sunucu sürümü yeniden yüklenip kaydedilmemiş değişiklikler değiştirilsin mi?",
+  reloadConfirm:
+    "Sunucu sürümü yeniden yüklenip kaydedilmemiş değişiklikler değiştirilsin mi?",
   conflict: "Sürüm çakışması",
-  conflictDetail: "Profil sunucuda değişti. Yeniden yükleyip değişikliklerinizi inceleyin.",
+  conflictDetail:
+    "Profil sunucuda değişti. Yeniden yükleyip değişikliklerinizi inceleyin.",
   reload: "Yeniden yükle",
   noProfile: "Bu ofis için profil yok.",
   memberships: "Çalışan erişimi",
-  membershipsHint: "Üyelik yalnızca uygulama erişimi verir; çalışan telefonunu yayınlamaz.",
+  membershipsHint:
+    "Üyelik yalnızca uygulama erişimi verir; çalışan telefonunu yayınlamaz.",
   member: "Çalışan",
   email: "E-posta",
   role: "Rol",
@@ -429,17 +467,21 @@ const tr: BranchSettingsCopy = {
   memberSaved: "Çalışan erişimi kaydedildi",
   memberLoadError: "Ekip üyeleri yüklenemedi.",
   memberSaveError: "Çalışan erişimi kaydedilemedi.",
-  globalLegacy: "Eski genel erişim bölünmedi; kaydetmek kapsamı açıkça değiştirir.",
-  employeeLoginRequired: "Çalışan önce giriş yapmalı, sonra ofise bağlanmalıdır",
+  globalLegacy:
+    "Eski genel erişim bölünmedi; kaydetmek kapsamı açıkça değiştirir.",
+  employeeLoginRequired:
+    "Çalışan önce giriş yapmalı, sonra ofise bağlanmalıdır",
   contactNoAccess: "Herkese açık kişi girişi yetkisi vermez.",
   rootAdminLocked: "Kök yönetici burada değiştirilemez veya yükseltilemez.",
   noMemberAccess: "Üyelik yönetimi yalnızca yöneticilere açıktır.",
   noOfficeAccess: "Bu ofisi okuma yetkiniz yok.",
   publicProfile: "Herkese açık profil bilgileri",
   paymentMethods: "Manuel ödeme yöntemleri",
-  paymentMethodsNouakchottOnly: "Eski ödeme bölümü yalnızca Nuakşot için gösterilir.",
+  paymentMethodsNouakchottOnly:
+    "Eski ödeme bölümü yalnızca Nuakşot için gösterilir.",
   paymentMethodsReadOnly: "Bu rol için yöntemler salt okunurdur.",
-  paymentMethodsAdminOnly: "Ödeme düzenleme mevcut yönetici/finans ödeme API'sini kullanır.",
+  paymentMethodsAdminOnly:
+    "Ödeme düzenleme mevcut yönetici/finans ödeme API'sini kullanır.",
   enabled: "Etkin",
   disabled: "Devre dışı",
   methodId: "Tanımlayıcı",
@@ -458,19 +500,55 @@ const tr: BranchSettingsCopy = {
   unknownError: "Beklenmeyen bir hata oluştu.",
 };
 
-export const branchSettingsCopy: Record<BranchSettingsLanguage, BranchSettingsCopy> = { ar, en, zh, tr };
-export const officeIds: readonly OfficeId[] = ["nouakchott", "dubai", "china", "turkey"];
+export const branchSettingsCopy: Record<
+  BranchSettingsLanguage,
+  BranchSettingsCopy
+> = { ar, en, zh, tr };
+export const officeIds: readonly OfficeId[] = [
+  "nouakchott",
+  "dubai",
+  "china",
+  "turkey",
+];
 
 export function branchSettingsCopyFor(language: string): BranchSettingsCopy {
-  return branchSettingsCopy[(branchSettingsLanguages as readonly string[]).includes(language) ? (language as BranchSettingsLanguage) : "ar"];
+  return branchSettingsCopy[
+    (branchSettingsLanguages as readonly string[]).includes(language)
+      ? (language as BranchSettingsLanguage)
+      : "ar"
+  ];
 }
 
 export function officeName(language: string, officeId: OfficeId): string {
   const names: Record<BranchSettingsLanguage, Record<OfficeId, string>> = {
-    ar: { nouakchott: "نواكشوط", dubai: "دبي", china: "الصين", turkey: "تركيا" },
-    en: { nouakchott: "Nouakchott", dubai: "Dubai", china: "China", turkey: "Turkey" },
-    zh: { nouakchott: "努瓦克肖特", dubai: "迪拜", china: "中国", turkey: "土耳其" },
-    tr: { nouakchott: "Nuakşot", dubai: "Dubai", china: "Çin", turkey: "Türkiye" },
+    ar: {
+      nouakchott: "نواكشوط",
+      dubai: "دبي",
+      china: "الصين",
+      turkey: "تركيا",
+    },
+    en: {
+      nouakchott: "Nouakchott",
+      dubai: "Dubai",
+      china: "China",
+      turkey: "Turkey",
+    },
+    zh: {
+      nouakchott: "努瓦克肖特",
+      dubai: "迪拜",
+      china: "中国",
+      turkey: "土耳其",
+    },
+    tr: {
+      nouakchott: "Nuakşot",
+      dubai: "Dubai",
+      china: "Çin",
+      turkey: "Türkiye",
+    },
   };
-  return names[(branchSettingsLanguages as readonly string[]).includes(language) ? (language as BranchSettingsLanguage) : "ar"][officeId];
+  return names[
+    (branchSettingsLanguages as readonly string[]).includes(language)
+      ? (language as BranchSettingsLanguage)
+      : "ar"
+  ][officeId];
 }

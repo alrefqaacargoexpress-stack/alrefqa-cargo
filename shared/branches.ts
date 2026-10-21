@@ -66,6 +66,14 @@ export const publicEmployeeSchema = z
       }),
   })
   .strict();
+const manualMapUrlSchema = z
+  .string()
+  .trim()
+  .max(2048)
+  .url()
+  .refine(value => value.startsWith("https://"), {
+    message: "map_link_must_be_https",
+  });
 export const officeProfileSchema = z
   .object({
     officeId: officeIdSchema,
@@ -77,6 +85,7 @@ export const officeProfileSchema = z
       "Asia/Shanghai",
       "Europe/Istanbul",
     ]),
+    mapUrl: manualMapUrlSchema.nullable().optional(),
     gps: z
       .object({
         lat: z.number().finite().min(-90).max(90),
@@ -147,6 +156,7 @@ export function defaultOfficeProfile(
     address: "",
     phone: "",
     timezone,
+    mapUrl: null,
     gps: null,
     hours: [],
     employees: [],
@@ -208,9 +218,13 @@ export function canWriteOfficeRecord(
   const home = ownerOffice(entity, record);
   return home !== null && offices.includes(home);
 }
-export function mapsHref(gps: OfficeProfile["gps"]) {
-  return gps
-    ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${gps.lat},${gps.lng}`)}`
+export function mapsHref(
+  mapUrl: OfficeProfile["mapUrl"] | null | undefined,
+  legacyGps?: OfficeProfile["gps"] | null
+) {
+  if (mapUrl) return manualMapUrlSchema.parse(mapUrl);
+  return legacyGps
+    ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${legacyGps.lat},${legacyGps.lng}`)}`
     : null;
 }
 export type OfficeDashboardData = {

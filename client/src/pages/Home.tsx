@@ -22,9 +22,7 @@ import {
 } from "lucide-react";
 import LanguageSwitcher from "@/components/LanguageSwitcher";
 import { useLanguage } from "@/contexts/LanguageContext";
-import {
-  publicCopy,
-} from "@/lib/publicCopy";
+import { publicCopy } from "@/lib/publicCopy";
 import PublicOfficeCards from "@/components/offices/PublicOfficeCards";
 import { trpc } from "@/lib/trpc";
 import {
@@ -83,7 +81,9 @@ export default function Home() {
   const [installed, setInstalled] = useState(isStandalone);
   const [installMessage, setInstallMessage] = useState("");
   const publicOffices = trpc.branches.public.useQuery();
-  const [cachedProfiles, setCachedProfiles] = useState(readCachedPublicProfiles);
+  const [cachedProfiles, setCachedProfiles] = useState(
+    readCachedPublicProfiles
+  );
   useEffect(() => {
     if (publicOffices.data?.length) {
       cachePublicProfiles(publicOffices.data);
@@ -91,11 +91,20 @@ export default function Home() {
     }
   }, [publicOffices.data]);
   const officeProfiles = publicOffices.data?.some(profile =>
-    Boolean(profile.address || profile.phone || profile.gps || profile.hours.length || profile.employees.length)
+    Boolean(
+      profile.address ||
+        profile.phone ||
+        profile.mapUrl ||
+        profile.gps ||
+        profile.hours.length ||
+        profile.employees.length
+    )
   )
     ? publicOffices.data
     : cachedProfiles;
-  const nouakchottProfile = officeProfiles.find(profile => profile.officeId === "nouakchott");
+  const nouakchottProfile = officeProfiles.find(
+    profile => profile.officeId === "nouakchott"
+  );
 
   useEffect(() => {
     const handleBeforeInstallPrompt = (event: Event) => {
@@ -550,7 +559,16 @@ export default function Home() {
                   className="mt-3 text-sm font-semibold text-[#2b7656]"
                 >
                   {copy.tracking.opened}
-                  <a href={whatsappHref(`${copy.tracking.whatsappText} ${tracking.trim()}`)} target="_blank" rel="noopener noreferrer" className="ms-2 underline">{copy.tracking.button}</a>
+                  <a
+                    href={whatsappHref(
+                      `${copy.tracking.whatsappText} ${tracking.trim()}`
+                    )}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="ms-2 underline"
+                  >
+                    {copy.tracking.button}
+                  </a>
                 </p>
               )}
             </div>

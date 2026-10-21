@@ -32,7 +32,8 @@ describe("Public office rendering", () => {
           break: { start: "13:00", end: "14:00" },
         },
       ],
-      gps: { lat: 0, lng: 0 },
+      mapUrl: "https://maps.google.com/?q=0,0",
+      gps: null,
     };
     const html = renderToStaticMarkup(
       <PublicOfficeCards profiles={[profile]} />
@@ -45,7 +46,7 @@ describe("Public office rendering", () => {
       "18:00",
       "13:00",
       "14:00",
-      "0%2C0",
+      "https://maps.google.com/?q=0,0",
     ])
       expect(html).toContain(value);
     expect(html).not.toContain("contact-not-login");
@@ -56,11 +57,12 @@ describe("Public office rendering", () => {
     const profile = {
       ...defaultOfficeProfile("china"),
       version: 1,
-      gps: { lat: 1, lng: 2 },
+      mapUrl: "https://maps.google.com/?q=1,2",
+      gps: null,
     };
     expect(
       renderToStaticMarkup(<PublicOfficeCards profiles={[profile]} />)
-    ).toContain("1%2C2");
+    ).toContain("https://maps.google.com/?q=1,2");
   });
   it("keeps localized dictionaries complete with break information and does not allow non-phone links", () => {
     for (const language of ["en", "zh", "tr"] as const) {

@@ -29,8 +29,7 @@ type Draft = {
   address: string;
   phone: string;
   timezone: OfficeProfile["timezone"];
-  gpsLat: string;
-  gpsLng: string;
+  mapUrl: string;
   days: DraftDay[];
   employees: OfficeProfile["employees"];
 };
@@ -107,8 +106,7 @@ function draftFrom(profile: VersionedOfficeProfile): Draft {
     address: profile.address,
     phone: profile.phone,
     timezone: profile.timezone,
-    gpsLat: profile.gps ? String(profile.gps.lat) : "",
-    gpsLng: profile.gps ? String(profile.gps.lng) : "",
+    mapUrl: profile.mapUrl ?? "",
     days,
     employees: profile.employees.map(employee => ({ ...employee })),
   };
@@ -120,10 +118,8 @@ function toProfile(draft: Draft, officeId: OfficeId): OfficeProfile {
     address: draft.address.trim(),
     phone: draft.phone.trim(),
     timezone: draft.timezone,
-    gps:
-      draft.gpsLat.trim() || draft.gpsLng.trim()
-        ? { lat: Number(draft.gpsLat), lng: Number(draft.gpsLng) }
-        : null,
+    mapUrl: draft.mapUrl.trim() || null,
+    gps: null,
     hours: draft.days.flatMap((day, index) => {
       if (!day.enabled) return [];
       return [
@@ -265,21 +261,13 @@ export default function OfficeProfileEditor({
   const validate = () => {
     if (draft.phone.trim() && !validPhone(draft.phone.trim()))
       return c.phoneInvalid;
-    const hasLat = Boolean(draft.gpsLat.trim());
-    const hasLng = Boolean(draft.gpsLng.trim());
-    if (hasLat !== hasLng) return c.gpsInvalid;
-    if (hasLat) {
-      const lat = Number(draft.gpsLat);
-      const lng = Number(draft.gpsLng);
-      if (
-        !Number.isFinite(lat) ||
-        !Number.isFinite(lng) ||
-        lat < -90 ||
-        lat > 90 ||
-        lng < -180 ||
-        lng > 180
-      )
+    if (draft.mapUrl.trim()) {
+      try {
+        const url = new URL(draft.mapUrl.trim());
+        if (url.protocol !== "https:") return c.gpsInvalid;
+      } catch {
         return c.gpsInvalid;
+      }
     }
     for (const day of draft.days) {
       if (!day.enabled || day.closed) continue;
@@ -400,32 +388,20 @@ export default function OfficeProfileEditor({
           </div>
           <span className="text-xs text-[#718088]">{c.manualGpsOnly}</span>
         </div>
-        <div className="mt-4 grid gap-4 md:grid-cols-2">
-          <PackingField label={c.latitude}>
-            <input
-              dir="ltr"
-              inputMode="decimal"
-              className={packingInputClass}
-              value={draft.gpsLat}
-              disabled={!canEdit || pending}
-              onChange={event =>
-                setChanged({ ...draft, gpsLat: event.target.value })
-              }
-            />
-          </PackingField>
-          <PackingField label={c.longitude}>
-            <input
-              dir="ltr"
-              inputMode="decimal"
-              className={packingInputClass}
-              value={draft.gpsLng}
-              disabled={!canEdit || pending}
-              onChange={event =>
-                setChanged({ ...draft, gpsLng: event.target.value })
-              }
-            />
-          </PackingField>
-        </div>
+        <PackingField label={c.mapLink}>
+          <input
+            dir="ltr"
+            inputMode="url"
+            type="url"
+            placeholder="https://maps.google.com/..."
+            className={packingInputClass}
+            value={draft.mapUrl}
+            disabled={!canEdit || pending}
+            onChange={event =>
+              setChanged({ ...draft, mapUrl: event.target.value })
+            }
+          />
+        </PackingField>
       </div>
 
       <div className="mt-6 rounded-2xl border border-[#edf1f1] bg-[#fbfcfb] p-4">

@@ -46,19 +46,27 @@ describe("Office profiles and explicit record scope", () => {
     for (const id of ["nouakchott", "dubai", "china", "turkey"] as const) {
       const profile = defaultOfficeProfile(id);
       expect(profile.address).toBe("");
-      expect(profile.gps).toBeNull();
+      expect(profile.mapUrl).toBeNull();
       expect(profile.hours).toEqual([]);
       expect(profile.employees).toEqual([]);
       const { version, ...data } = profile;
       expect(officeProfileSchema.safeParse(data).success).toBe(true);
     }
   });
-  it("validates latitude, longitude and break bounds without accessing device location", () => {
+  it("validates a manually pasted HTTPS map link and break bounds without accessing device location", () => {
     const { version, ...profile } = defaultOfficeProfile("nouakchott");
     expect(
-      officeProfileSchema.safeParse({ ...profile, gps: { lat: 90.01, lng: 0 } })
-        .success
+      officeProfileSchema.safeParse({
+        ...profile,
+        mapUrl: "javascript:alert(1)",
+      }).success
     ).toBe(false);
+    expect(
+      officeProfileSchema.safeParse({
+        ...profile,
+        mapUrl: "https://maps.google.com/?q=1,2",
+      }).success
+    ).toBe(true);
     expect(
       officeProfileSchema.safeParse({
         ...profile,
@@ -72,7 +80,9 @@ describe("Office profiles and explicit record scope", () => {
         ],
       }).success
     ).toBe(false);
-    expect(mapsHref({ lat: 0, lng: 0 })).toContain("0%2C0");
+    expect(mapsHref("https://maps.google.com/?q=1,2")).toBe(
+      "https://maps.google.com/?q=1,2"
+    );
   });
   it("accepts public employee name and phone but rejects login or permissions fields in public contact data", () => {
     const { version, ...profile } = defaultOfficeProfile("turkey");

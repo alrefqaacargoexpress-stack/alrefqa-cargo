@@ -42,7 +42,7 @@ export default function PublicOfficeCards({
     Boolean(
       profile.address ||
         profile.phone ||
-        profile.gps ||
+        profile.mapUrl || profile.gps ||
         profile.hours.length ||
         profile.employees.length
     )
@@ -101,7 +101,7 @@ function PublicOfficeCard({
     .phone;
   const phone = profile?.phone?.trim() || legacyPhone || "";
   const phoneHref = safeTelHref(phone);
-  const map = profile?.gps ? mapsHref(profile.gps) : null;
+  const map = mapsHref(profile?.mapUrl, profile?.gps);
   const hours = [...(profile?.hours ?? [])].sort((a, b) => a.day - b.day);
   const employees = profile?.employees ?? [];
   const legacyWhatsapp = (office as LegacyOffice & { whatsapp?: string | null })

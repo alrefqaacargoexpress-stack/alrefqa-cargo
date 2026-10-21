@@ -21,6 +21,7 @@ import {
 } from "@/lib/branchDashboardCopy";
 import { officeNames } from "@shared/branches";
 import {
+  mapsHref,
   officeIds,
   type OfficeId,
   type OfficeDashboardData,
@@ -311,9 +312,7 @@ function ProfileCard({
   language: "ar" | "en" | "zh" | "tr";
   c: ReturnType<typeof branchDashboardCopy>;
 }) {
-  const map = data.profile.gps
-    ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${data.profile.gps.lat},${data.profile.gps.lng}`)}`
-    : null;
+  const map = mapsHref(data.profile.mapUrl, data.profile.gps);
   return (
     <section className="rounded-2xl border border-[#dce4e7] bg-white p-4">
       <h2 className="text-lg font-black text-[#092d50]">{c.profile}</h2>

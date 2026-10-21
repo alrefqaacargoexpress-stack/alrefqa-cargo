@@ -399,6 +399,7 @@ function hasPublicProfileContent(profile: VersionedOfficeProfile) {
   return Boolean(
     profile.address ||
       profile.phone ||
+      profile.mapUrl ||
       profile.gps ||
       profile.hours.length ||
       profile.employees.length
