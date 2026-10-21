@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { updateProfile } from "./branches";
 import { defaultOfficeProfile } from "@shared/branches";
-import { emptyPublicShippingRates } from "@shared/publicShipping";
+import {
+  emptyPublicShippingRates,
+  emptyNouakchottSourceRates,
+} from "@shared/publicShipping";
 import { appendAudit } from "./audit";
 import type { User } from "../drizzle/schema";
 vi.mock("./audit", () => ({ appendAudit: vi.fn(async () => 1) }));
@@ -154,5 +157,39 @@ describe("Acknowledged office profile persistence", () => {
     });
     expect(f.get().profile.gps).toEqual(base.gps);
     expect(f.get().profile.employees).toEqual(base.employees);
+  });
+  it("saves source-specific MRU tariffs in Nouakchott and replays their acknowledgment once", async () => {
+    const f = fixture(),
+      base = initial();
+    const sourceShippingRates = emptyNouakchottSourceRates();
+    sourceShippingRates.dubai.airRegular = {
+      amount: 400,
+      currency: "MRU",
+      unit: "kg",
+    };
+    sourceShippingRates.turkey.airExpress = {
+      amount: 650,
+      currency: "MRU",
+      unit: "kg",
+    };
+    sourceShippingRates.china.sea = {
+      amount: 1300,
+      currency: "MRU",
+      unit: "m3",
+    };
+    const request = {
+      ...base,
+      sourceShippingRates,
+      expectedVersion: 0,
+      baseProfile: base,
+    };
+    const saved = await updateProfile(f.db, admin, request);
+    const replay = await updateProfile(f.db, admin, request);
+    expect(saved.sourceShippingRates).toEqual(sourceShippingRates);
+    expect(f.get().profile.sourceShippingRates).toEqual(sourceShippingRates);
+    expect(replay.version).toBe(saved.version);
+    expect(f.writes()).toBe(1);
+    expect(appendAudit).toHaveBeenCalledOnce();
+    expect(f.get().profile.shippingRates).toBeUndefined();
   });
 });

@@ -12,11 +12,17 @@ import {
   publicShippingCopyFor,
   type PublicShippingCopy,
 } from "@/lib/publicShippingCopy";
+import { nouakchottRatesCopyFor } from "@/lib/nouakchottRatesCopy";
 import PublicShippingRatesEditor, {
   shippingRateDraftsFrom,
   shippingRatesFromDrafts,
   type ShippingRateDrafts,
 } from "@/components/offices/PublicShippingRatesEditor";
+import NouakchottSourceRatesEditor, {
+  nouakchottSourceRateDraftsFrom,
+  nouakchottSourceRatesFromDrafts,
+  type NouakchottSourceRateDrafts,
+} from "@/components/offices/NouakchottSourceRatesEditor";
 import {
   PackingField,
   packingInputClass,
@@ -41,6 +47,7 @@ type Draft = {
   mapUrl: string;
   seaAddress: string;
   shippingRates: ShippingRateDrafts;
+  sourceRates: NouakchottSourceRateDrafts;
   days: DraftDay[];
 };
 
@@ -133,12 +140,13 @@ function draftFrom(profile: VersionedOfficeProfile | OfficeProfile): Draft {
     mapUrl: profile.mapUrl ?? "",
     seaAddress: profile.seaAddress ?? "",
     shippingRates: shippingRateDraftsFrom(profile.shippingRates),
+    sourceRates: nouakchottSourceRateDraftsFrom(profile.sourceShippingRates),
     days,
   };
 }
 
 function toProfile(draft: Draft, baseProfile: OfficeProfile): OfficeProfile {
-  return {
+  const next: OfficeProfile = {
     ...baseProfile,
     address: draft.address.trim(),
     phone: draft.phone.trim(),
@@ -161,6 +169,15 @@ function toProfile(draft: Draft, baseProfile: OfficeProfile): OfficeProfile {
       ];
     }),
   };
+  if (next.officeId === "nouakchott") {
+    return {
+      ...next,
+      sourceShippingRates: nouakchottSourceRatesFromDrafts(draft.sourceRates),
+    };
+  }
+  const { sourceShippingRates: _sourceShippingRates, ...withoutSourceRates } =
+    next;
+  return withoutSourceRates;
 }
 
 function validRange(start: string, end: string) {
@@ -211,6 +228,7 @@ export default function OfficeProfileEditor({
   const { language } = useLanguage();
   const c = branchSettingsCopyFor(language);
   const shippingCopy = publicShippingCopyFor(language);
+  const nouakchottCopy = nouakchottRatesCopyFor(language);
   const [draft, setDraft] = useState(() => draftFrom(profile));
   const [dirty, setDirty] = useState(false);
   const [baseVersion, setBaseVersion] = useState(profile.version);
@@ -315,6 +333,27 @@ export default function OfficeProfileEditor({
         Math.abs(rate.amount * 100 - Math.round(rate.amount * 100)) > 0.00001
       )
         return shippingCopy.validationError;
+    }
+    if (baseProfile.officeId === "nouakchott") {
+      for (const source of Object.values(
+        nouakchottSourceRatesFromDrafts(draft.sourceRates)
+      )) {
+        for (const rate of Object.values(source)) {
+          if (
+            rate &&
+            (!Number.isFinite(rate.amount) ||
+              rate.amount < 0 ||
+              rate.amount > 999999999)
+          )
+            return shippingCopy.validationError;
+          if (
+            rate &&
+            Math.abs(rate.amount * 100 - Math.round(rate.amount * 100)) >
+              0.00001
+          )
+            return shippingCopy.validationError;
+        }
+      }
     }
     return "";
   };
@@ -472,6 +511,16 @@ export default function OfficeProfileEditor({
           {shippingCopy.publicWarning}
         </p>
       </div>
+
+      {baseProfile.officeId === "nouakchott" && (
+        <NouakchottSourceRatesEditor
+          value={draft.sourceRates}
+          shippingCopy={shippingCopy}
+          copy={nouakchottCopy}
+          disabled={!canEdit || pending}
+          onChange={sourceRates => setChanged({ ...draft, sourceRates })}
+        />
+      )}
 
       <div className="mt-6 rounded-2xl border border-[#edf1f1] bg-[#fbfcfb] p-4">
         <div className="flex flex-wrap items-start justify-between gap-2">

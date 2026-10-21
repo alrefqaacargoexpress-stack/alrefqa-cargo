@@ -1,0 +1,100 @@
+import { describe, expect, it, vi } from "vitest";
+import { renderToStaticMarkup } from "react-dom/server";
+import { defaultOfficeProfile } from "@shared/branches";
+import { publicShippingCopy } from "@/lib/publicShippingCopy";
+import { nouakchottRatesCopy } from "@/lib/nouakchottRatesCopy";
+import PublicOfficeCards from "./PublicOfficeCards";
+import NouakchottSourceRatesEditor, {
+  nouakchottSourceRateDraftsFrom,
+  nouakchottSourceRatesFromDrafts,
+} from "./NouakchottSourceRatesEditor";
+
+vi.mock("@/contexts/LanguageContext", () => ({
+  useLanguage: () => ({ language: "en", dir: "ltr" }),
+}));
+
+describe("Nouakchott source rates", () => {
+  it("keeps blank source fields null and renders fixed MRU with all sources and services", () => {
+    const drafts = nouakchottSourceRateDraftsFrom(undefined);
+    expect(nouakchottSourceRatesFromDrafts(drafts)).toEqual({
+      dubai: {
+        airRegular: null,
+        airExpress: null,
+        sensitive: null,
+        sea: null,
+      },
+      turkey: {
+        airRegular: null,
+        airExpress: null,
+        sensitive: null,
+        sea: null,
+      },
+      china: {
+        airRegular: null,
+        airExpress: null,
+        sensitive: null,
+        sea: null,
+      },
+    });
+    const html = renderToStaticMarkup(
+      <NouakchottSourceRatesEditor
+        value={drafts}
+        shippingCopy={publicShippingCopy.en}
+        copy={nouakchottRatesCopy.en}
+        onChange={() => undefined}
+      />
+    );
+    expect(html).toContain('aria-label="Shipping rate source"');
+    expect(html).toContain("Dubai");
+    expect(html).toContain("Turkey");
+    expect(html).toContain("China");
+    expect(html).toContain('value="MRU"');
+    expect(html).not.toContain('value="USD"');
+    expect(html).toContain('aria-label="Dubai Unit"');
+    expect(html).not.toContain('value="0"');
+  });
+
+  it("shows only saved Nouakchott source rates and does not leak them to other offices", () => {
+    const sourceShippingRates = nouakchottSourceRatesFromDrafts(
+      nouakchottSourceRateDraftsFrom({
+        dubai: {
+          airRegular: { amount: 12.5, currency: "MRU", unit: "kg" },
+          airExpress: null,
+          sensitive: null,
+          sea: null,
+        },
+        turkey: {
+          airRegular: null,
+          airExpress: null,
+          sensitive: { amount: 45, currency: "MRU", unit: "shipment" },
+          sea: null,
+        },
+        china: {
+          airRegular: null,
+          airExpress: null,
+          sensitive: null,
+          sea: null,
+        },
+      })
+    );
+    const nouakchott = {
+      ...defaultOfficeProfile("nouakchott"),
+      version: 1,
+      sourceShippingRates,
+    };
+    const otherOffice = {
+      ...defaultOfficeProfile("dubai"),
+      version: 1,
+    };
+    const html = renderToStaticMarkup(
+      <PublicOfficeCards profiles={[nouakchott, otherOffice]} />
+    );
+    expect(html).toContain("From: Dubai");
+    expect(html).toContain("From: Turkey");
+    expect(html).toContain("12.5 MRU");
+    expect(html).toContain("45 MRU");
+    expect(html).toContain("per kg");
+    expect(html).toContain("per shipment");
+    expect(html).not.toContain("From: China");
+  });
+});

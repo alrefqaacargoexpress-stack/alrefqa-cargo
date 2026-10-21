@@ -379,22 +379,10 @@ export default function Home() {
 
         <section
           id="services"
+          aria-label={copy.nav.services}
           className="border-y border-[#e1e7e8] bg-white px-5 py-20 lg:px-8"
         >
           <div className="mx-auto max-w-7xl">
-            <div className="mb-10 flex flex-col justify-between gap-4 md:flex-row md:items-end">
-              <div>
-                <div className="mb-3 text-xs font-bold tracking-[0.18em] text-[#b17b1f]">
-                  {copy.services.eyebrow}
-                </div>
-                <h2 className="text-3xl font-bold text-[#092d50] sm:text-4xl">
-                  {copy.services.title}
-                </h2>
-              </div>
-              <p className="max-w-md leading-7 text-[#718088]">
-                {copy.services.description}
-              </p>
-            </div>
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
               {copy.services.items.map((service, index) => {
                 const Icon = serviceIcons[index];

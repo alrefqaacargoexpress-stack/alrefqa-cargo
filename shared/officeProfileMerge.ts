@@ -1,5 +1,10 @@
 import { officeProfileSchema, type OfficeProfile } from "./branches";
-import { emptyPublicShippingRates, shippingRateKeys } from "./publicShipping";
+import {
+  emptyPublicShippingRates,
+  shippingRateKeys,
+  nouakchottRateSources,
+  emptyNouakchottSourceRates,
+} from "./publicShipping";
 
 function stable(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stable);
@@ -40,6 +45,14 @@ export function sameOfficeProfile(a: OfficeProfile, b: OfficeProfile): boolean {
     fields.every(field => equal(fieldValue(a, field), fieldValue(b, field))) &&
     shippingRateKeys.every(key =>
       equal(a.shippingRates?.[key] ?? null, b.shippingRates?.[key] ?? null)
+    ) &&
+    nouakchottRateSources.every(source =>
+      shippingRateKeys.every(key =>
+        equal(
+          a.sourceShippingRates?.[source]?.[key] ?? null,
+          b.sourceShippingRates?.[source]?.[key] ?? null
+        )
+      )
     )
   );
 }
@@ -78,7 +91,28 @@ export function mergeOfficeProfile(
       changedRates = true;
     }
   }
+  const sourceRates = emptyNouakchottSourceRates();
+  let changedSourceRates = false;
+  for (const source of nouakchottRateSources) {
+    sourceRates[source] = {
+      ...sourceRates[source],
+      ...current.sourceShippingRates?.[source],
+    };
+    for (const key of shippingRateKeys) {
+      const previous = base.sourceShippingRates?.[source]?.[key] ?? null;
+      const next = desired.sourceShippingRates?.[source]?.[key] ?? null;
+      const saved = current.sourceShippingRates?.[source]?.[key] ?? null;
+      if (equal(previous, next)) continue;
+      if (!equal(saved, previous) && !equal(saved, next)) {
+        conflicts.push(`sourceShippingRates.${source}.${key}`);
+      } else {
+        sourceRates[source][key] = structuredClone(next);
+        changedSourceRates = true;
+      }
+    }
+  }
   if (conflicts.length) throw new OfficeProfileMergeConflict(conflicts);
   if (changedRates) result.shippingRates = rates;
+  if (changedSourceRates) result.sourceShippingRates = sourceRates;
   return officeProfileSchema.parse(result);
 }

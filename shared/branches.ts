@@ -1,5 +1,8 @@
 import { z } from "zod";
-import { publicShippingRatesSchema } from "./publicShipping";
+import {
+  publicShippingRatesSchema,
+  nouakchottSourceRatesSchema,
+} from "./publicShipping";
 import type {
   Account,
   AppRole,
@@ -98,9 +101,16 @@ export const officeProfileSchema = z
     employees: z.array(publicEmployeeSchema).max(100),
     seaAddress: z.string().trim().max(2000).optional(),
     shippingRates: publicShippingRatesSchema.optional(),
+    sourceShippingRates: nouakchottSourceRatesSchema.optional(),
   })
   .strict()
   .superRefine((v, c) => {
+    if (v.officeId !== "nouakchott" && v.sourceShippingRates !== undefined)
+      c.addIssue({
+        code: "custom",
+        path: ["sourceShippingRates"],
+        message: "source_rates_nouakchott_only",
+      });
     if (new Set(v.hours.map(x => x.day)).size !== v.hours.length)
       c.addIssue({ code: "custom", message: "duplicate_work_day" });
     if (new Set(v.employees.map(x => x.id)).size !== v.employees.length)

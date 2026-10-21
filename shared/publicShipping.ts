@@ -35,3 +35,38 @@ export type PublicShippingRates = z.infer<typeof publicShippingRatesSchema>;
 export function emptyPublicShippingRates(): PublicShippingRates {
   return { airRegular: null, airExpress: null, sensitive: null, sea: null };
 }
+
+/** Source-specific customer tariffs belong only to the Nouakchott profile. */
+export const nouakchottRateSources = ["dubai", "turkey", "china"] as const;
+export type NouakchottRateSource = (typeof nouakchottRateSources)[number];
+export const mruPublicShippingRateSchema = publicShippingRateSchema.extend({
+  currency: z.literal("MRU"),
+});
+export const mruPublicShippingRatesSchema = z
+  .object({
+    airRegular: mruPublicShippingRateSchema.nullable(),
+    airExpress: mruPublicShippingRateSchema.nullable(),
+    sensitive: mruPublicShippingRateSchema.nullable(),
+    sea: mruPublicShippingRateSchema.nullable(),
+  })
+  .strict();
+export type MRUPublicShippingRates = z.infer<
+  typeof mruPublicShippingRatesSchema
+>;
+export const nouakchottSourceRatesSchema = z
+  .object({
+    dubai: mruPublicShippingRatesSchema,
+    turkey: mruPublicShippingRatesSchema,
+    china: mruPublicShippingRatesSchema,
+  })
+  .strict();
+export type NouakchottSourceRates = z.infer<typeof nouakchottSourceRatesSchema>;
+export function emptyNouakchottSourceRates(): NouakchottSourceRates {
+  const empty = (): MRUPublicShippingRates => ({
+    airRegular: null,
+    airExpress: null,
+    sensitive: null,
+    sea: null,
+  });
+  return { dubai: empty(), turkey: empty(), china: empty() };
+}

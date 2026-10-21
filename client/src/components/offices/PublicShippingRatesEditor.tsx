@@ -78,11 +78,15 @@ export function shippingRatesFromDrafts(
 export default function PublicShippingRatesEditor({
   value,
   copy,
+  fixedCurrency,
+  ariaLabelPrefix,
   disabled,
   onChange,
 }: {
   value: ShippingRateDrafts;
   copy: PublicShippingCopy;
+  fixedCurrency?: PublicShippingRate["currency"];
+  ariaLabelPrefix?: string;
   disabled?: boolean;
   onChange: (value: ShippingRateDrafts) => void;
 }) {
@@ -120,9 +124,14 @@ export default function PublicShippingRatesEditor({
                 </PackingField>
                 <PackingField label={copy.currency}>
                   <select
+                    aria-label={
+                      ariaLabelPrefix
+                        ? `${ariaLabelPrefix} ${copy.currency}`
+                        : undefined
+                    }
                     className={packingInputClass}
-                    value={rate.currency}
-                    disabled={disabled}
+                    value={fixedCurrency ?? rate.currency}
+                    disabled={disabled || Boolean(fixedCurrency)}
                     onChange={event =>
                       onChange({
                         ...value,
@@ -134,15 +143,22 @@ export default function PublicShippingRatesEditor({
                       })
                     }
                   >
-                    {currencies.map(currency => (
-                      <option key={currency} value={currency}>
-                        {copy.currencies[currency]}
-                      </option>
-                    ))}
+                    {(fixedCurrency ? [fixedCurrency] : currencies).map(
+                      currency => (
+                        <option key={currency} value={currency}>
+                          {copy.currencies[currency]}
+                        </option>
+                      )
+                    )}
                   </select>
                 </PackingField>
                 <PackingField label={copy.unit}>
                   <select
+                    aria-label={
+                      ariaLabelPrefix
+                        ? `${ariaLabelPrefix} ${copy.unit}`
+                        : undefined
+                    }
                     className={packingInputClass}
                     value={rate.unit}
                     disabled={disabled}

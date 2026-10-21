@@ -22,7 +22,12 @@ import {
   weekdayLabel,
 } from "@/lib/branchDashboardCopy";
 import { publicShippingCopyFor } from "@/lib/publicShippingCopy";
-import { shippingRateKeys } from "@shared/publicShipping";
+import { nouakchottRatesCopyFor } from "@/lib/nouakchottRatesCopy";
+import {
+  nouakchottRateSources,
+  shippingRateKeys,
+  type NouakchottRateSource,
+} from "@shared/publicShipping";
 
 type LegacyOffice = (typeof officeConfig)[number];
 
@@ -39,6 +44,7 @@ export default function PublicOfficeCards({
   const copy = publicCopy[language];
   const c = branchDashboardCopy(language);
   const shippingCopy = publicShippingCopyFor(language);
+  const nouakchottCopy = nouakchottRatesCopyFor(language);
   const confirmed = profiles ?? [];
   const byOffice = profileMap(confirmed);
   const hasConfirmedProfile = confirmed.some(profile =>
@@ -51,7 +57,15 @@ export default function PublicOfficeCards({
         profile.employees.length ||
         profile.seaAddress?.trim() ||
         (profile.shippingRates &&
-          shippingRateKeys.some(key => profile.shippingRates?.[key] !== null))
+          shippingRateKeys.some(
+            key => profile.shippingRates?.[key] !== null
+          )) ||
+        (profile.sourceShippingRates &&
+          nouakchottRateSources.some(source =>
+            shippingRateKeys.some(
+              key => profile.sourceShippingRates?.[source]?.[key] !== null
+            )
+          ))
     )
   );
 
@@ -82,6 +96,7 @@ export default function PublicOfficeCards({
             copy={copy}
             c={c}
             shippingCopy={shippingCopy}
+            nouakchottCopy={nouakchottCopy}
             language={language}
           />
         ))}
@@ -97,6 +112,7 @@ function PublicOfficeCard({
   copy,
   c,
   shippingCopy,
+  nouakchottCopy,
   language,
 }: {
   office: LegacyOffice;
@@ -104,6 +120,7 @@ function PublicOfficeCard({
   copy: PublicCopy;
   c: ReturnType<typeof branchDashboardCopy>;
   shippingCopy: ReturnType<typeof publicShippingCopyFor>;
+  nouakchottCopy: ReturnType<typeof nouakchottRatesCopyFor>;
   language: Language;
 }) {
   const address = profile?.address?.trim() || "";
@@ -124,6 +141,14 @@ function PublicOfficeCard({
   const savedRates = profile?.shippingRates;
   const hasSavedRates = Boolean(
     savedRates && shippingRateKeys.some(key => savedRates[key] !== null)
+  );
+  const sourceRates = profile?.sourceShippingRates;
+  const savedSourceRates = office.id === "nouakchott" ? sourceRates : undefined;
+  const hasSavedSourceRates = Boolean(
+    savedSourceRates &&
+      nouakchottRateSources.some(source =>
+        shippingRateKeys.some(key => savedSourceRates[source]?.[key] !== null)
+      )
   );
 
   return (
@@ -298,7 +323,72 @@ function PublicOfficeCard({
           </p>
         </div>
       )}
+      {hasSavedSourceRates && (
+        <NouakchottSourceRatesDisplay
+          rates={savedSourceRates!}
+          shippingCopy={shippingCopy}
+          copy={nouakchottCopy}
+          language={language}
+        />
+      )}
     </article>
+  );
+}
+
+function NouakchottSourceRatesDisplay({
+  rates,
+  shippingCopy,
+  copy,
+  language,
+}: {
+  rates: NonNullable<VersionedOfficeProfile["sourceShippingRates"]>;
+  shippingCopy: ReturnType<typeof publicShippingCopyFor>;
+  copy: ReturnType<typeof nouakchottRatesCopyFor>;
+  language: Language;
+}) {
+  return (
+    <div className="mt-4 border-t border-[#edf0f0] pt-4">
+      <div className="mb-2 text-xs font-bold text-[#092d50]">
+        {copy.savedRates}
+      </div>
+      <div className="space-y-3">
+        {nouakchottRateSources.map(source => {
+          const sourceRates = rates[source];
+          const saved = shippingRateKeys.filter(key => sourceRates[key]);
+          if (!saved.length) return null;
+          return (
+            <div
+              key={source}
+              className="rounded-xl bg-[#f5f8f6] p-3"
+              aria-label={`${copy.fromCountry}: ${copy.sourceLabels[source]}`}
+            >
+              <div className="mb-1 text-xs font-bold text-[#456e61]">
+                {copy.fromCountry}: {copy.sourceLabels[source]}
+              </div>
+              <div className="space-y-1.5">
+                {saved.map(key => {
+                  const rate = sourceRates[key];
+                  if (!rate) return null;
+                  return (
+                    <div
+                      key={key}
+                      className="flex items-center justify-between gap-3 text-xs text-[#63737a]"
+                    >
+                      <span>{shippingCopy.serviceLabels[key]}</span>
+                      <span dir="ltr" className="font-semibold text-[#2e6280]">
+                        {rate.amount.toLocaleString(language)}{" "}
+                        {shippingCopy.currencies[rate.currency]} ·{" "}
+                        {shippingCopy.units[rate.unit]}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
