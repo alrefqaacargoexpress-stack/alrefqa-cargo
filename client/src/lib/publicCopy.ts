@@ -111,18 +111,19 @@ const ar = {
     ],
   },
   tracking: {
-    eyebrow: "تواصل بشأن شحنتك",
-    title: "اطلب آخر تحديث عبر واتساب.",
-    description:
-      "لا توجد نتيجة تتبع آلية عامة في هذه الصفحة حالياً. أدخل رقم الشحنة وسيفتح واتساب برسالة جاهزة إلى المكتب الرئيسي.",
-    exampleLabel: "لا تستخدم الصفحة لنتيجة تلقائية",
-    inputLabel: "رقم الشحنة",
-    placeholder: "أدخل رقم الشحنة",
-    button: "فتح واتساب للتتبع",
-    required: "أدخل رقم الشحنة أولاً.",
-    opened: "تم تجهيز رسالة واتساب برقم الشحنة.",
-    privacy: "لن ندّعي حالة أو موعد وصول من دون تأكيد الفريق.",
-    whatsappText: "أرغب في الاستفسار عن تتبع الشحنة. رقم الشحنة:",
+    title: "لطلب آخر التحديثات عبر الواتساب، يُرجى إرسال ما يلي:",
+    instructions: [
+      "الاسم أو الماركة المكتوبة على البضاعة.",
+      "رقم الهاتف المدون على الشحنة قبل إرسالها إلى المكتب.",
+    ],
+    nameLabel: "الاسم أو الماركة",
+    namePlaceholder: "أدخل الاسم أو الماركة المكتوبة على البضاعة",
+    phoneLabel: "رقم الهاتف المدون على الشحنة",
+    phonePlaceholder: "أدخل رقم الهاتف المدون على الشحنة",
+    button: "فتح واتساب",
+    required: "أدخل الاسم أو الماركة ورقم الهاتف المدون على الشحنة.",
+    opened: "رسالة واتساب جاهزة للمراجعة والإرسال من طرفك.",
+    whatsappText: "أرغب في طلب آخر تحديثات شحنتي عبر الواتساب.",
   },
   about: {
     eyebrow: "عن الرفكة Al-Rafqaa",
@@ -270,20 +271,22 @@ const en = {
     ],
   },
   tracking: {
-    eyebrow: "Ask about your shipment",
-    title: "Request an update on WhatsApp.",
-    description:
-      "There is no public automated tracking result on this page yet. Enter your shipment number to open WhatsApp with a ready message to the main office.",
-    exampleLabel: "No automatic result is shown",
-    inputLabel: "Shipment number",
-    placeholder: "Enter shipment number",
-    button: "Open WhatsApp tracking",
-    required: "Enter a shipment number first.",
-    opened: "A WhatsApp message with the shipment number is ready.",
-    privacy:
-      "We will not claim a status or arrival time without team confirmation.",
+    title:
+      "To request the latest updates via WhatsApp, please send the following:",
+    instructions: [
+      "The name or brand written on the goods.",
+      "The phone number written on the shipment before it was sent to the office.",
+    ],
+    nameLabel: "Name or brand",
+    namePlaceholder: "Enter the name or brand written on the goods",
+    phoneLabel: "Phone number written on the shipment",
+    phonePlaceholder: "Enter the phone number written on the shipment",
+    button: "Open WhatsApp",
+    required:
+      "Enter the name or brand and the phone number written on the shipment.",
+    opened: "Your WhatsApp message is ready for you to review and send.",
     whatsappText:
-      "I would like to ask about shipment tracking. Shipment number:",
+      "I would like to request the latest updates on my shipment via WhatsApp.",
   },
   about: {
     eyebrow: "About Al-Rafqaa",
@@ -433,18 +436,19 @@ const zh = {
     ],
   },
   tracking: {
-    eyebrow: "咨询您的货件",
-    title: "通过 WhatsApp 请求更新。",
-    description:
-      "本页面目前没有公开的自动查询结果。输入货件编号后，将通过 WhatsApp 向总部办公室打开一条预填消息。",
-    exampleLabel: "不会显示自动结果",
-    inputLabel: "货件编号",
-    placeholder: "输入货件编号",
-    button: "打开 WhatsApp 查询",
-    required: "请先输入货件编号。",
-    opened: "已准备好包含货件编号的 WhatsApp 消息。",
-    privacy: "未经团队确认，我们不会声称货件状态或到达时间。",
-    whatsappText: "我想咨询货件查询。货件编号：",
+    title: "如需通过 WhatsApp 获取最新进展，请发送以下信息：",
+    instructions: [
+      "货物上标注的姓名或品牌。",
+      "货件发送至办公室前标注的电话号码。",
+    ],
+    nameLabel: "姓名或品牌",
+    namePlaceholder: "请输入货物上标注的姓名或品牌",
+    phoneLabel: "货件上标注的电话号码",
+    phonePlaceholder: "请输入货件上标注的电话号码",
+    button: "打开 WhatsApp",
+    required: "请输入姓名或品牌，以及货件上标注的电话号码。",
+    opened: "WhatsApp 消息已准备好，请自行核对并发送。",
+    whatsappText: "我希望通过 WhatsApp 获取货件的最新进展。",
   },
   about: {
     eyebrow: "关于 Al-Rafqaa",
@@ -590,19 +594,22 @@ const tr = {
     ],
   },
   tracking: {
-    eyebrow: "Gönderiniz hakkında sorun",
-    title: "WhatsApp üzerinden güncelleme isteyin.",
-    description:
-      "Bu sayfada henüz herkese açık otomatik takip sonucu yoktur. Gönderi numaranızı girin; ana ofise hazır bir WhatsApp mesajı açılır.",
-    exampleLabel: "Otomatik sonuç gösterilmez",
-    inputLabel: "Gönderi numarası",
-    placeholder: "Gönderi numarasını girin",
-    button: "WhatsApp takibini aç",
-    required: "Önce bir gönderi numarası girin.",
-    opened: "Gönderi numarasını içeren WhatsApp mesajı hazırlandı.",
-    privacy: "Ekip onayı olmadan durum veya varış zamanı iddia etmeyiz.",
+    title:
+      "WhatsApp üzerinden son güncellemeleri istemek için lütfen şu bilgileri gönderin:",
+    instructions: [
+      "Ürünlerin üzerinde yazılı isim veya marka.",
+      "Gönderi ofise yollanmadan önce üzerine yazılan telefon numarası.",
+    ],
+    nameLabel: "İsim veya marka",
+    namePlaceholder: "Ürünlerin üzerinde yazılı ismi veya markayı girin",
+    phoneLabel: "Gönderinin üzerindeki telefon numarası",
+    phonePlaceholder: "Gönderinin üzerindeki telefon numarasını girin",
+    button: "WhatsApp'ı aç",
+    required:
+      "İsim veya marka ile gönderinin üzerindeki telefon numarasını girin.",
+    opened: "WhatsApp mesajınız kontrol edip göndermeniz için hazır.",
     whatsappText:
-      "Gönderi takibi hakkında bilgi almak istiyorum. Gönderi numarası:",
+      "WhatsApp üzerinden gönderimle ilgili son güncellemeleri öğrenmek istiyorum.",
   },
   about: {
     eyebrow: "Al-Rafqaa hakkında",

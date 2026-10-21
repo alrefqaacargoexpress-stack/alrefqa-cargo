@@ -6,23 +6,19 @@ import {
   ArrowRight,
   Check,
   ChevronDown,
-  ChevronLeft,
-  ChevronRight,
   Globe2,
   Mail,
   Menu,
   Package,
   Phone,
   Plane,
-  Ship,
   ShieldCheck,
-  Truck,
   X,
-  Zap,
 } from "lucide-react";
 import LanguageSwitcher from "@/components/LanguageSwitcher";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { publicCopy } from "@/lib/publicCopy";
+import { buildShipmentInquiryMessage } from "@/lib/shipmentInquiry";
 import PublicOfficeCards from "@/components/offices/PublicOfficeCards";
 import { trpc } from "@/lib/trpc";
 import {
@@ -39,8 +35,6 @@ type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>;
   userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
 };
-
-const serviceIcons = [Truck, Zap, Ship, Truck] as const;
 
 function whatsappHref(message: string, number = mainWhatsapp) {
   return `https://wa.me/${number.replace(/\D/g, "")}?text=${encodeURIComponent(message)}`;
@@ -65,9 +59,10 @@ export default function Home() {
   const { language, dir } = useLanguage();
   const copy = publicCopy[language];
   const [menuOpen, setMenuOpen] = useState(false);
-  const [tracking, setTracking] = useState("");
-  const [trackingError, setTrackingError] = useState(false);
-  const [trackingOpened, setTrackingOpened] = useState(false);
+  const [inquiryName, setInquiryName] = useState("");
+  const [inquiryPhone, setInquiryPhone] = useState("");
+  const [inquiryError, setInquiryError] = useState(false);
+  const [inquiryPrepared, setInquiryPrepared] = useState(false);
   const [installPrompt, setInstallPrompt] =
     useState<BeforeInstallPromptEvent | null>(null);
   const [installed, setInstalled] = useState(isStandalone);
@@ -125,18 +120,22 @@ export default function Home() {
     }
   };
 
-  const submitTracking = (event: React.FormEvent<HTMLFormElement>) => {
+  const inquiryMessage = buildShipmentInquiryMessage(
+    copy.tracking,
+    inquiryName,
+    inquiryPhone
+  );
+  const submitInquiry = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const value = tracking.trim();
-    if (!value) {
-      setTrackingError(true);
-      setTrackingOpened(false);
+    if (!inquiryName.trim() || !inquiryPhone.trim()) {
+      setInquiryError(true);
+      setInquiryPrepared(false);
       return;
     }
-    setTrackingError(false);
-    const href = whatsappHref(`${copy.tracking.whatsappText} ${value}`);
+    setInquiryError(false);
+    const href = whatsappHref(inquiryMessage);
     window.open(href, "_blank", "noopener,noreferrer");
-    setTrackingOpened(true);
+    setInquiryPrepared(true);
   };
 
   const Arrow = dir === "rtl" ? ArrowLeft : ArrowRight;
@@ -177,9 +176,6 @@ export default function Home() {
             className="hidden items-center gap-6 text-sm font-medium text-[#52636e] md:flex"
             aria-label={copy.a11y.mainNavigation}
           >
-            <a href="#services" className="transition hover:text-[#092d50]">
-              {copy.nav.services}
-            </a>
             <a href="#tracking" className="transition hover:text-[#092d50]">
               {copy.nav.tracking}
             </a>
@@ -232,9 +228,6 @@ export default function Home() {
         {menuOpen && (
           <div className="border-t border-[#dce4e7] bg-[#f7f8f5] px-5 py-4 md:hidden">
             <div className="flex flex-col gap-3 text-sm font-medium">
-              <a href="#services" onClick={() => setMenuOpen(false)}>
-                {copy.nav.services}
-              </a>
               <a href="#tracking" onClick={() => setMenuOpen(false)}>
                 {copy.nav.tracking}
               </a>
@@ -280,13 +273,6 @@ export default function Home() {
               {copy.hero.description}
             </p>
             <div className="mt-9 flex flex-wrap gap-3">
-              <a
-                href="#services"
-                className="inline-flex items-center gap-2 rounded-full bg-[#092d50] px-5 py-3.5 text-sm font-bold text-white shadow-lg shadow-[#092d50]/15 transition hover:-translate-y-0.5 hover:bg-[#123f68]"
-              >
-                {copy.hero.servicesCta}
-                <Arrow size={17} />
-              </a>
               <a
                 href="#tracking"
                 className="inline-flex items-center gap-2 rounded-full border border-[#c6d4da] bg-white px-5 py-3.5 text-sm font-bold text-[#092d50] transition hover:border-[#092d50]"
@@ -377,77 +363,26 @@ export default function Home() {
           </div>
         </section>
 
-        <section
-          id="services"
-          aria-label={copy.nav.services}
-          className="border-y border-[#e1e7e8] bg-white px-5 py-20 lg:px-8"
-        >
-          <div className="mx-auto max-w-7xl">
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-              {copy.services.items.map((service, index) => {
-                const Icon = serviceIcons[index];
-                return (
-                  <article
-                    key={service.title}
-                    className="group rounded-3xl border border-[#e2e8e9] bg-[#fbfcfb] p-6 transition hover:-translate-y-1 hover:border-[#b9cbd3] hover:shadow-lg"
-                  >
-                    <div
-                      className={`mb-10 flex h-12 w-12 items-center justify-center rounded-2xl ${service.tone === "gold" ? "bg-[#fbf0d5] text-[#b27b1f]" : service.tone === "sand" ? "bg-[#edf1e9] text-[#58735e]" : service.tone === "green" ? "bg-[#e8f3ee] text-[#2b7b63]" : "bg-[#e7f0f5] text-[#2e6280]"}`}
-                    >
-                      <Icon size={23} />
-                    </div>
-                    <div className="text-xs font-bold text-[#9aabb1]">
-                      {service.eyebrow}
-                    </div>
-                    <h3 className="mt-2 text-xl font-bold text-[#092d50]">
-                      {service.title}
-                    </h3>
-                    <p className="mt-3 leading-7 text-[#6c7b82]">
-                      {service.text}
-                    </p>
-                    <a
-                      href="#contact"
-                      className="mt-6 inline-flex items-center gap-2 text-sm font-bold text-[#2e6280]"
-                    >
-                      {copy.services.detailCta}
-                      <ChevronLeft size={16} />
-                    </a>
-                  </article>
-                );
-              })}
-            </div>
-          </div>
-        </section>
-
         <section id="tracking" className="mx-auto max-w-7xl px-5 py-20 lg:px-8">
           <div className="grid gap-8 rounded-[2rem] bg-[#e8eff1] p-7 md:p-10 lg:grid-cols-[.85fr_1.15fr] lg:items-center">
             <div>
-              <div className="mb-3 text-xs font-bold tracking-[0.18em] text-[#b17b1f]">
-                {copy.tracking.eyebrow}
-              </div>
-              <h2 className="text-3xl font-bold text-[#092d50]">
+              <h2 className="text-xl font-bold leading-relaxed text-[#092d50] sm:text-2xl">
                 {copy.tracking.title}
               </h2>
-              <p className="mt-4 max-w-md leading-7 text-[#62737d]">
-                {copy.tracking.description}
-              </p>
-              <div className="mt-7 flex flex-wrap items-center gap-2 text-xs text-[#5c6f78]">
-                <span className="rounded-full bg-white px-3 py-2">
-                  {copy.tracking.exampleLabel}
-                </span>
-                <span className="rounded-full bg-white px-3 py-2">
-                  {copy.tracking.privacy}
-                </span>
-              </div>
+              <ol className="mt-4 list-decimal space-y-3 ps-5 leading-7 text-[#62737d]">
+                {copy.tracking.instructions.map(instruction => (
+                  <li key={instruction}>{instruction}</li>
+                ))}
+              </ol>
             </div>
             <div className="rounded-3xl bg-white p-5 shadow-sm md:p-7">
-              <form
-                onSubmit={submitTracking}
-                className="flex flex-col gap-3 sm:flex-row"
-              >
-                <div className="flex-1">
-                  <label htmlFor="tracking-number" className="sr-only">
-                    {copy.tracking.inputLabel}
+              <form onSubmit={submitInquiry} className="space-y-4">
+                <div>
+                  <label
+                    htmlFor="inquiry-name"
+                    className="mb-2 block text-sm font-bold text-[#092d50]"
+                  >
+                    {copy.tracking.nameLabel}
                   </label>
                   <div className="relative">
                     <Package
@@ -455,23 +390,54 @@ export default function Home() {
                       size={19}
                     />
                     <input
-                      id="tracking-number"
-                      value={tracking}
+                      id="inquiry-name"
+                      type="text"
+                      required
+                      maxLength={200}
+                      autoComplete="off"
+                      value={inquiryName}
                       onChange={event => {
-                        setTracking(event.target.value);
-                        setTrackingError(false);
-                        setTrackingOpened(false);
+                        setInquiryName(event.target.value);
+                        setInquiryError(false);
+                        setInquiryPrepared(false);
                       }}
-                      placeholder={copy.tracking.placeholder}
+                      placeholder={copy.tracking.namePlaceholder}
                       className="h-14 w-full rounded-2xl border border-[#d8e1e4] bg-[#fbfcfb] pe-12 ps-4 text-sm outline-none transition placeholder:text-[#9aa8ad] focus:border-[#2d6380] focus:ring-4 focus:ring-[#2d6380]/10"
                     />
                   </div>
                 </div>
-                <button className="h-14 rounded-2xl bg-[#092d50] px-6 font-bold text-white transition hover:bg-[#123f68]">
+                <div>
+                  <label
+                    htmlFor="inquiry-phone"
+                    className="mb-2 block text-sm font-bold text-[#092d50]"
+                  >
+                    {copy.tracking.phoneLabel}
+                  </label>
+                  <input
+                    id="inquiry-phone"
+                    type="tel"
+                    dir="ltr"
+                    required
+                    maxLength={64}
+                    autoComplete="off"
+                    value={inquiryPhone}
+                    onChange={event => {
+                      setInquiryPhone(event.target.value);
+                      setInquiryError(false);
+                      setInquiryPrepared(false);
+                    }}
+                    placeholder={copy.tracking.phonePlaceholder}
+                    className="h-14 w-full rounded-2xl border border-[#d8e1e4] bg-[#fbfcfb] px-4 text-sm outline-none transition placeholder:text-[#9aa8ad] focus:border-[#2d6380] focus:ring-4 focus:ring-[#2d6380]/10"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  className="h-14 w-full rounded-2xl bg-[#092d50] px-6 font-bold text-white transition hover:bg-[#123f68]"
+                >
                   {copy.tracking.button}
                 </button>
               </form>
-              {trackingError && (
+              {inquiryError && (
                 <p
                   role="alert"
                   className="mt-3 text-sm font-semibold text-[#a34747]"
@@ -479,16 +445,14 @@ export default function Home() {
                   {copy.tracking.required}
                 </p>
               )}
-              {trackingOpened && (
+              {inquiryPrepared && (
                 <p
                   role="status"
                   className="mt-3 text-sm font-semibold text-[#2b7656]"
                 >
                   {copy.tracking.opened}
                   <a
-                    href={whatsappHref(
-                      `${copy.tracking.whatsappText} ${tracking.trim()}`
-                    )}
+                    href={whatsappHref(inquiryMessage)}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="ms-2 underline"
