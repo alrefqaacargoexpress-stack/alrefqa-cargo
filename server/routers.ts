@@ -1,6 +1,7 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { COOKIE_NAME } from "@shared/const";
+import { normalizeTracking } from "@shared/packing";
 import type { AppRole, Entity, EntityRecord, LocalState, SyncResult } from "@shared/operations";
 import { canViewFinance } from "@shared/operations";
 import { memberRoles, recordKeys, records, syncReceipts, users } from "../drizzle/schema";
@@ -14,6 +15,7 @@ import {
   hideFinance,
   isFinancialPayloadNonZero,
   parseChange,
+  prepareRecordForWrite,
   publicRecord,
   roleForUser,
   setRoleInputSchema,
@@ -155,23 +157,28 @@ export const appRouter = router({
           } else if (current && change.entity === "shipment" && (current.data as { tracking?: string }).tracking !== (change.data as { tracking?: string }).tracking) {
             result = { applied: [], conflicts: [{ changeId: change.id, reason: "tracking_change_forbidden", current: currentPublic }] };
           } else {
-            const nextData = role === "staff" && current
-              ? { ...change.data, ...(change.entity === "account" ? { balance: (current.data as { balance: number }).balance } : { amount: (current.data as { amount: number }).amount }) }
-              : change.data;
+            let nextData: EntityRecord;
+            try { nextData = prepareRecordForWrite(role, change.data, current ? asEntityRecord(current.data) : null); }
+            catch (error) {
+              const rejection: SyncResult = { applied: [], conflicts: [{ changeId: change.id, reason: error instanceof Error ? error.message : "invalid_packing", current: currentPublic }] };
+              await tx.insert(syncReceipts).values({ userId: ctx.user.id, changeId: change.id, result: rejection });
+              output.conflicts.push(...rejection.conflicts);
+              continue;
+            }
             const nextVersion = current ? current.version + 1 : 1;
             if (!current) {
               const idKeyType = `${change.entity}-id` as "account-id" | "shipment-id" | "invoice-id";
               const keyConflict = await tx.select().from(recordKeys).where(and(eq(recordKeys.keyType, idKeyType), eq(recordKeys.keyValue, change.recordId))).limit(1).for("update");
-              const trackingConflict = change.entity === "shipment" ? await tx.select().from(recordKeys).where(and(eq(recordKeys.keyType, "shipment-tracking"), eq(recordKeys.keyValue, (change.data as { tracking: string }).tracking))).limit(1).for("update") : [];
+              const trackingConflict = change.entity === "shipment" ? await tx.select().from(recordKeys).where(and(eq(recordKeys.keyType, "shipment-tracking"), sql`lower(trim(${recordKeys.keyValue})) = ${normalizeTracking((change.data as { tracking: string }).tracking)}`)).limit(1).for("update") : [];
               if ((keyConflict[0] && keyConflict[0].recordId !== change.recordId) || (trackingConflict[0] && trackingConflict[0].recordId !== change.recordId)) {
                 result = { applied: [], conflicts: [{ changeId: change.id, reason: "identifier_conflict", current: null }] };
               } else {
                 await tx.insert(recordKeys).ignore().values({ keyType: idKeyType, keyValue: change.recordId, entity: change.entity, recordId: change.recordId });
                 if (change.entity === "shipment") {
-                  await tx.insert(recordKeys).ignore().values({ keyType: "shipment-tracking", keyValue: (change.data as { tracking: string }).tracking, entity: change.entity, recordId: change.recordId });
+                  await tx.insert(recordKeys).ignore().values({ keyType: "shipment-tracking", keyValue: normalizeTracking((change.data as { tracking: string }).tracking), entity: change.entity, recordId: change.recordId });
                 }
                 const verifiedKey = await tx.select().from(recordKeys).where(and(eq(recordKeys.keyType, idKeyType), eq(recordKeys.keyValue, change.recordId))).limit(1);
-                const verifiedTracking = change.entity === "shipment" ? await tx.select().from(recordKeys).where(and(eq(recordKeys.keyType, "shipment-tracking"), eq(recordKeys.keyValue, (change.data as { tracking: string }).tracking))).limit(1) : [];
+                const verifiedTracking = change.entity === "shipment" ? await tx.select().from(recordKeys).where(and(eq(recordKeys.keyType, "shipment-tracking"), sql`lower(trim(${recordKeys.keyValue})) = ${normalizeTracking((change.data as { tracking: string }).tracking)}`)).limit(1) : [];
                 if ((verifiedKey[0] && verifiedKey[0].recordId !== change.recordId) || (verifiedTracking[0] && verifiedTracking[0].recordId !== change.recordId)) {
                   result = { applied: [], conflicts: [{ changeId: change.id, reason: "identifier_conflict", current: null }] };
                 } else {

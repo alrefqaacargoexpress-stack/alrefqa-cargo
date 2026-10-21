@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import {
   ArrowDownToLine,
   Bell,
@@ -133,7 +133,13 @@ function displayState(state: LocalState, showFinance: boolean): LocalState {
   return {
     ...state,
     accounts: state.accounts.map(account => ({ ...account, balance: 0 })),
-    shipments: state.shipments.map(shipment => ({ ...shipment, amount: 0 })),
+    shipments: state.shipments.map(shipment => ({
+      ...shipment,
+      amount: 0,
+      ...(shipment.packing
+        ? { packing: { ...shipment.packing, pricePerKg: 0 } }
+        : {}),
+    })),
     invoices: [],
   };
 }
@@ -148,7 +154,11 @@ function dateText(value: string | null, c: OperationsCopy) {
 function scopeLabels(c: OperationsCopy) {
   return { shared: c.shared, local: c.local, pending: c.pending };
 }
-function statusLabel(status: string, c: OperationsCopy) {
+function statusLabel(status: string, c: OperationsCopy, language: string = "ar") {
+  if (status === "قيد التجهيز")
+    return ({ ar: "قيد التجهيز", en: "Preparing", zh: "准备中", tr: "Hazırlanıyor" } as Record<string, string>)[language] ?? "قيد التجهيز";
+  if (status === "مسلّمة")
+    return ({ ar: "مسلّمة", en: "Delivered", zh: "已交付", tr: "Teslim edildi" } as Record<string, string>)[language] ?? "مسلّمة";
   if (status === "في الطريق") return c.inTransit;
   if (status === "وصلت للمكتب") return c.arrived;
   if (status === "جاهزة للتسليم") return c.ready;
@@ -163,6 +173,7 @@ function serviceLabel(service: string, c: OperationsCopy) {
 
 export default function Operations() {
   const { language, dir } = useLanguage();
+  const [location, setLocation] = useLocation();
   const c = languageCopy(language);
   const me = trpc.auth.me.useQuery(undefined, {
     retry: false,
@@ -210,6 +221,13 @@ export default function Operations() {
     userId ?? (offlineMode ? (offlineUser?.userId ?? null) : null);
   const effectiveRole = offlineMode ? (offlineUser?.role ?? null) : role;
   const showFinance = canViewFinance(effectiveRole);
+
+  useEffect(() => {
+    const query = location.split("?")[1]?.split("#")[0];
+    const requested = new URLSearchParams(query).get("tab");
+    if (requested === "overview" || requested === "shipments" || requested === "accounts" || requested === "invoices" || requested === "access")
+      setTab(requested);
+  }, [location]);
 
   useEffect(() => {
     const on = () => setOnline(true);
@@ -705,10 +723,7 @@ export default function Operations() {
                 {c.newAccount}
               </button>
               <button
-                onClick={() => {
-                  setEditing(null);
-                  setModal("shipment");
-                }}
+                onClick={() => setLocation("/operations/shipments/new")}
                 disabled={!canWrite(effectiveRole, "shipment")}
                 className="inline-flex items-center gap-2 rounded-xl bg-sky-950 px-3 py-2 text-sm font-bold text-white disabled:opacity-40"
               >
@@ -799,11 +814,15 @@ export default function Operations() {
               search={search}
               setSearch={setSearch}
               onEdit={item => {
-                setEditing(item);
-                setModal("shipment");
+                if (item.packing) setLocation(`/operations/shipments/${encodeURIComponent(item.id)}`);
+                else {
+                  setEditing(item);
+                  setModal("shipment");
+                }
               }}
               canEdit={canWrite(effectiveRole, "shipment")}
               showFinance={showFinance}
+              language={language}
             />
           )}
           {tab === "accounts" && (
@@ -1019,7 +1038,7 @@ function Overview({
                   {item.account} · {item.route}
                 </div>
               </div>
-              <StatusBadge label={statusLabel(item.status, c)} />
+              <StatusBadge label={statusLabel(item.status, c, language)} />
               <ScopeBadge scope={item.scope} labels={scopeLabels(c)} />
             </div>
           ))}
@@ -1066,6 +1085,7 @@ function Shipments({
   onEdit,
   canEdit,
   showFinance,
+  language,
 }: {
   items: Shipment[];
   state: LocalState;
@@ -1075,6 +1095,7 @@ function Shipments({
   onEdit: (item: Shipment) => void;
   canEdit: boolean;
   showFinance: boolean;
+  language: string;
 }) {
   return (
     <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
@@ -1114,7 +1135,7 @@ function Shipments({
                 <td className="px-5 py-4">{item.route}</td>
                 <td className="px-5 py-4">{serviceLabel(item.service, c)}</td>
                 <td className="px-5 py-4">
-                  <StatusBadge label={statusLabel(item.status, c)} />
+                  <StatusBadge label={statusLabel(item.status, c, language)} />
                 </td>
                 <td className="px-5 py-4">{item.eta}</td>
                 <td className="px-5 py-4">

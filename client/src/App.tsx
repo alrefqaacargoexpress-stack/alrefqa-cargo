@@ -9,21 +9,56 @@ import { LanguageProvider, useLanguage } from "./contexts/LanguageContext";
 import { lazy, Suspense } from "react";
 
 const Operations = lazy(() => import("./pages/Operations"));
+const PackingHub = lazy(() => import("./pages/PackingHub"));
+const ShipmentPacking = lazy(() => import("./pages/ShipmentPacking"));
+const Customers = lazy(() => import("./pages/Customers"));
+const Reports = lazy(() => import("./pages/Reports"));
 function PageLoading() {
   const { language } = useLanguage();
-  return <div className="p-8 text-center">{{ ar: "جارٍ تحميل الصفحة…", en: "Loading page…", zh: "正在加载页面…", tr: "Sayfa yükleniyor…" }[language]}</div>;
+  return (
+    <div className="p-8 text-center">
+      {
+        {
+          ar: "جارٍ تحميل الصفحة…",
+          en: "Loading page…",
+          zh: "正在加载页面…",
+          tr: "Sayfa yükleniyor…",
+        }[language]
+      }
+    </div>
+  );
 }
 
 function Router() {
-  return <Switch>
-    <Route path="/" component={Home} />
-    <Route path="/operations" component={Operations} />
-    <Route path="/admin" component={Operations} />
-    <Route path="/404" component={NotFound} />
-    <Route component={NotFound} />
-  </Switch>;
+  return (
+    <Switch>
+      <Route path="/" component={Home} />
+      <Route path="/operations/shipments/new" component={PackingHub} />
+      <Route path="/operations/shipments/:id" component={ShipmentPacking} />
+      <Route path="/operations/shipments" component={PackingHub} />
+      <Route path="/operations/customers" component={Customers} />
+      <Route path="/operations/reports" component={Reports} />
+      <Route path="/operations" component={Operations} />
+      <Route path="/admin" component={Operations} />
+      <Route path="/404" component={NotFound} />
+      <Route component={NotFound} />
+    </Switch>
+  );
 }
 
 export default function App() {
-  return <ErrorBoundary><LanguageProvider><ThemeProvider defaultTheme="light"><TooltipProvider><Toaster /><Suspense fallback={<PageLoading />}><Router /></Suspense></TooltipProvider></ThemeProvider></LanguageProvider></ErrorBoundary>;
+  return (
+    <ErrorBoundary>
+      <LanguageProvider>
+        <ThemeProvider defaultTheme="light">
+          <TooltipProvider>
+            <Toaster />
+            <Suspense fallback={<PageLoading />}>
+              <Router />
+            </Suspense>
+          </TooltipProvider>
+        </ThemeProvider>
+      </LanguageProvider>
+    </ErrorBoundary>
+  );
 }
