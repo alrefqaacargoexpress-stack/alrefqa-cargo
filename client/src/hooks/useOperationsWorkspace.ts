@@ -12,6 +12,7 @@ import {
 } from "@/lib/offlineStore";
 import {
   EMPTY_STATE,
+  APP_ROLES,
   canViewFinance,
   canWrite,
   type AppRole,
@@ -95,7 +96,7 @@ function readProfile(): Profile | null {
     const value = JSON.parse(localStorage.getItem(PROFILE) ?? "null");
     return value &&
       /^\d+$/.test(String(value.userId)) &&
-      ["admin", "staff", "accountant", "viewer"].includes(value.role)
+      (APP_ROLES as readonly string[]).includes(value.role)
       ? value
       : null;
   } catch {
@@ -377,7 +378,19 @@ export function useOperationsWorkspace() {
     if (saved) setProfile(saved);
   };
   return {
-    state: hiddenState(workspace?.state ?? EMPTY_STATE, canViewFinance(role)),
+    state:
+      role === "viewer" || role === "tracking_staff"
+        ? EMPTY_STATE
+        : hiddenState(
+            role === "supervisor"
+              ? {
+                  ...(workspace?.state ?? EMPTY_STATE),
+                  accounts: [],
+                  invoices: [],
+                }
+              : (workspace?.state ?? EMPTY_STATE),
+            canViewFinance(role)
+          ),
     workspace,
     userId,
     role,

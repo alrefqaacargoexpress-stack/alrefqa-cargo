@@ -14,7 +14,9 @@ import {
   Package,
   Plus,
   RefreshCw,
+  Settings,
   ShieldCheck,
+  ScanLine,
   Truck,
   Upload,
   Users,
@@ -52,12 +54,13 @@ import type {
   Shipment,
   SyncResult,
 } from "@shared/operations";
-import { canViewFinance, canWrite } from "@shared/operations";
+import { APP_ROLES, canViewFinance, canWrite } from "@shared/operations";
 import {
   operationsCopy,
   type OperationsLanguage,
   type OperationsCopy,
 } from "@/lib/operationsCopy";
+import { officeCopyFor } from "@/lib/officeCopy";
 import {
   Field,
   inputClass,
@@ -73,7 +76,7 @@ type NoticeTone = "ok" | "error" | "info";
 type Notice = { tone: NoticeTone; text: string } | null;
 type OfflineProfile = { userId: string; name: string; role: AppRole | null };
 const MAX_MONEY = 999999999;
-const ROLE_VALUES: AppRole[] = ["admin", "staff", "accountant", "viewer"];
+const ROLE_VALUES: AppRole[] = [...APP_ROLES];
 const OFFLINE_PROFILE_KEY = "alrefqaa-operations-last-profile-v1";
 function isAppRole(value: unknown): value is AppRole {
   return typeof value === "string" && ROLE_VALUES.includes(value as AppRole);
@@ -120,8 +123,25 @@ function languageCopy(language: string): OperationsCopy {
       : "ar"
   ];
 }
-function roleText(role: AppRole | null, c: OperationsCopy) {
-  return role ? c[role] : c.noRole;
+function roleText(role: AppRole | null, c: OperationsCopy, language = "ar") {
+  if (!role) return c.noRole;
+  if (role === "tracking_staff") {
+    return {
+      ar: "موظف تتبع",
+      en: "Tracking staff",
+      zh: "追踪员工",
+      tr: "Takip personeli",
+    }[language as "ar" | "en" | "zh" | "tr"] ?? "موظف تتبع";
+  }
+  if (role === "supervisor") {
+    return {
+      ar: "مشرف",
+      en: "Supervisor",
+      zh: "主管",
+      tr: "Süpervizör",
+    }[language as "ar" | "en" | "zh" | "tr"] ?? "مشرف";
+  }
+  return c[role];
 }
 function formatAmount(value: number, language: string) {
   return new Intl.NumberFormat(language === "ar" ? "ar-MR" : language, {
@@ -209,6 +229,7 @@ export default function Operations() {
   const { language, dir } = useLanguage();
   const [location, setLocation] = useLocation();
   const c = languageCopy(language);
+  const officeC = officeCopyFor(language);
   const me = trpc.auth.me.useQuery(undefined, {
     retry: false,
     refetchOnWindowFocus: false,
@@ -593,6 +614,21 @@ export default function Operations() {
     );
   if (!offlineMode && (access.isError || !access.data || !role))
     return <Gate title={c.accessDenied} c={c} />;
+  if (effectiveRole === "viewer" || effectiveRole === "tracking_staff")
+    return (
+      <Gate
+        title={c.noAccess}
+        c={c}
+        action={
+          <Link
+            href="/operations/tracking"
+            className="inline-flex rounded-xl bg-sky-900 px-4 py-2 font-bold text-white"
+          >
+            {officeCopyFor(language).tracking}
+          </Link>
+        }
+      />
+    );
   if (workspaceError)
     return (
       <Gate
@@ -680,7 +716,7 @@ export default function Operations() {
             <div>
               <div className="font-bold">{c.title}</div>
               <div className="text-[10px] text-white/60">
-                {roleText(effectiveRole, c)}
+                {roleText(effectiveRole, c, language)}
               </div>
             </div>
           </Link>
@@ -737,7 +773,7 @@ export default function Operations() {
               {online ? c.online : c.offline}
             </span>
             <div className="hidden rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs sm:block">
-              {me.data?.name ?? me.data?.email ?? roleText(effectiveRole, c)}
+              {me.data?.name ?? me.data?.email ?? roleText(effectiveRole, c, language)}
             </div>
           </div>
         </header>
@@ -751,6 +787,22 @@ export default function Operations() {
               <span>{visibleTabs.find(item => item.id === tab)?.label}</span>
             </div>
             <div className="flex flex-wrap gap-2">
+              <Link
+                href="/operations/tracking"
+                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold"
+              >
+                <ScanLine size={15} />
+                {officeC.tracking}
+              </Link>
+              {(effectiveRole === "admin" || effectiveRole === "accountant") && (
+                <Link
+                  href="/operations/settings"
+                  className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold"
+                >
+                  <Settings size={15} />
+                  {officeC.settings}
+                </Link>
+              )}
               <button
                 onClick={() =>
                   downloadLocalArchive(effectiveUserId ?? undefined)
@@ -797,7 +849,7 @@ export default function Operations() {
           )}
           {offlineMode && (
             <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
-              {c.localWarning} ({roleText(effectiveRole, c)})
+              {c.localWarning} ({roleText(effectiveRole, c, language)})
             </div>
           )}
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-emerald-100 bg-emerald-50 p-4">
@@ -923,6 +975,7 @@ export default function Operations() {
           {tab === "access" && (
             <Access
               c={c}
+              language={language}
               members={tabAccess.data ?? []}
               currentUserId={userId}
               pending={setRoleMutation.isPending}
@@ -961,6 +1014,7 @@ export default function Operations() {
           onSave={async (entity, data, label) => {
             if (await writeLocal(entity, data, label)) setModal(null);
           }}
+          language={language}
         />
       )}
       {importPreview && (
@@ -1102,7 +1156,7 @@ function Overview({
         </section>
         <section className="rounded-2xl bg-sky-950 p-6 text-white">
           <ShieldCheck size={22} className="text-amber-300" />
-          <h2 className="mt-4 text-xl font-bold">{roleText(role, c)}</h2>
+          <h2 className="mt-4 text-xl font-bold">{roleText(role, c, language)}</h2>
           <p className="mt-3 text-sm leading-6 text-white/70">{c.reviewHint}</p>
           <div className="mt-6 text-sm text-white/70">{c.localData}</div>
         </section>
@@ -1360,6 +1414,7 @@ function Invoices({
   canEdit: boolean;
   language: string;
 }) {
+  const officeC = officeCopyFor(language);
   const total = state.invoices.reduce((sum, item) => sum + item.amount, 0);
   return (
     <section className="rounded-2xl border border-slate-200 bg-white">
@@ -1413,6 +1468,12 @@ function Invoices({
               <div className="font-bold">{item.id}</div>
               <div className="text-xs text-slate-500">
                 {item.account} · {item.issuedAt}
+                {item.payment && (
+                  <span className="block">
+                    {officeC.paymentMethod}: {item.payment.methodLabel}
+                    {item.payment.reference ? ` · ${item.payment.reference}` : ""}
+                  </span>
+                )}
               </div>
             </div>
             <strong>{formatAmount(item.amount, "ar-MR")}</strong>
@@ -1438,12 +1499,14 @@ function Invoices({
 
 function Access({
   c,
+  language,
   members,
   currentUserId,
   pending,
   onSetRole,
 }: {
   c: OperationsCopy;
+  language: string;
   members: {
     userId: number | string;
     name: string;
@@ -1454,7 +1517,7 @@ function Access({
   pending: boolean;
   onSetRole: (id: number | string, role: AppRole) => Promise<void>;
 }) {
-  const roles: AppRole[] = ["admin", "staff", "accountant", "viewer"];
+  const roles: AppRole[] = ROLE_VALUES;
   return (
     <section className="rounded-2xl border border-slate-200 bg-white">
       <div className="border-b border-slate-100 p-5">
@@ -1486,7 +1549,7 @@ function Access({
               <option value="">{c.noRole}</option>
               {roles.map(role => (
                 <option key={role} value={role}>
-                  {roleText(role, c)}
+                  {roleText(role, c, language)}
                 </option>
               ))}
             </select>
@@ -1508,6 +1571,7 @@ function EntityModal({
   state,
   c,
   showFinance,
+  language,
   onClose,
   onSave,
 }: {
@@ -1516,6 +1580,7 @@ function EntityModal({
   state: LocalState;
   c: OperationsCopy;
   showFinance: boolean;
+  language: string;
   onClose: () => void;
   onSave: (entity: Entity, data: EntityRecord, label: string) => void;
 }) {
@@ -1555,9 +1620,66 @@ function EntityModal({
           });
   const [form, setForm] = useState<EntityRecord>(initial as EntityRecord);
   const [error, setError] = useState("");
+  const officeC = officeCopyFor(language);
+  const officeSettings = trpc.office.get.useQuery(undefined, {
+    enabled: kind === "invoice" && showFinance,
+    retry: false,
+    refetchOnWindowFocus: false,
+  });
+  const invoicePayment =
+    kind === "invoice" ? (form as Invoice).payment : undefined;
+  const paymentOptions = [
+    ...(invoicePayment
+      ? [{ id: invoicePayment.methodId, label: invoicePayment.methodLabel, enabled: false }]
+      : []),
+    ...(officeSettings.data?.methods ?? []).filter(
+      method => method.enabled && method.id !== invoicePayment?.methodId
+    ),
+  ].filter(
+    (method, index, all) =>
+      all.findIndex(item => item.id === method.id) === index
+  );
   const set = (key: string, value: string | number) => {
     setError("");
     setForm(previous => ({ ...previous, [key]: value }) as EntityRecord);
+  };
+  const setPaymentMethod = (methodId: string) => {
+    setError("");
+    if (!methodId) {
+      setForm(previous => {
+        const next = { ...previous } as Invoice;
+        delete next.payment;
+        return next;
+      });
+      return;
+    }
+    const method = officeSettings.data?.methods.find(item => item.id === methodId);
+    if (!method) return;
+    setForm(previous => ({
+      ...previous,
+      payment: {
+        office: "nouakchott",
+        methodId: method.id,
+        methodLabel: method.label,
+        ...((previous as Invoice).payment?.reference
+          ? { reference: (previous as Invoice).payment?.reference }
+          : {}),
+      },
+    }) as EntityRecord);
+  };
+  const setPaymentReference = (reference: string) => {
+    setError("");
+    setForm(previous => {
+      const payment = (previous as Invoice).payment;
+      if (!payment) return previous;
+      return {
+        ...previous,
+        payment: {
+          ...payment,
+          ...(reference.trim() ? { reference } : { reference: undefined }),
+        },
+      } as EntityRecord;
+    });
   };
   const submit = (event: React.FormEvent) => {
     event.preventDefault();
@@ -1820,6 +1942,40 @@ function EntityModal({
                 onChange={e => set("issuedAt", e.target.value)}
               />
             </Field>
+            {showFinance && (
+              <Field label={officeC.paymentMethod}>
+                <select
+                  className={inputClass}
+                  value={invoicePayment?.methodId ?? ""}
+                  disabled={officeSettings.isLoading || officeSettings.isError || !officeSettings.data}
+                  onChange={event => setPaymentMethod(event.target.value)}
+                >
+                  <option value="">{officeC.none}</option>
+                  {paymentOptions.map(method => (
+                    <option key={method.id} value={method.id} disabled={!method.enabled}>
+                      {method.label}{!method.enabled ? ` · ${officeC.oldMethod}` : ""}
+                    </option>
+                  ))}
+                </select>
+                <span className="text-xs font-normal text-slate-500">
+                  {officeC.officeCaption} {officeC.paymentHint}
+                </span>
+                {officeSettings.isError && (
+                  <span className="text-xs font-semibold text-red-700">{officeC.loadError}</span>
+                )}
+              </Field>
+            )}
+            {showFinance && invoicePayment && (
+              <Field label={`${officeC.reference} (${officeC.optional})`}>
+                <input
+                  className={inputClass}
+                  maxLength={240}
+                  value={invoicePayment.reference ?? ""}
+                  onChange={event => setPaymentReference(event.target.value)}
+                />
+                <span className="text-xs font-normal text-slate-500">{officeC.referenceHint}</span>
+              </Field>
+            )}
           </>
         )}
         {error && (

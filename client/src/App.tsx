@@ -13,6 +13,8 @@ const PackingHub = lazy(() => import("./pages/PackingHub"));
 const ShipmentPacking = lazy(() => import("./pages/ShipmentPacking"));
 const Customers = lazy(() => import("./pages/Customers"));
 const Reports = lazy(() => import("./pages/Reports"));
+const Tracking = lazy(() => import("./pages/Tracking"));
+const OfficeSettings = lazy(() => import("./pages/OfficeSettings"));
 function PageLoading() {
   const { language } = useLanguage();
   return (
@@ -38,6 +40,9 @@ function Router() {
       <Route path="/operations/shipments" component={PackingHub} />
       <Route path="/operations/customers" component={Customers} />
       <Route path="/operations/reports" component={Reports} />
+      <Route path="/operations/tracking/:id" component={Tracking} />
+      <Route path="/operations/tracking" component={Tracking} />
+      <Route path="/operations/settings" component={OfficeSettings} />
       <Route path="/operations" component={Operations} />
       <Route path="/admin" component={Operations} />
       <Route path="/404" component={NotFound} />

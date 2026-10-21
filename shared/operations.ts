@@ -1,5 +1,15 @@
 import type { PackingSession } from "./packing";
-export type AppRole = "admin" | "staff" | "accountant" | "viewer";
+import type { ShipmentJourney } from "./tracking";
+import type { InvoicePayment } from "./office";
+export const APP_ROLES = [
+  "admin",
+  "staff",
+  "accountant",
+  "viewer",
+  "tracking_staff",
+  "supervisor",
+] as const;
+export type AppRole = (typeof APP_ROLES)[number];
 export type DataScope = "shared" | "local" | "pending";
 export type Account = {
   id: string;
@@ -28,6 +38,7 @@ export type Shipment = {
   eta: string;
   amount: number;
   packing?: PackingSession;
+  journey?: ShipmentJourney;
   deleted?: { at: string; reason: string };
   scope?: DataScope;
   version?: number;
@@ -38,6 +49,7 @@ export type Invoice = {
   amount: number;
   status: "مدفوعة" | "بانتظار الدفع";
   issuedAt: string;
+  payment?: InvoicePayment;
   scope?: DataScope;
   version?: number;
 };

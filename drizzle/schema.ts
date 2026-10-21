@@ -1,17 +1,8 @@
 import { int, json, mysqlEnum, mysqlTable, text, timestamp, varchar, uniqueIndex } from "drizzle-orm/mysql-core";
 
-/**
- * Core user table backing auth flow.
- * Extend this file with additional tables as your product grows.
- * Columns use camelCase to match both database fields and generated types.
- */
+/** Core user table backing auth flow. */
 export const users = mysqlTable("users", {
-  /**
-   * Surrogate primary key. Auto-incremented numeric value managed by the database.
-   * Use this for relations between tables.
-   */
   id: int("id").autoincrement().primaryKey(),
-  /** Manus OAuth identifier (openId) returned from the OAuth callback. Unique per user. */
   openId: varchar("openId", { length: 64 }).notNull().unique(),
   name: text("name"),
   email: varchar("email", { length: 320 }),
@@ -26,7 +17,7 @@ export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 
 export const recordEntityValues = ["account", "shipment", "invoice"] as const;
-export const appRoleValues = ["admin", "staff", "accountant", "viewer"] as const;
+export const appRoleValues = ["admin", "staff", "accountant", "viewer", "tracking_staff", "supervisor"] as const;
 
 /** Durable application role assignments. The users.role column remains the root admin flag. */
 export const memberRoles = mysqlTable("member_roles", {
@@ -67,6 +58,47 @@ export const recordKeys = mysqlTable("record_keys", {
   recordId: varchar("recordId", { length: 128 }).notNull(),
 }, table => [uniqueIndex("record_keys_type_value_unique").on(table.keyType, table.keyValue)]);
 
+/** Singleton office payment-method settings. A missing row means the version-zero defaults apply. */
+export const officeSettings = mysqlTable("office_settings", {
+  id: int("id").primaryKey().default(1),
+  office: varchar("office", { length: 32 }).notNull(),
+  methods: json("methods").notNull(),
+  version: int("version").notNull().default(0),
+  updatedBy: int("updatedBy").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+/** Hash-chained append-only audit events. Triggers in the additive migration reject updates/deletes. */
+export const auditEvents = mysqlTable("audit_events", {
+  id: int("id").autoincrement().primaryKey(),
+  sequence: int("sequence").notNull(),
+  actorId: int("actorId").notNull(),
+  actorName: varchar("actorName", { length: 320 }).notNull(),
+  role: mysqlEnum("role", appRoleValues).notNull(),
+  entity: varchar("entity", { length: 64 }).notNull(),
+  recordId: varchar("recordId", { length: 128 }).notNull(),
+  action: varchar("action", { length: 64 }).notNull(),
+  beforeData: json("beforeData"),
+  afterData: json("afterData"),
+  beforeVersion: int("beforeVersion"),
+  afterVersion: int("afterVersion"),
+  requestKey: varchar("requestKey", { length: 128 }).notNull(),
+  previousHash: varchar("previousHash", { length: 64 }).notNull(),
+  eventHash: varchar("eventHash", { length: 64 }).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, table => [uniqueIndex("audit_events_sequence_unique").on(table.sequence)]);
+
+/** Singleton chain head locked by every audit append. */
+export const auditHeads = mysqlTable("audit_heads", {
+  id: int("id").primaryKey().default(1),
+  sequence: int("sequence").notNull().default(0),
+  lastHash: varchar("lastHash", { length: 64 }).notNull().default(""),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
 export type MemberRole = typeof memberRoles.$inferSelect;
 export type RecordRow = typeof records.$inferSelect;
 export type SyncReceipt = typeof syncReceipts.$inferSelect;
+export type OfficeSettingsRow = typeof officeSettings.$inferSelect;
+export type AuditEventRow = typeof auditEvents.$inferSelect;

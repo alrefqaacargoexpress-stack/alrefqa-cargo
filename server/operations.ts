@@ -2,6 +2,9 @@ import { z } from "zod";
 import type { User } from "../drizzle/schema";
 import { ENV } from "./_core/env";
 import { canonicalPackingShipment, packingSchema } from "@shared/packing";
+import { journeySchema } from "@shared/tracking";
+import { stageShipmentStatus } from "@shared/tracking";
+import { invoicePaymentSchema } from "@shared/office";
 import {
   assertShipmentAction,
   shipmentActionSchema,
@@ -64,6 +67,7 @@ export const shipmentDataSchema = z
     eta: boundedString(80),
     amount: nonNegative,
     packing: packingSchema.optional(),
+    journey: journeySchema.optional(),
     deleted: shipmentDeletionSchema.optional(),
     ...optionalMeta,
   })
@@ -75,6 +79,7 @@ export const invoiceDataSchema = z
     amount: nonNegative,
     status: z.enum(["مدفوعة", "بانتظار الدفع"]),
     issuedAt: boundedString(80),
+    payment: invoicePaymentSchema.optional(),
     ...optionalMeta,
   })
   .strict();
@@ -97,7 +102,7 @@ export const syncInputSchema = z
 export const setRoleInputSchema = z
   .object({
     userId: safeNonNegative,
-    role: z.enum(["admin", "staff", "accountant", "viewer"]),
+    role: z.enum(["admin", "staff", "accountant", "viewer", "tracking_staff", "supervisor"]),
   })
   .strict();
 
@@ -223,8 +228,34 @@ export function prepareRecordForWrite(
   action?: PendingChange["action"]
 ): EntityRecord {
   let result = structuredClone(preserveStaffFinance(role, next, current));
+  if (
+    current &&
+    "issuedAt" in current &&
+    "issuedAt" in result &&
+    "payment" in current &&
+    current.payment &&
+    !("payment" in result)
+  )
+    result = { ...result, payment: structuredClone(current.payment) };
   if ("tracking" in result) {
     const oldShipment = current && "tracking" in current ? current : null;
+    if (oldShipment?.journey) {
+      // Older clients omit fields they do not understand; preserve the journey rather than
+      // allowing a sync payload to erase actor-authored notes or metadata.
+      if (!result.journey) result = { ...result, journey: structuredClone(oldShipment.journey) };
+      else if (JSON.stringify(result.journey) !== JSON.stringify(oldShipment.journey))
+        throw new Error("tracking_command_required");
+      const stageStatus = stageShipmentStatus(oldShipment.journey.stage);
+      const deliveredCorrection =
+        result.status === "مسلّمة" &&
+        oldShipment.journey.stage === "arrived_office" &&
+        (role === "admin" || role === "staff");
+      if (result.status !== oldShipment.status && !deliveredCorrection && result.status !== stageStatus)
+        throw new Error("tracking_command_required");
+    } else if (result.journey) {
+      // Initial tracking plans are server commands, never a generic public record create.
+      throw new Error("tracking_command_required");
+    }
     assertShipmentAction(role, result, oldShipment, action);
     if (
       oldShipment &&

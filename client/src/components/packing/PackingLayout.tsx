@@ -16,6 +16,7 @@ import { useOperationsWorkspace } from "@/hooks/useOperationsWorkspace";
 import { startLogin } from "@/const";
 import { downloadLocalArchive } from "@/lib/offlineStore";
 import { copyFor } from "@/lib/packingCopy";
+import { canUseOperations } from "@shared/tracking";
 import {
   PackingScopeBadge,
   packingPrimaryClass,
@@ -54,6 +55,30 @@ export default function PackingLayout({
     },
     { href: "/operations/customers", label: null, text: c.customers },
     { href: "/operations/reports", label: null, text: c.reports },
+    {
+      href: "/operations/tracking",
+      label: null,
+      text: {
+        ar: "تتبع الشحنات",
+        en: "Shipment tracking",
+        zh: "货运追踪",
+        tr: "Gönderi takibi",
+      }[language],
+    },
+    ...(workspace.role === "admin" || workspace.role === "accountant"
+      ? [
+          {
+            href: "/operations/settings",
+            label: null,
+            text: {
+              ar: "إعدادات نواكشوط",
+              en: "Nouakchott settings",
+              zh: "努瓦克肖特设置",
+              tr: "Nuakşot ayarları",
+            }[language],
+          },
+        ]
+      : []),
     { href: "/operations?tab=accounts", label: null, text: "Excel" },
   ];
 
@@ -120,6 +145,25 @@ export default function PackingLayout({
       );
     if (workspace.role === null && !workspace.localOnly)
       return <StatePanel title={c.noAccess} detail={c.noPermission} />;
+    if (!canUseOperations(workspace.role))
+      return (
+        <StatePanel
+          title={c.noAccess}
+          detail={c.noPermission}
+          action={
+            <Link href="/operations/tracking" className={packingPrimaryClass}>
+              {
+                {
+                  ar: "تتبع الشحنات",
+                  en: "Shipment tracking",
+                  zh: "货运追踪",
+                  tr: "Gönderi takibi",
+                }[language]
+              }
+            </Link>
+          }
+        />
+      );
     return null;
   };
   const blocked = shellState();
