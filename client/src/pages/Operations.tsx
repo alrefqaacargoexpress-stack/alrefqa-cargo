@@ -137,7 +137,7 @@ function displayState(state: LocalState, showFinance: boolean): LocalState {
       ...shipment,
       amount: 0,
       ...(shipment.packing
-        ? { packing: { ...shipment.packing, pricePerKg: 0 } }
+        ? { packing: { ...shipment.packing, pricePerKg: 0, ...(shipment.packing.pricePerKgMRU === undefined ? {} : { pricePerKgMRU: 0 }) } }
         : {}),
     })),
     invoices: [],

@@ -1,7 +1,18 @@
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Link, useParams } from "wouter";
-import { ArrowLeft, ArrowRight, Check, Lock, Plus, Send } from "lucide-react";
+import {
+  ArrowLeft,
+  ArrowRight,
+  Check,
+  Lock,
+  Plus,
+  Search,
+  Send,
+} from "lucide-react";
 import PackingLayout from "@/components/packing/PackingLayout";
+import CartonGoods, {
+  type CartonGoodsGroup,
+} from "@/components/packing/CartonGoods";
 import {
   PackingField,
   PackingScopeBadge,
@@ -20,12 +31,20 @@ import {
   addPackingGoods,
   changePackingStatus,
   closePackingCarton,
+  deletePackingGoods,
   goodsTotals,
   isPackedShipment,
+  matchesPackingGoods,
+  normalizeName,
+  cartonGroups,
   packingCustomers,
   packingTotals,
+  packingTotalsMRU,
+  restorePackingGoods,
   sourceCurrency,
   type PackedShipment,
+  type PackingCarton,
+  type PackingGoods,
 } from "@shared/packing";
 
 export default function ShipmentPacking() {
@@ -43,6 +62,8 @@ export default function ShipmentPacking() {
   const [phone, setPhone] = useState("");
   const [unitWeight, setUnitWeight] = useState("");
   const [pieces, setPieces] = useState("1");
+  const [search, setSearch] = useState("");
+  const [showDeleted, setShowDeleted] = useState(false);
   const packed =
     sourceShipment && isPackedShipment(sourceShipment) ? sourceShipment : null;
 
@@ -67,6 +88,7 @@ export default function ShipmentPacking() {
     );
 
   const totals = packingTotals(packed.packing);
+  const mruTotals = packingTotalsMRU(packed.packing);
   const canEdit = workspace.canEditShipments && packed.status === "قيد التجهيز";
   const errorText = (value: unknown) => {
     const code = value instanceof Error ? value.message : "";
@@ -94,28 +116,18 @@ export default function ShipmentPacking() {
   const addGoods = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError(null);
-    if (!canEdit) {
-      setError(c.canNotEdit);
-      return;
-    }
+    if (!canEdit) return setError(c.canNotEdit);
     const weight = Number(unitWeight);
     const count = Number(pieces);
-    if (!name.trim()) {
-      setError(c.invalidTracking);
-      return;
-    }
+    if (!name.trim()) return setError(c.invalidTracking);
     if (
       !Number.isFinite(weight) ||
       weight <= 0 ||
       Math.abs(Math.round(weight * 1000) - weight * 1000) > 0.0001
-    ) {
-      setError(c.invalidWeight);
-      return;
-    }
-    if (!Number.isSafeInteger(count) || count <= 0) {
-      setError(c.invalidPieces);
-      return;
-    }
+    )
+      return setError(c.invalidWeight);
+    if (!Number.isSafeInteger(count) || count <= 0)
+      return setError(c.invalidPieces);
     try {
       const next = addPackingGoods(packed, {
         name: name.trim(),
@@ -134,22 +146,51 @@ export default function ShipmentPacking() {
     }
   };
   const closeCarton = async () => {
-    if (!canEdit) {
-      setError(c.canNotEdit);
-      return;
-    }
+    if (!canEdit) return setError(c.canNotEdit);
     try {
-      const next = closePackingCarton(packed);
-      await save(next, `${c.closeCarton}: ${packed.tracking}`);
+      await save(
+        closePackingCarton(packed),
+        `${c.closeCarton}: ${packed.tracking}`
+      );
+    } catch (value) {
+      setError(errorText(value));
+    }
+  };
+  const deleteEntry = async (carton: PackingCarton, entry: PackingGoods) => {
+    if (!canEdit || entry.deleted) return setError(c.canNotEdit);
+    const prompt = c.confirmDelete
+      .replace("{name}", entry.name)
+      .replace("{carton}", String(carton.number))
+      .replace("{weight}", String(entry.unitWeight))
+      .replace("{pieces}", String(entry.pieces));
+    if (!window.confirm(prompt)) return;
+    try {
+      await save(
+        deletePackingGoods(packed, entry.id, c.deleteReason),
+        `${c.delete}: ${entry.name}`
+      );
+    } catch (value) {
+      setError(errorText(value));
+    }
+  };
+  const restoreEntry = async (carton: PackingCarton, entry: PackingGoods) => {
+    if (!canEdit || !entry.deleted) return setError(c.canNotEdit);
+    const prompt = c.confirmRestore
+      .replace("{name}", entry.name)
+      .replace("{carton}", String(carton.number));
+    if (!window.confirm(prompt)) return;
+    try {
+      await save(
+        restorePackingGoods(packed, entry.id),
+        `${c.restore}: ${entry.name}`
+      );
     } catch (value) {
       setError(errorText(value));
     }
   };
   const send = async () => {
-    if (!workspace.canEditShipments || packed.status !== "قيد التجهيز") {
-      setError(c.canNotEdit);
-      return;
-    }
+    if (!workspace.canEditShipments || packed.status !== "قيد التجهيز")
+      return setError(c.canNotEdit);
     if (!window.confirm(c.confirmSend)) return;
     try {
       await save(
@@ -161,10 +202,8 @@ export default function ShipmentPacking() {
     }
   };
   const delivered = async () => {
-    if (!workspace.canEditShipments || packed.status !== "في الطريق") {
-      setError(c.canNotEdit);
-      return;
-    }
+    if (!workspace.canEditShipments || packed.status !== "في الطريق")
+      return setError(c.canNotEdit);
     if (!window.confirm(c.confirmDelivered)) return;
     try {
       await save(
@@ -207,7 +246,7 @@ export default function ShipmentPacking() {
           </div>
           <PackingStatusBadge status={packed.status} c={c} />
         </div>
-        <div className="mt-5 grid grid-cols-2 gap-3 border-y border-slate-100 py-4 sm:grid-cols-4">
+        <div className="mt-5 grid grid-cols-2 gap-3 border-y border-slate-100 py-4 sm:grid-cols-5">
           <Metric
             label={c.totalPieces}
             value={formatLocalNumber(totals.pieces, language)}
@@ -228,13 +267,31 @@ export default function ShipmentPacking() {
                 : c.amountHidden
             }
           />
+          <Metric
+            label={c.mru}
+            value={
+              workspace.showFinance && mruTotals
+                ? `${formatLocalNumber(mruTotals.amount, language, 2)} ${c.mru}`
+                : workspace.showFinance
+                  ? c.noPriceSet
+                  : c.amountHidden
+            }
+          />
         </div>
         {workspace.showFinance && (
-          <p className="mt-3 text-xs text-[#718088]">
-            {c.pricePerKg}:{" "}
-            {formatLocalNumber(packed.packing.pricePerKg, language, 2)}{" "}
-            {sourceCurrency[packed.packing.source]}
-          </p>
+          <div className="mt-3 flex flex-wrap gap-4 text-xs text-[#718088]">
+            <span>
+              {c.pricePerKg}:{" "}
+              {formatLocalNumber(packed.packing.pricePerKg, language, 2)}{" "}
+              {sourceCurrency[packed.packing.source]}
+            </span>
+            <span>
+              {c.pricePerKgMRU}:{" "}
+              {packed.packing.pricePerKgMRU === undefined
+                ? c.noPriceSet
+                : `${formatLocalNumber(packed.packing.pricePerKgMRU, language, 2)} ${c.mru}`}
+            </span>
+          </div>
         )}
         {!workspace.showFinance && (
           <p className="mt-3 rounded-xl bg-slate-50 px-3 py-2 text-xs text-[#718088]">
@@ -250,6 +307,33 @@ export default function ShipmentPacking() {
           </p>
         )}
       </section>
+
+      <div className="mt-5 flex flex-wrap items-center gap-3">
+        <label className="relative min-w-[220px] flex-1">
+          <Search
+            size={16}
+            className="pointer-events-none absolute start-3 top-1/2 -translate-y-1/2 text-slate-400"
+          />
+          <span className="sr-only">{c.searchGoods}</span>
+          <input
+            aria-label={c.searchGoods}
+            className={`${packingInputClass} ps-9`}
+            value={search}
+            onChange={event => setSearch(event.target.value)}
+            placeholder={c.searchGoods}
+            disabled={saving}
+          />
+        </label>
+        <label className="inline-flex min-h-11 items-center gap-2 text-sm font-semibold text-[#243f52]">
+          <input
+            type="checkbox"
+            checked={showDeleted}
+            onChange={event => setShowDeleted(event.target.checked)}
+            disabled={saving}
+          />
+          {c.showDeleted}
+        </label>
+      </div>
 
       {canEdit && (
         <form
@@ -339,59 +423,31 @@ export default function ShipmentPacking() {
             c={c}
             language={language}
             showFinance={workspace.showFinance}
-            price={packed.packing.pricePerKg}
+            source={packed.packing.source}
+            sourcePrice={packed.packing.pricePerKg}
+            mruPrice={packed.packing.pricePerKgMRU}
             open={
               canEdit &&
               !saving &&
-              carton.number === packed.packing.cartons.at(-1)?.number
+              carton.number === packed.packing.cartons.at(-1)?.number &&
+              carton.goods.some(g => !g.deleted)
             }
             onClose={closeCarton}
+            query={search}
+            showDeleted={showDeleted}
+            canEdit={canEdit}
+            onDelete={entry => void deleteEntry(carton, entry)}
+            onRestore={entry => void restoreEntry(carton, entry)}
           />
         ))}
       </section>
 
-      {packingCustomers(packed.packing).length > 0 && (
-        <section className="mt-5 rounded-3xl border border-[#dce4e7] bg-white p-5 shadow-sm">
-          <h2 className="text-lg font-black text-[#092d50]">
-            {c.customerSummary}
-          </h2>
-          <div className="mt-3 grid gap-2">
-            {packingCustomers(packed.packing).map(customer => (
-              <div
-                key={customer.key}
-                className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-100 p-3 text-sm"
-              >
-                <div>
-                  <b>{customer.name}</b>
-                  {customer.phones.length > 0 && (
-                    <span className="ms-2 text-[#718088]" dir="ltr">
-                      {customer.phones.join(" · ")}
-                    </span>
-                  )}
-                  <p className="mt-1 text-xs text-[#718088]">
-                    {c.cartons}: {customer.cartons.join(", ")}
-                  </p>
-                </div>
-                <div className="text-end">
-                  <b>
-                    {formatLocalNumber(customer.pieces, language)} {c.pieces}
-                  </b>
-                  <p className="text-xs text-[#718088]">
-                    {formatLocalNumber(customer.weight, language, 3)} kg
-                  </p>
-                  {workspace.showFinance && (
-                    <p className="text-sm font-bold text-[#092d50]">
-                      {formatLocalNumber(customer.amount, language, 2)}{" "}
-                      {sourceCurrency[packed.packing.source]}
-                    </p>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
-
+      <CustomerSummary
+        packed={packed}
+        c={c}
+        language={language}
+        showFinance={workspace.showFinance}
+      />
       <div className="mt-5 flex flex-wrap gap-3">
         {packed.status === "قيد التجهيز" && (
           <button
@@ -424,32 +480,73 @@ export default function ShipmentPacking() {
   );
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <span className="block text-xs text-[#718088]">{label}</span>
-      <b className="mt-1 block text-sm text-[#092d50]">{value}</b>
-    </div>
-  );
+function makeGroups(
+  carton: PackingCarton,
+  price: number,
+  query: string,
+  showDeleted: boolean
+): CartonGoodsGroup[] {
+  const map = new Map<string, PackingGoods[]>();
+  for (const item of carton.goods) {
+    if (!showDeleted && item.deleted) continue;
+    const key = normalizeName(item.name);
+    map.set(key, [...(map.get(key) ?? []), item]);
+  }
+  return [...map.entries()]
+    .filter(
+      ([, entries]) =>
+        !query.trim() ||
+        entries.some(entry => matchesPackingGoods(entry, carton.number, query))
+    )
+    .map(([key, entries]) => ({
+      key,
+      name: entries[0].name,
+      phones: [...new Set(entries.map(entry => entry.phone).filter(Boolean))],
+      entries,
+      repetitions: entries.filter(entry => !entry.deleted).length,
+      ...goodsTotals(entries, price),
+    }));
 }
+
 function CartonCard({
   carton,
   c,
   language,
   showFinance,
-  price,
+  source,
+  sourcePrice,
+  mruPrice,
   open,
   onClose,
+  query,
+  showDeleted,
+  canEdit,
+  onDelete,
+  onRestore,
 }: {
-  carton: PackedShipment["packing"]["cartons"][number];
+  carton: PackingCarton;
   c: ReturnType<typeof copyFor>;
   language: string;
   showFinance: boolean;
-  price: number;
+  source: PackedShipment["packing"]["source"];
+  sourcePrice: number;
+  mruPrice?: number;
   open: boolean;
   onClose: () => Promise<void>;
+  query: string;
+  showDeleted: boolean;
+  canEdit: boolean;
+  onDelete: (entry: PackingGoods) => void;
+  onRestore: (entry: PackingGoods) => void;
 }) {
-  const totals = goodsTotals(carton.goods, price);
+  const groups = useMemo(
+    () => makeGroups(carton, sourcePrice, query, showDeleted),
+    [carton, sourcePrice, query, showDeleted]
+  );
+  const uniqueGroupCount = cartonGroups(carton, sourcePrice).length;
+  const totals = goodsTotals(carton.goods, sourcePrice);
+  const mruTotals =
+    mruPrice === undefined ? null : goodsTotals(carton.goods, mruPrice);
   return (
     <article className="rounded-3xl border border-[#dce4e7] bg-white p-5 shadow-sm">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -463,68 +560,45 @@ function CartonCard({
             {carton.closed ? c.closedCarton : c.openCarton}
           </span>
         </div>
-        {open && carton.goods.length > 0 && (
+        {open && (
           <button
             className={`${packingSecondaryClass} gap-2`}
             onClick={() => void onClose()}
+            disabled={!carton.goods.some(g => !g.deleted)}
           >
             <Lock size={15} />
             {c.closeCarton}
           </button>
         )}
       </div>
-      {carton.goods.length ? (
-        <div className="mt-4 overflow-x-auto">
-          <table className="w-full min-w-[540px] text-start text-sm">
-            <thead className="text-xs text-[#718088]">
-              <tr>
-                <th className="pb-2 pe-3 text-start">{c.name}</th>
-                <th className="pb-2 pe-3 text-start">{c.pieces}</th>
-                <th className="pb-2 pe-3 text-start">{c.unitWeight}</th>
-                <th className="pb-2 text-start">{c.totalWeight}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {carton.goods.map(item => (
-                <tr key={item.id} className="border-t border-slate-100">
-                  <td className="py-2 pe-3 font-semibold">
-                    {item.name}
-                    {item.phone && (
-                      <span
-                        className="ms-2 text-xs font-normal text-[#718088]"
-                        dir="ltr"
-                      >
-                        {item.phone}
-                      </span>
-                    )}
-                  </td>
-                  <td className="py-2 pe-3">
-                    {formatLocalNumber(item.pieces, language)}
-                  </td>
-                  <td className="py-2 pe-3">
-                    {formatLocalNumber(item.unitWeight, language, 3)} kg
-                  </td>
-                  <td className="py-2">
-                    {formatLocalNumber(
-                      item.unitWeight * item.pieces,
-                      language,
-                      3
-                    )}{" "}
-                    kg
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      <div className="mt-3 text-xs text-[#718088]">
+        {c.itemCount}: {formatLocalNumber(uniqueGroupCount, language)}
+      </div>
+      {groups.length ? (
+        <div className="mt-3 grid gap-2">
+          {groups.map(group => (
+            <CartonGoods
+              key={group.key}
+              group={group}
+              cartonNumber={carton.number}
+              c={c}
+              language={language}
+              showFinance={showFinance}
+              sourceCurrency={sourceCurrency[source]}
+              canEdit={canEdit}
+              onDelete={onDelete}
+              onRestore={onRestore}
+            />
+          ))}
         </div>
       ) : (
         <p className="mt-4 rounded-xl bg-slate-50 px-3 py-3 text-sm text-[#718088]">
-          {c.noGoods}
+          {query ? c.noResults : c.noGoods}
         </p>
       )}
-      <div className="mt-4 grid grid-cols-2 gap-2 border-t border-slate-100 pt-3 text-sm sm:grid-cols-3">
+      <div className="mt-4 grid grid-cols-2 gap-2 border-t border-slate-100 pt-3 text-sm sm:grid-cols-4">
         <Metric
-          label={c.totalPieces}
+          label={c.actualPieces}
           value={formatLocalNumber(totals.pieces, language)}
         />
         <Metric
@@ -535,11 +609,101 @@ function CartonCard({
           label={c.totalCost}
           value={
             showFinance
-              ? formatLocalNumber(totals.amount, language, 2)
+              ? `${formatLocalNumber(totals.amount, language, 2)} ${sourceCurrency[source]}`
               : c.amountHidden
+          }
+        />
+        <Metric
+          label={c.mru}
+          value={
+            showFinance && mruTotals
+              ? `${formatLocalNumber(mruTotals.amount, language, 2)} ${c.mru}`
+              : showFinance
+                ? c.noPriceSet
+                : c.amountHidden
           }
         />
       </div>
     </article>
+  );
+}
+
+function CustomerSummary({
+  packed,
+  c,
+  language,
+  showFinance,
+}: {
+  packed: PackedShipment;
+  c: ReturnType<typeof copyFor>;
+  language: string;
+  showFinance: boolean;
+}) {
+  const customers = packingCustomers(packed.packing);
+  const mruCustomers =
+    packed.packing.pricePerKgMRU === undefined
+      ? null
+      : packingCustomers({
+          ...packed.packing,
+          pricePerKg: packed.packing.pricePerKgMRU,
+        });
+  if (!customers.length) return null;
+  return (
+    <section className="mt-5 rounded-3xl border border-[#dce4e7] bg-white p-5 shadow-sm">
+      <h2 className="text-lg font-black text-[#092d50]">{c.customerSummary}</h2>
+      <div className="mt-3 grid gap-2">
+        {customers.map(customer => {
+          const mru = mruCustomers?.find(item => item.key === customer.key);
+          return (
+            <div
+              key={customer.key}
+              className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-100 p-3 text-sm"
+            >
+              <div>
+                <b>{customer.name}</b>
+                {customer.phones.length > 0 && (
+                  <span className="ms-2 text-[#718088]" dir="ltr">
+                    {customer.phones.join(" · ")}
+                  </span>
+                )}
+                <p className="mt-1 text-xs text-[#718088]">
+                  {c.cartons}: {customer.cartons.join(", ")}
+                </p>
+              </div>
+              <div className="text-end">
+                <b>
+                  {formatLocalNumber(customer.pieces, language)}{" "}
+                  {c.actualPieces}
+                </b>
+                <p className="text-xs text-[#718088]">
+                  {formatLocalNumber(customer.weight, language, 3)} kg
+                </p>
+                {showFinance && (
+                  <>
+                    <p className="text-sm font-bold text-[#092d50]">
+                      {formatLocalNumber(customer.amount, language, 2)}{" "}
+                      {sourceCurrency[packed.packing.source]}
+                    </p>
+                    <p className="text-xs font-bold text-[#2d6380]">
+                      {mru
+                        ? `${formatLocalNumber(mru.amount, language, 2)} ${c.mru}`
+                        : c.noPriceSet}
+                    </p>
+                  </>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+function Metric({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <span className="block text-xs text-[#718088]">{label}</span>
+      <b className="mt-1 block text-sm text-[#092d50]">{value}</b>
+    </div>
   );
 }

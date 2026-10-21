@@ -117,6 +117,26 @@ export interface PackingCopy extends Record<string, string> {
   unknownDate: string;
   clientPhone: string;
   accountLink: string;
+  mruPriceLabel: string;
+  mruPriceHelp: string;
+  mru: string;
+  noPriceSet: string;
+  searchShipment: string;
+  showDeleted: string;
+  repetitions: string;
+  itemCount: string;
+  actualPieces: string;
+  delete: string;
+  restore: string;
+  deleted: string;
+  deleteReason: string;
+  confirmDelete: string;
+  confirmRestore: string;
+  pricePerKgMRU: string;
+  searchGoods: string;
+  deleteEntry: string;
+  restoreEntry: string;
+  uniqueItems: string;
 }
 
 const common: PackingCopy = {
@@ -233,6 +253,26 @@ const common: PackingCopy = {
   unknownDate: "",
   clientPhone: "",
   accountLink: "",
+  mruPriceLabel: "",
+  mruPriceHelp: "",
+  mru: "",
+  noPriceSet: "",
+  searchShipment: "",
+  showDeleted: "",
+  repetitions: "",
+  itemCount: "",
+  actualPieces: "",
+  delete: "",
+  restore: "",
+  deleted: "",
+  deleteReason: "",
+  confirmDelete: "",
+  confirmRestore: "",
+  pricePerKgMRU: "",
+  searchGoods: "",
+  deleteEntry: "",
+  restoreEntry: "",
+  uniqueItems: "",
 };
 
 export const packingCopy: Record<PackingLanguage, PackingCopy> = {
@@ -354,6 +394,28 @@ export const packingCopy: Record<PackingLanguage, PackingCopy> = {
     unknownDate: "تاريخ غير معروف",
     clientPhone: "هاتف العميل",
     accountLink: "رابط الحساب",
+    pricePerKgMRU: "سعر الكيلو بالوقية (MRU)",
+    searchGoods: "البحث في بيانات الشحنة",
+    deleteEntry: "حذف الإدخال",
+    restoreEntry: "استعادة الإدخال",
+    uniqueItems: "الأسماء الفريدة",
+    mruPriceLabel: "سعر الكيلو بالوقية (MRU)",
+    mruPriceHelp:
+      "سعر يدوي مستقل بالوقية؛ لا يوجد تحويل تلقائي من عملة المصدر.",
+    mru: "MRU",
+    noPriceSet: "لم يُحدد",
+    searchShipment: "البحث في بيانات الشحنة",
+    showDeleted: "عرض المحذوفات",
+    repetitions: "التكرارات",
+    itemCount: "عدد البنود",
+    actualPieces: "عدد القطع الفعلي",
+    delete: "حذف",
+    restore: "استعادة",
+    deleted: "محذوف",
+    deleteReason: "إدخال خاطئ",
+    confirmDelete:
+      "تأكيد حذف الإدخال «{name}» من الكرتون {carton} بوزن {weight} كغ وعدد {pieces}؟",
+    confirmRestore: "تأكيد استعادة الإدخال «{name}» من الكرتون {carton}؟",
   },
   en: {
     ...common,
@@ -473,6 +535,28 @@ export const packingCopy: Record<PackingLanguage, PackingCopy> = {
     unknownDate: "Unknown date",
     clientPhone: "Customer phone",
     accountLink: "Account link",
+    pricePerKgMRU: "Price per kg in Ouguiya (MRU)",
+    searchGoods: "Search shipment data",
+    deleteEntry: "Delete entry",
+    restoreEntry: "Restore entry",
+    uniqueItems: "Unique items",
+    mruPriceLabel: "Price per kg in Ouguiya (MRU)",
+    mruPriceHelp:
+      "Independent manual Ouguiya price; no automatic conversion from the source currency.",
+    mru: "MRU",
+    noPriceSet: "Not set",
+    searchShipment: "Search shipment data",
+    showDeleted: "Show deleted",
+    repetitions: "Repetitions",
+    itemCount: "Item count",
+    actualPieces: "Actual pieces",
+    delete: "Delete",
+    restore: "Restore",
+    deleted: "Deleted",
+    deleteReason: "Incorrect entry",
+    confirmDelete:
+      "Confirm deleting “{name}” from carton {carton}, weight {weight} kg and quantity {pieces}?",
+    confirmRestore: "Confirm restoring “{name}” from carton {carton}?",
   },
   zh: {
     ...common,
@@ -590,6 +674,27 @@ export const packingCopy: Record<PackingLanguage, PackingCopy> = {
     unknownDate: "日期未知",
     clientPhone: "客户电话",
     accountLink: "账户链接",
+    pricePerKgMRU: "每公斤乌吉亚币价格 (MRU)",
+    searchGoods: "搜索货运数据",
+    deleteEntry: "删除条目",
+    restoreEntry: "恢复条目",
+    uniqueItems: "唯一条目",
+    mruPriceLabel: "每公斤乌吉亚币价格 (MRU)",
+    mruPriceHelp: "独立的手动乌吉亚币价格；不会从来源货币自动换算。",
+    mru: "MRU",
+    noPriceSet: "未设置",
+    searchShipment: "搜索货运数据",
+    showDeleted: "显示已删除",
+    repetitions: "重复次数",
+    itemCount: "条目数",
+    actualPieces: "实际件数",
+    delete: "删除",
+    restore: "恢复",
+    deleted: "已删除",
+    deleteReason: "错误条目",
+    confirmDelete:
+      "确认删除纸箱 {carton} 中的“{name}”，重量 {weight} 公斤、数量 {pieces}？",
+    confirmRestore: "确认恢复纸箱 {carton} 中的“{name}”？",
   },
   tr: {
     ...common,
@@ -710,6 +815,28 @@ export const packingCopy: Record<PackingLanguage, PackingCopy> = {
     unknownDate: "Bilinmeyen tarih",
     clientPhone: "Müşteri telefonu",
     accountLink: "Hesap bağlantısı",
+    pricePerKgMRU: "Kilo başına Ouguiya fiyatı (MRU)",
+    searchGoods: "Gönderi verilerinde ara",
+    deleteEntry: "Maddeyi sil",
+    restoreEntry: "Maddeyi geri yükle",
+    uniqueItems: "Benzersiz maddeler",
+    mruPriceLabel: "Kilo başına Ouguiya fiyatı (MRU)",
+    mruPriceHelp:
+      "Bağımsız manuel Ouguiya fiyatı; kaynak para biriminden otomatik dönüşüm yapılmaz.",
+    mru: "MRU",
+    noPriceSet: "Belirlenmedi",
+    searchShipment: "Gönderi verilerinde ara",
+    showDeleted: "Silinenleri göster",
+    repetitions: "Tekrarlar",
+    itemCount: "Madde sayısı",
+    actualPieces: "Gerçek adet",
+    delete: "Sil",
+    restore: "Geri yükle",
+    deleted: "Silindi",
+    deleteReason: "Hatalı giriş",
+    confirmDelete:
+      "{name} adlı girdinin {carton} kolisinden, {weight} kg ağırlık ve {pieces} adet ile silinmesini onaylıyor musunuz?",
+    confirmRestore: "{carton} kolisindeki {name} girdisi geri yüklensin mi?",
   },
 };
 

@@ -40,6 +40,13 @@ export const goodsSchema = z
         "invalid_weight"
       ),
     pieces: positiveInteger,
+    deleted: z
+      .object({
+        at: z.string().datetime(),
+        reason: z.string().trim().min(1).max(240),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 export const cartonSchema = z
@@ -53,6 +60,7 @@ export const packingSchema = z
   .object({
     source: z.enum(sources),
     pricePerKg: money,
+    pricePerKgMRU: money.optional(),
     createdAt: z.string().datetime(),
     updatedAt: z.string().datetime(),
     cartons: z.array(cartonSchema).min(1).max(1000),
@@ -101,6 +109,7 @@ export function goodsTotals(
     pieces = 0;
   for (const item of goods) {
     goodsSchema.parse(item);
+    if (item.deleted) continue;
     totalGrams += grams(item);
     pieces += item.pieces;
   }
@@ -137,6 +146,7 @@ export function packingCustomers(packing: PackingSession): CustomerSummary[] {
   >();
   for (const carton of packing.cartons)
     for (const item of carton.goods) {
+      if (item.deleted) continue;
       const key = normalizeName(item.name);
       const current = map.get(key) ?? {
         name: item.name,
@@ -166,7 +176,12 @@ function freshId() {
   return crypto.randomUUID();
 }
 export function createPackedShipment(
-  input: { tracking: string; source: PackingSource; pricePerKg: number },
+  input: {
+    tracking: string;
+    source: PackingSource;
+    pricePerKg: number;
+    pricePerKgMRU?: number;
+  },
   now = new Date().toISOString()
 ): PackedShipment {
   const tracking = input.tracking.trim();
@@ -174,6 +189,9 @@ export function createPackedShipment(
   const packing = packingSchema.parse({
     source: input.source,
     pricePerKg: input.pricePerKg,
+    ...(input.pricePerKgMRU === undefined
+      ? {}
+      : { pricePerKgMRU: input.pricePerKgMRU }),
     createdAt: now,
     updatedAt: now,
     cartons: [{ number: 1, closed: false, goods: [] }],
@@ -196,13 +214,19 @@ function editable(shipment: PackedShipment) {
 }
 export function addPackingGoods(
   shipment: PackedShipment,
-  input: Omit<PackingGoods, "id">
+  input: Omit<PackingGoods, "id" | "deleted">
 ): PackedShipment {
   editable(shipment);
   const packing = structuredClone(shipment.packing);
   const carton = packing.cartons.at(-1)!;
   if (carton.closed) throw new Error("carton_closed");
-  const item = goodsSchema.parse({ ...input, id: freshId() });
+  const item = goodsSchema.parse({
+    name: input.name,
+    phone: input.phone,
+    unitWeight: input.unitWeight,
+    pieces: input.pieces,
+    id: freshId(),
+  });
   carton.goods.push(item);
   packing.updatedAt = new Date().toISOString();
   packingSchema.parse(packing);
@@ -218,7 +242,7 @@ export function closePackingCarton(shipment: PackedShipment): PackedShipment {
   const packing = structuredClone(shipment.packing);
   const carton = packing.cartons.at(-1)!;
   if (carton.closed) throw new Error("carton_closed");
-  if (!carton.goods.length) throw new Error("carton_empty");
+  if (!carton.goods.some(g => !g.deleted)) throw new Error("carton_empty");
   if (packing.cartons.length >= 1000) throw new Error("too_many_cartons");
   carton.closed = true;
   packing.cartons.push({ number: carton.number + 1, closed: false, goods: [] });
@@ -232,9 +256,13 @@ export function changePackingStatus(
 ): PackedShipment {
   if (status === "في الطريق") {
     editable(shipment);
-    if (!shipment.packing.cartons.some(c => c.goods.length))
+    if (!packingTotals(shipment.packing).pieces)
       throw new Error("shipment_empty");
-    if (shipment.packing.cartons.some(c => !c.closed && c.goods.length))
+    if (
+      shipment.packing.cartons.some(
+        c => !c.closed && c.goods.some(g => !g.deleted)
+      )
+    )
       throw new Error("close_carton_first");
   } else if (shipment.status !== "في الطريق") throw new Error("not_in_transit");
   return {
@@ -248,9 +276,10 @@ export function canonicalPackingShipment(shipment: Shipment): Shipment {
   if (!shipment.packing) return shipment;
   const packing = packingSchema.parse(shipment.packing);
   const totals = packingTotals(packing);
+  packingTotalsMRU(packing);
   if (shipment.status !== "قيد التجهيز") {
     if (!totals.pieces) throw new Error("shipment_empty");
-    if (packing.cartons.some(c => !c.closed && c.goods.length))
+    if (packing.cartons.some(c => !c.closed && c.goods.some(g => !g.deleted)))
       throw new Error("close_carton_first");
   }
   return { ...shipment, packing, amount: totals.amount };
@@ -332,5 +361,109 @@ export function shipmentReports(
     shared,
     local: shipments.filter(s => s.scope === "local" || !s.scope).length,
     pending: shipments.filter(s => s.scope === "pending").length,
+  };
+}
+
+export function packingTotalsMRU(
+  packing: PackingSession
+): PackingTotals | null {
+  return packing.pricePerKgMRU === undefined
+    ? null
+    : goodsTotals(
+        packing.cartons.flatMap(c => c.goods),
+        packing.pricePerKgMRU
+      );
+}
+export function cartonGroups(
+  carton: PackingCarton,
+  pricePerKg = 0
+): Array<
+  PackingTotals & {
+    key: string;
+    name: string;
+    phones: string[];
+    entries: PackingGoods[];
+    repetitions: number;
+  }
+> {
+  const groups = new Map<string, PackingGoods[]>();
+  for (const item of carton.goods) {
+    if (item.deleted) continue;
+    const key = normalizeName(item.name);
+    groups.set(key, [...(groups.get(key) ?? []), item]);
+  }
+  return [...groups.entries()].map(([key, entries]) => ({
+    key,
+    name: entries[0].name,
+    phones: [...new Set(entries.map(g => g.phone).filter(Boolean))],
+    entries,
+    repetitions: entries.length,
+    ...goodsTotals(entries, pricePerKg),
+  }));
+}
+export function matchesPackingGoods(
+  item: PackingGoods,
+  cartonNumber: number,
+  query: string
+): boolean {
+  const needle = normalizeName(query);
+  if (!needle) return true;
+  return [item.name, item.phone, String(cartonNumber)].some(value =>
+    normalizeName(value).includes(needle)
+  );
+}
+export function matchesShipment(shipment: Shipment, query: string): boolean {
+  const needle = normalizeName(query);
+  if (!needle) return true;
+  return (
+    [shipment.tracking, shipment.account, shipment.route].some(value =>
+      normalizeName(value).includes(needle)
+    ) ||
+    Boolean(
+      shipment.packing?.cartons.some(c =>
+        c.goods.some(g => !g.deleted && matchesPackingGoods(g, c.number, query))
+      )
+    )
+  );
+}
+export function deletePackingGoods(
+  shipment: PackedShipment,
+  goodsId: string,
+  reason: string
+): PackedShipment {
+  editable(shipment);
+  const packing = structuredClone(shipment.packing);
+  const item = packing.cartons
+    .flatMap(c => c.goods)
+    .find(g => g.id === goodsId);
+  if (!item || item.deleted) throw new Error("goods_not_found");
+  item.deleted = { at: new Date().toISOString(), reason: reason.trim() };
+  packing.updatedAt = item.deleted.at;
+  packingSchema.parse(packing);
+  return {
+    ...shipment,
+    packing,
+    amount: packingTotals(packing).amount,
+    scope: "pending",
+  };
+}
+export function restorePackingGoods(
+  shipment: PackedShipment,
+  goodsId: string
+): PackedShipment {
+  editable(shipment);
+  const packing = structuredClone(shipment.packing);
+  const item = packing.cartons
+    .flatMap(c => c.goods)
+    .find(g => g.id === goodsId);
+  if (!item?.deleted) throw new Error("goods_not_found");
+  delete item.deleted;
+  packing.updatedAt = new Date().toISOString();
+  packingSchema.parse(packing);
+  return {
+    ...shipment,
+    packing,
+    amount: packingTotals(packing).amount,
+    scope: "pending",
   };
 }

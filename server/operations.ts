@@ -17,48 +17,105 @@ import {
 } from "@shared/operations";
 
 const boundedString = (max: number) => z.string().trim().min(1).max(max);
-const safeNonNegative = z.number().finite().nonnegative().refine(Number.isSafeInteger, "must be a safe integer");
+const safeNonNegative = z
+  .number()
+  .finite()
+  .nonnegative()
+  .refine(Number.isSafeInteger, "must be a safe integer");
 const nonNegative = z.number().finite().nonnegative().max(999999999);
 const optionalMeta = {
   scope: z.enum(["shared", "local", "pending"]).optional(),
   version: safeNonNegative.optional(),
 };
 
-export const accountDataSchema = z.object({
-  id: boundedString(128), name: boundedString(240), phone: z.string().trim().max(64), city: boundedString(160),
-  shipments: safeNonNegative, balance: nonNegative, updatedAt: boundedString(80), ...optionalMeta,
-}).strict();
-export const shipmentDataSchema = z.object({
-  id: boundedString(128), tracking: boundedString(128), account: boundedString(240), route: boundedString(240),
-  service: z.enum(["جوي", "بحري", "سريع"]), status: z.enum(["في الطريق", "وصلت للمكتب", "جاهزة للتسليم", "بانتظار الدفع", "قيد التجهيز", "مسلّمة"]),
-  eta: boundedString(80), amount: nonNegative, packing: packingSchema.optional(), ...optionalMeta,
-}).strict();
-export const invoiceDataSchema = z.object({
-  id: boundedString(128), account: boundedString(240), amount: nonNegative,
-  status: z.enum(["مدفوعة", "بانتظار الدفع"]), issuedAt: boundedString(80), ...optionalMeta,
-}).strict();
+export const accountDataSchema = z
+  .object({
+    id: boundedString(128),
+    name: boundedString(240),
+    phone: z.string().trim().max(64),
+    city: boundedString(160),
+    shipments: safeNonNegative,
+    balance: nonNegative,
+    updatedAt: boundedString(80),
+    ...optionalMeta,
+  })
+  .strict();
+export const shipmentDataSchema = z
+  .object({
+    id: boundedString(128),
+    tracking: boundedString(128),
+    account: boundedString(240),
+    route: boundedString(240),
+    service: z.enum(["جوي", "بحري", "سريع"]),
+    status: z.enum([
+      "في الطريق",
+      "وصلت للمكتب",
+      "جاهزة للتسليم",
+      "بانتظار الدفع",
+      "قيد التجهيز",
+      "مسلّمة",
+    ]),
+    eta: boundedString(80),
+    amount: nonNegative,
+    packing: packingSchema.optional(),
+    ...optionalMeta,
+  })
+  .strict();
+export const invoiceDataSchema = z
+  .object({
+    id: boundedString(128),
+    account: boundedString(240),
+    amount: nonNegative,
+    status: z.enum(["مدفوعة", "بانتظار الدفع"]),
+    issuedAt: boundedString(80),
+    ...optionalMeta,
+  })
+  .strict();
 
-export const pendingChangeSchema = z.object({
-  id: boundedString(128), label: z.string().trim().max(240), createdAt: boundedString(80),
-  entity: z.enum(["account", "shipment", "invoice"]), recordId: boundedString(128),
-  expectedVersion: z.union([z.null(), safeNonNegative]),
-  data: z.union([accountDataSchema, shipmentDataSchema, invoiceDataSchema]),
-}).strict();
-export const syncInputSchema = z.object({ changes: z.array(pendingChangeSchema).max(500) }).strict();
-export const setRoleInputSchema = z.object({ userId: safeNonNegative, role: z.enum(["admin", "staff", "accountant", "viewer"]) }).strict();
+export const pendingChangeSchema = z
+  .object({
+    id: boundedString(128),
+    label: z.string().trim().max(240),
+    createdAt: boundedString(80),
+    entity: z.enum(["account", "shipment", "invoice"]),
+    recordId: boundedString(128),
+    expectedVersion: z.union([z.null(), safeNonNegative]),
+    data: z.union([accountDataSchema, shipmentDataSchema, invoiceDataSchema]),
+  })
+  .strict();
+export const syncInputSchema = z
+  .object({ changes: z.array(pendingChangeSchema).max(500) })
+  .strict();
+export const setRoleInputSchema = z
+  .object({
+    userId: safeNonNegative,
+    role: z.enum(["admin", "staff", "accountant", "viewer"]),
+  })
+  .strict();
 
 export type ValidChange = z.infer<typeof pendingChangeSchema>;
-export type MemoryRow = { entity: Entity; recordId: string; version: number; data: EntityRecord };
+export type MemoryRow = {
+  entity: Entity;
+  recordId: string;
+  version: number;
+  data: EntityRecord;
+};
 
 /** Root owner and the database's real admin flag are authoritative; a first visitor is never promoted. */
-export function roleForUser(user: Pick<User, "openId" | "role"> | null, membership?: AppRole | null): AppRole | null {
+export function roleForUser(
+  user: Pick<User, "openId" | "role"> | null,
+  membership?: AppRole | null
+): AppRole | null {
   if (!user) return null;
   if (ENV.ownerOpenId && user.openId === ENV.ownerOpenId) return "admin";
   if (user.role === "admin") return "admin";
   return membership ?? null;
 }
 
-export function canManageMembers(user: Pick<User, "openId" | "role"> | null, membership?: AppRole | null): boolean {
+export function canManageMembers(
+  user: Pick<User, "openId" | "role"> | null,
+  membership?: AppRole | null
+): boolean {
   return roleForUser(user, membership) === "admin";
 }
 
@@ -69,83 +126,310 @@ export function parseChange(change: unknown): ValidChange {
     // replay/debugging ambiguous. Keep the public contract and reject it explicitly.
     throw new Error("data.id must equal recordId");
   }
-  const expectedSchema = parsed.entity === "account" ? accountDataSchema : parsed.entity === "shipment" ? shipmentDataSchema : invoiceDataSchema;
+  const expectedSchema =
+    parsed.entity === "account"
+      ? accountDataSchema
+      : parsed.entity === "shipment"
+        ? shipmentDataSchema
+        : invoiceDataSchema;
   const data = expectedSchema.parse(parsed.data);
-  return { ...parsed, data: parsed.entity === "shipment" ? canonicalPackingShipment(data as Shipment) : data } as ValidChange;
+  return {
+    ...parsed,
+    data:
+      parsed.entity === "shipment"
+        ? canonicalPackingShipment(data as Shipment)
+        : data,
+  } as ValidChange;
 }
 
-export function hideFinance<T extends EntityRecord>(record: T, role: AppRole | null): T {
+export function hideFinance<T extends EntityRecord>(
+  record: T,
+  role: AppRole | null
+): T {
   if (canViewFinance(role)) return { ...record } as T;
   if (record.id === undefined) return record;
   if ("balance" in record) return { ...record, balance: 0 } as T;
-  if ("tracking" in record && record.packing) return { ...record, amount: 0, packing: { ...record.packing, pricePerKg: 0 } } as T;
+  if ("tracking" in record && record.packing)
+    return {
+      ...record,
+      amount: 0,
+      packing: {
+        ...record.packing,
+        pricePerKg: 0,
+        ...(record.packing.pricePerKgMRU === undefined
+          ? {}
+          : { pricePerKgMRU: 0 }),
+      },
+    } as T;
   if ("amount" in record) return { ...record, amount: 0 } as T;
   return record;
 }
 
-export function publicRecord(row: MemoryRow, role: AppRole | null): EntityRecord {
-  return { ...hideFinance(row.data, role), scope: "shared", version: row.version } as EntityRecord;
+export function publicRecord(
+  row: MemoryRow,
+  role: AppRole | null
+): EntityRecord {
+  return {
+    ...hideFinance(row.data, role),
+    scope: "shared",
+    version: row.version,
+  } as EntityRecord;
 }
 
-function preserveStaffFinance(role: AppRole | null, next: EntityRecord, current: EntityRecord | null): EntityRecord {
+function preserveStaffFinance(
+  role: AppRole | null,
+  next: EntityRecord,
+  current: EntityRecord | null
+): EntityRecord {
   if (role !== "staff") return next;
-  if (current && "balance" in next && "balance" in current) return { ...next, balance: current.balance };
+  if (current && "balance" in next && "balance" in current)
+    return { ...next, balance: current.balance };
   if (current && "amount" in next && "amount" in current) {
-    if ("tracking" in next && "tracking" in current && next.packing && current.packing) return { ...next, packing: { ...next.packing, pricePerKg: current.packing.pricePerKg }, amount: current.amount };
+    if (
+      "tracking" in next &&
+      "tracking" in current &&
+      next.packing &&
+      current.packing
+    )
+      return {
+        ...next,
+        packing: {
+          ...next.packing,
+          pricePerKg: current.packing.pricePerKg,
+          pricePerKgMRU: current.packing.pricePerKgMRU,
+        },
+        amount: current.amount,
+      };
     return { ...next, amount: current.amount };
   }
   return next;
 }
 
 /** Preserve stored financial settings and all previously entered goods. */
-export function prepareRecordForWrite(role: AppRole | null, next: EntityRecord, current: EntityRecord | null): EntityRecord {
-  let result = preserveStaffFinance(role, next, current);
-  if (current && "tracking" in current && current.packing && (!("tracking" in result) || !result.packing)) throw new Error("packing_data_loss_forbidden");
+export function prepareRecordForWrite(
+  role: AppRole | null,
+  next: EntityRecord,
+  current: EntityRecord | null
+): EntityRecord {
+  let result = structuredClone(preserveStaffFinance(role, next, current));
+  if (
+    current &&
+    "tracking" in current &&
+    current.packing &&
+    (!("tracking" in result) || !result.packing)
+  )
+    throw new Error("packing_data_loss_forbidden");
   if (!("tracking" in result) || !result.packing) return result;
-  if (role === "staff" && "tracking" in next && next.packing && next.packing.pricePerKg !== 0) throw new Error("financial_write_forbidden");
+  if (!canWrite(role, "shipment")) throw new Error("forbidden");
+  if (
+    role === "staff" &&
+    "tracking" in next &&
+    next.packing &&
+    (next.packing.pricePerKg !== 0 ||
+      (next.packing.pricePerKgMRU !== undefined &&
+        next.packing.pricePerKgMRU !== 0))
+  )
+    throw new Error("financial_write_forbidden");
   if (current && "tracking" in current && current.packing) {
     const previous = current.packing;
-    if (previous.source !== result.packing.source) throw new Error("source_change_forbidden");
-    const allowed = current.status === "قيد التجهيز" ? ["قيد التجهيز", "في الطريق", "مسلّمة"] : current.status === "في الطريق" ? ["في الطريق", "مسلّمة"] : [current.status];
-    if (!allowed.includes(result.status)) throw new Error("invalid_status_transition");
+    if (
+      current.status !== "قيد التجهيز" &&
+      (previous.pricePerKg !== result.packing.pricePerKg ||
+        previous.pricePerKgMRU !== result.packing.pricePerKgMRU)
+    )
+      throw new Error("shipment_not_open");
+    if (
+      role === "staff" &&
+      previous.pricePerKgMRU === undefined &&
+      "tracking" in next &&
+      next.packing?.pricePerKgMRU !== undefined
+    )
+      throw new Error("financial_write_forbidden");
+    if (previous.source !== result.packing.source)
+      throw new Error("source_change_forbidden");
+    const allowed =
+      current.status === "قيد التجهيز"
+        ? ["قيد التجهيز", "في الطريق", "مسلّمة"]
+        : current.status === "في الطريق"
+          ? ["في الطريق", "مسلّمة"]
+          : [current.status];
+    if (!allowed.includes(result.status))
+      throw new Error("invalid_status_transition");
     for (const oldCarton of previous.cartons) {
-      const nextCarton = result.packing.cartons.find(c => c.number === oldCarton.number);
-      if (!nextCarton || (oldCarton.closed && !nextCarton.closed)) throw new Error("packing_data_loss_forbidden");
+      const nextCarton = result.packing.cartons.find(
+        c => c.number === oldCarton.number
+      );
+      if (!nextCarton || (oldCarton.closed && !nextCarton.closed))
+        throw new Error("packing_data_loss_forbidden");
       for (const oldGoods of oldCarton.goods) {
         const kept = nextCarton.goods.find(g => g.id === oldGoods.id);
-        if (!kept || JSON.stringify([kept.name,kept.phone,kept.unitWeight,kept.pieces]) !== JSON.stringify([oldGoods.name,oldGoods.phone,oldGoods.unitWeight,oldGoods.pieces])) throw new Error("packing_data_loss_forbidden");
+        if (
+          !kept ||
+          JSON.stringify([
+            kept.name,
+            kept.phone,
+            kept.unitWeight,
+            kept.pieces,
+          ]) !==
+            JSON.stringify([
+              oldGoods.name,
+              oldGoods.phone,
+              oldGoods.unitWeight,
+              oldGoods.pieces,
+            ])
+        )
+          throw new Error("packing_data_loss_forbidden");
+        if (
+          JSON.stringify(kept.deleted) !== JSON.stringify(oldGoods.deleted) &&
+          current.status !== "قيد التجهيز"
+        )
+          throw new Error("shipment_not_open");
+        if (
+          kept.deleted &&
+          oldGoods.deleted &&
+          JSON.stringify(kept.deleted) !== JSON.stringify(oldGoods.deleted)
+        )
+          throw new Error("deletion_metadata_change_forbidden");
       }
-      if (oldCarton.closed && nextCarton.goods.length !== oldCarton.goods.length) throw new Error("carton_closed");
+      if (
+        oldCarton.closed &&
+        nextCarton.goods.length !== oldCarton.goods.length
+      )
+        throw new Error("carton_closed");
     }
-    if (current.status !== "قيد التجهيز" && JSON.stringify(previous.cartons) !== JSON.stringify(result.packing.cartons)) throw new Error("shipment_not_open");
-    result = { ...result, packing: { ...result.packing, createdAt: previous.createdAt } };
+    if (
+      current.status !== "قيد التجهيز" &&
+      JSON.stringify(previous.cartons) !==
+        JSON.stringify(result.packing.cartons)
+    )
+      throw new Error("shipment_not_open");
+    result.packing.createdAt = previous.createdAt;
+  }
+  const existingGoods = new Map(
+    current && "tracking" in current && current.packing
+      ? current.packing.cartons
+          .flatMap(c => c.goods)
+          .map(g => [g.id, g] as const)
+      : []
+  );
+  const acknowledgedAt = new Date().toISOString();
+  for (const item of result.packing.cartons.flatMap(c => c.goods)) {
+    if (item.deleted && !existingGoods.get(item.id)?.deleted)
+      item.deleted = { ...item.deleted, at: acknowledgedAt };
   }
   return canonicalPackingShipment(result);
 }
 
 /** Pure optimistic-concurrency helper used by tests and kept equivalent to the SQL transaction path. */
-export function applyChangeInMemory(state: Map<string, MemoryRow>, change: ValidChange, role: AppRole | null): { result: SyncResult; nextState: Map<string, MemoryRow> } {
+export function applyChangeInMemory(
+  state: Map<string, MemoryRow>,
+  change: ValidChange,
+  role: AppRole | null
+): { result: SyncResult; nextState: Map<string, MemoryRow> } {
   const nextState = new Map(state);
   const key = `${change.entity}:${change.recordId}`;
   const current = state.get(key) ?? null;
   if (!canWrite(role, change.entity)) {
-    return { nextState, result: { applied: [], conflicts: [{ changeId: change.id, reason: "forbidden", current: current ? publicRecord(current, role) : null }] } };
+    return {
+      nextState,
+      result: {
+        applied: [],
+        conflicts: [
+          {
+            changeId: change.id,
+            reason: "forbidden",
+            current: current ? publicRecord(current, role) : null,
+          },
+        ],
+      },
+    };
   }
   if (role === "staff" && !current && isFinancialPayloadNonZero(change)) {
-    return { nextState, result: { applied: [], conflicts: [{ changeId: change.id, reason: "financial_write_forbidden", current: null }] } };
+    return {
+      nextState,
+      result: {
+        applied: [],
+        conflicts: [
+          {
+            changeId: change.id,
+            reason: "financial_write_forbidden",
+            current: null,
+          },
+        ],
+      },
+    };
   }
-  if (change.expectedVersion !== null && (!current || current.version !== change.expectedVersion)) {
-    return { nextState, result: { applied: [], conflicts: [{ changeId: change.id, reason: "version_conflict", current: current ? publicRecord(current, role) : null }] } };
+  if (
+    change.expectedVersion !== null &&
+    (!current || current.version !== change.expectedVersion)
+  ) {
+    return {
+      nextState,
+      result: {
+        applied: [],
+        conflicts: [
+          {
+            changeId: change.id,
+            reason: "version_conflict",
+            current: current ? publicRecord(current, role) : null,
+          },
+        ],
+      },
+    };
   }
   if (change.expectedVersion === null && current) {
-    return { nextState, result: { applied: [], conflicts: [{ changeId: change.id, reason: "already_exists", current: publicRecord(current, role) }] } };
+    return {
+      nextState,
+      result: {
+        applied: [],
+        conflicts: [
+          {
+            changeId: change.id,
+            reason: "already_exists",
+            current: publicRecord(current, role),
+          },
+        ],
+      },
+    };
   }
   let data: EntityRecord;
-  try { data = prepareRecordForWrite(role, change.data, current?.data ?? null); }
-  catch (error) { return { nextState, result: { applied: [], conflicts: [{ changeId: change.id, reason: error instanceof Error ? error.message : "invalid_packing", current: current ? publicRecord(current, role) : null }] } }; }
-  const row: MemoryRow = { entity: change.entity, recordId: change.recordId, version: current ? current.version + 1 : 1, data };
+  try {
+    data = prepareRecordForWrite(role, change.data, current?.data ?? null);
+  } catch (error) {
+    return {
+      nextState,
+      result: {
+        applied: [],
+        conflicts: [
+          {
+            changeId: change.id,
+            reason: error instanceof Error ? error.message : "invalid_packing",
+            current: current ? publicRecord(current, role) : null,
+          },
+        ],
+      },
+    };
+  }
+  const row: MemoryRow = {
+    entity: change.entity,
+    recordId: change.recordId,
+    version: current ? current.version + 1 : 1,
+    data,
+  };
   nextState.set(key, row);
-  return { nextState, result: { applied: [{ changeId: change.id, entity: change.entity, record: publicRecord(row, role) }], conflicts: [] } };
+  return {
+    nextState,
+    result: {
+      applied: [
+        {
+          changeId: change.id,
+          entity: change.entity,
+          record: publicRecord(row, role),
+        },
+      ],
+      conflicts: [],
+    },
+  };
 }
 
 export function emptyState(): LocalState {
@@ -153,10 +437,31 @@ export function emptyState(): LocalState {
 }
 
 export function isFinancialPayloadNonZero(change: ValidChange): boolean {
-  if (change.entity === "account" && "balance" in change.data) return change.data.balance !== 0;
-  if (change.entity === "shipment" && "tracking" in change.data && change.data.packing) return change.data.amount !== 0 || change.data.packing.pricePerKg !== 0;
-  if (change.entity === "shipment" && "amount" in change.data) return change.data.amount !== 0;
+  if (change.entity === "account" && "balance" in change.data)
+    return change.data.balance !== 0;
+  if (
+    change.entity === "shipment" &&
+    "tracking" in change.data &&
+    change.data.packing
+  )
+    return (
+      change.data.amount !== 0 ||
+      change.data.packing.pricePerKg !== 0 ||
+      change.data.packing.pricePerKgMRU !== undefined
+    );
+  if (change.entity === "shipment" && "amount" in change.data)
+    return change.data.amount !== 0;
   return false;
 }
 
-export type { Account, EntityRecord, Invoice, Shipment, SyncResult, LocalState, AppRole, Entity, PendingChange };
+export type {
+  Account,
+  EntityRecord,
+  Invoice,
+  Shipment,
+  SyncResult,
+  LocalState,
+  AppRole,
+  Entity,
+  PendingChange,
+};

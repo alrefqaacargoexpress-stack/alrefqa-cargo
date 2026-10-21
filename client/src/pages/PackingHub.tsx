@@ -1,6 +1,6 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Link, useLocation, useRoute } from "wouter";
-import { ArrowLeft, ArrowRight, Plus, Search } from "lucide-react";
+import { Plus, Search } from "lucide-react";
 import PackingLayout from "@/components/packing/PackingLayout";
 import {
   PackingField,
@@ -18,7 +18,9 @@ import { copyFor } from "@/lib/packingCopy";
 import {
   createPackedShipment,
   isPackedShipment,
+  matchesShipment,
   packingTotals,
+  packingTotalsMRU,
   sourceCurrency,
   type PackingSource,
 } from "@shared/packing";
@@ -37,6 +39,9 @@ export default function PackingHub() {
   const [tracking, setTracking] = useState("");
   const [source, setSource] = useState<PackingSource>("dubai");
   const [pricePerKg, setPricePerKg] = useState("0");
+  const [pricePerKgMRU, setPricePerKgMRU] = useState("");
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
   const allShipments = workspace.state.shipments;
   const packingShipments = useMemo(
     () => allShipments.filter(isPackedShipment),
@@ -48,15 +53,22 @@ export default function PackingHub() {
   );
   const filtered = useMemo(
     () =>
-      packingShipments.filter(shipment => {
-        const query = search.trim().toLocaleLowerCase();
-        return !query || shipment.tracking.toLocaleLowerCase().includes(query);
-      }),
+      packingShipments.filter(shipment => matchesShipment(shipment, search)),
     [packingShipments, search]
   );
+  const filteredLegacy = useMemo(() => {
+    const needle = search.trim().toLocaleLowerCase();
+    if (!needle) return legacyShipments;
+    return legacyShipments.filter(shipment =>
+      [shipment.tracking, shipment.account, shipment.route].some(value =>
+        value.toLocaleLowerCase().includes(needle)
+      )
+    );
+  }, [legacyShipments, search]);
 
   const submit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (savingRef.current) return;
     setFormError(null);
     if (!workspace.canEditShipments) {
       setFormError(c.canNotEdit);
@@ -77,16 +89,28 @@ export default function PackingHub() {
       setFormError(c.invalidTracking);
       return;
     }
-    const numericRate = workspace.showFinance ? Number(pricePerKg) : 0;
-    if (!Number.isFinite(numericRate) || numericRate < 0) {
+    const numericRate = Number(pricePerKg);
+    const rawMru = pricePerKgMRU.trim();
+    const numericMru = rawMru === "" ? undefined : Number(rawMru);
+    if (
+      !Number.isFinite(numericRate) ||
+      numericRate < 0 ||
+      (numericMru !== undefined &&
+        (!Number.isFinite(numericMru) || numericMru < 0))
+    ) {
       setFormError(c.error);
       return;
     }
+    savingRef.current = true;
+    setSaving(true);
     try {
       const shipment = createPackedShipment({
         tracking: cleanTracking,
         source,
-        pricePerKg: numericRate,
+        pricePerKg: workspace.showFinance ? numericRate : 0,
+        ...(workspace.showFinance && numericMru !== undefined
+          ? { pricePerKgMRU: numericMru }
+          : {}),
       });
       const saved = await workspace.saveShipment(
         shipment,
@@ -99,6 +123,7 @@ export default function PackingHub() {
       setMessage(c.created);
       setTracking("");
       setPricePerKg("0");
+      setPricePerKgMRU("");
       navigate(`/operations/shipments/${shipment.id}`);
     } catch (error) {
       setFormError(
@@ -106,6 +131,9 @@ export default function PackingHub() {
           ? c.invalidTracking
           : c.error
       );
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
     }
   };
 
@@ -144,12 +172,13 @@ export default function PackingHub() {
                 size={16}
                 className="pointer-events-none absolute start-3 top-1/2 -translate-y-1/2 text-slate-400"
               />
-              <span className="sr-only">{c.search}</span>
+              <span className="sr-only">{c.searchGoods}</span>
               <input
+                aria-label={c.searchGoods}
                 className={`${packingInputClass} ps-9`}
                 value={search}
                 onChange={event => setSearch(event.target.value)}
-                placeholder={c.search}
+                placeholder={c.searchGoods}
               />
             </label>
           </div>
@@ -165,10 +194,10 @@ export default function PackingHub() {
                 />
               ))}
             </div>
-          ) : (
+          ) : !filteredLegacy.length ? (
             <EmptyPanel text={search ? c.noResults : c.noShipments} />
-          )}
-          {legacyShipments.length > 0 && (
+          ) : null}
+          {filteredLegacy.length > 0 && (
             <section className="mt-8 rounded-2xl border border-slate-200 bg-white p-4">
               <div className="mb-3">
                 <h2 className="font-black text-[#092d50]">
@@ -177,7 +206,7 @@ export default function PackingHub() {
                 <p className="text-sm text-[#718088]">{c.legacySummary}</p>
               </div>
               <div className="grid gap-2">
-                {legacyShipments.map(shipment => (
+                {filteredLegacy.map(shipment => (
                   <div
                     key={shipment.id}
                     className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-100 p-3 text-sm"
@@ -203,7 +232,6 @@ export default function PackingHub() {
       ) : (
         <NewShipmentForm
           c={c}
-          language={language}
           canEdit={workspace.canEditShipments}
           showFinance={workspace.showFinance}
           tracking={tracking}
@@ -212,6 +240,9 @@ export default function PackingHub() {
           setSource={setSource}
           pricePerKg={pricePerKg}
           setPricePerKg={setPricePerKg}
+          pricePerKgMRU={pricePerKgMRU}
+          setPricePerKgMRU={setPricePerKgMRU}
+          saving={saving}
           error={formError}
           submit={submit}
         />
@@ -222,7 +253,6 @@ export default function PackingHub() {
 
 function NewShipmentForm({
   c,
-  language,
   canEdit,
   showFinance,
   tracking,
@@ -231,11 +261,13 @@ function NewShipmentForm({
   setSource,
   pricePerKg,
   setPricePerKg,
+  pricePerKgMRU,
+  setPricePerKgMRU,
+  saving,
   error,
   submit,
 }: {
   c: ReturnType<typeof copyFor>;
-  language: string;
   canEdit: boolean;
   showFinance: boolean;
   tracking: string;
@@ -244,6 +276,9 @@ function NewShipmentForm({
   setSource: (v: PackingSource) => void;
   pricePerKg: string;
   setPricePerKg: (v: string) => void;
+  pricePerKgMRU: string;
+  setPricePerKgMRU: (v: string) => void;
+  saving: boolean;
   error: string | null;
   submit: (event: React.FormEvent<HTMLFormElement>) => Promise<void>;
 }) {
@@ -262,6 +297,7 @@ function NewShipmentForm({
             aria-label={c.shipmentNumber}
             required
             maxLength={128}
+            disabled={saving}
             className={packingInputClass}
             value={tracking}
             onChange={event => setTracking(event.target.value)}
@@ -271,6 +307,7 @@ function NewShipmentForm({
           <select
             aria-label={c.source}
             required
+            disabled={saving}
             className={packingInputClass}
             value={source}
             onChange={event => setSource(event.target.value as PackingSource)}
@@ -300,14 +337,33 @@ function NewShipmentForm({
             className={packingInputClass}
             value={pricePerKg}
             readOnly={!showFinance}
-            disabled={!showFinance || !canEdit}
+            disabled={!showFinance || !canEdit || saving}
             onChange={event => setPricePerKg(event.target.value)}
+          />
+        </PackingField>
+        <PackingField label={c.pricePerKgMRU} hint={c.mruPriceHelp}>
+          <input
+            aria-label={c.pricePerKgMRU}
+            type="number"
+            min="0"
+            max="999999999"
+            step="0.01"
+            inputMode="decimal"
+            className={packingInputClass}
+            value={pricePerKgMRU}
+            disabled={!showFinance || !canEdit || saving}
+            onChange={event => setPricePerKgMRU(event.target.value)}
           />
         </PackingField>
       </div>
       {!canEdit && (
         <p className="mt-4 rounded-xl bg-slate-50 px-3 py-2 text-sm text-[#718088]">
           {c.canNotEdit}
+        </p>
+      )}
+      {!showFinance && (
+        <p className="mt-4 rounded-xl bg-slate-50 px-3 py-2 text-sm text-[#718088]">
+          {c.rateRestricted}
         </p>
       )}
       {error && (
@@ -320,7 +376,7 @@ function NewShipmentForm({
       )}
       <button
         type="submit"
-        disabled={!canEdit}
+        disabled={!canEdit || saving}
         className={`${packingPrimaryClass} mt-6 gap-2`}
       >
         <Plus size={17} />
@@ -342,6 +398,7 @@ function ShipmentRow({
   showFinance: boolean;
 }) {
   const totals = packingTotals(shipment.packing);
+  const mruTotals = packingTotalsMRU(shipment.packing);
   return (
     <Link
       href={`/operations/shipments/${shipment.id}`}
@@ -355,33 +412,52 @@ function ShipmentRow({
             <PackingScopeBadge scope={shipment.scope} c={c} />
           </div>
           <p className="mt-2 text-sm text-[#718088]">
-            {shipment.route} · {shipment.packing.cartons.length} {c.cartons}
+            {shipment.route} ·{" "}
+            {formatLocalNumber(shipment.packing.cartons.length, language)}{" "}
+            {c.cartons}
           </p>
         </div>
         <PackingStatusBadge status={shipment.status} c={c} />
       </div>
-      <div className="mt-4 grid grid-cols-2 gap-2 border-t border-slate-100 pt-3 text-sm sm:grid-cols-3">
-        <div>
-          <span className="block text-xs text-[#718088]">{c.totalPieces}</span>
-          <b>{formatLocalNumber(totals.pieces, language)}</b>
-        </div>
-        <div>
-          <span className="block text-xs text-[#718088]">{c.totalWeight}</span>
-          <b>{formatLocalNumber(totals.weight, language, 3)} kg</b>
-        </div>
-        <div>
-          <span className="block text-xs text-[#718088]">{c.totalCost}</span>
-          <b>
-            {showFinance
+      <div className="mt-4 grid grid-cols-2 gap-2 border-t border-slate-100 pt-3 text-sm sm:grid-cols-4">
+        <Metric
+          label={c.totalPieces}
+          value={formatLocalNumber(totals.pieces, language)}
+        />
+        <Metric
+          label={c.totalWeight}
+          value={`${formatLocalNumber(totals.weight, language, 3)} kg`}
+        />
+        <Metric
+          label={c.totalCost}
+          value={
+            showFinance
               ? `${formatLocalNumber(totals.amount, language, 2)} ${sourceCurrency[shipment.packing.source]}`
-              : c.amountHidden}
-          </b>
-        </div>
+              : c.amountHidden
+          }
+        />
+        <Metric
+          label={c.mru}
+          value={
+            showFinance && mruTotals
+              ? `${formatLocalNumber(mruTotals.amount, language, 2)} ${c.mru}`
+              : showFinance
+                ? c.noPriceSet
+                : c.amountHidden
+          }
+        />
       </div>
     </Link>
   );
 }
-
+function Metric({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <span className="block text-xs text-[#718088]">{label}</span>
+      <b>{value}</b>
+    </div>
+  );
+}
 function EmptyPanel({ text }: { text: string }) {
   return (
     <div className="rounded-2xl border border-dashed border-[#bdcdd2] bg-white p-8 text-center text-sm text-[#718088]">

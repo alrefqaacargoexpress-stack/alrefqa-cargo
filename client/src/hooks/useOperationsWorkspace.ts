@@ -108,7 +108,17 @@ function hiddenState(state: LocalState, financial: boolean): LocalState {
     shipments: state.shipments.map(s => ({
       ...s,
       amount: 0,
-      ...(s.packing ? { packing: { ...s.packing, pricePerKg: 0 } } : {}),
+      ...(s.packing
+        ? {
+            packing: {
+              ...s.packing,
+              pricePerKg: 0,
+              ...(s.packing.pricePerKgMRU === undefined
+                ? {}
+                : { pricePerKgMRU: 0 }),
+            },
+          }
+        : {}),
     })),
     invoices: [],
   };
@@ -231,7 +241,15 @@ export function useOperationsWorkspace() {
               ...shipment,
               amount: 0,
               ...(shipment.packing
-                ? { packing: { ...shipment.packing, pricePerKg: 0 } }
+                ? {
+                    packing: {
+                      ...shipment.packing,
+                      pricePerKg: 0,
+                      ...(shipment.packing.pricePerKgMRU === undefined
+                        ? {}
+                        : { pricePerKgMRU: 0 }),
+                    },
+                  }
                 : {}),
             }
       );
