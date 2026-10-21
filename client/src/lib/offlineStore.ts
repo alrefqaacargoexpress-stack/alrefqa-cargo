@@ -54,11 +54,16 @@ function putRecord(state:LocalState,entity:Entity,record:EntityRecord):LocalStat
  const key=collections[entity];const list=state[key] as EntityRecord[];
  return {...state,[key]:list.some(item=>item.id===record.id)?list.map(item=>item.id===record.id?record:item):[...list,record]};
 }
-export function stageChange(workspace:Workspace,entity:Entity,data:EntityRecord,label:string):Workspace {
- const key=collections[entity];const previous=workspace.queue.find(change=>change.entity===entity&&change.recordId===data.id);
+export function stageChange(workspace:Workspace,entity:Entity,data:EntityRecord,label:string,action?:PendingChange['action']):Workspace {
+ const key=collections[entity];const pending=workspace.queue.filter(change=>change.entity===entity&&change.recordId===data.id);const previous=pending.at(-1);
  const saved=(workspace.state[key] as EntityRecord[]).find(item=>item.id===data.id);
- const change:PendingChange={id:crypto.randomUUID(),recordId:data.id,entity,label,createdAt:new Date().toISOString(),expectedVersion:previous?previous.expectedVersion:saved?.version??null,data:{...data,scope:'pending'}};
- return {...workspace,state:putRecord(workspace.state,entity,change.data),queue:[...workspace.queue.filter(item=>!(item.entity===entity&&item.recordId===data.id)),change]};
+ const change:PendingChange={id:crypto.randomUUID(),recordId:data.id,entity,label,createdAt:new Date().toISOString(),expectedVersion:previous?previous.expectedVersion:saved?.version??null,data:{...data,scope:'pending'},...((action??previous?.action)?{action:action??previous?.action}:{})};
+ const base=pending.find(item=>!item.action);
+ // Preserve a pending upsert before an explicit archive action on a shared row.
+ // The server must receive the cargo edit first, then an identical archive payload at its next version.
+ const prefix=entity==='shipment'&&change.action&&base&&base.expectedVersion!==null?[base]:[];
+ if(prefix.length)change.expectedVersion=base!.expectedVersion!+1;
+ return {...workspace,state:putRecord(workspace.state,entity,change.data),queue:[...workspace.queue.filter(item=>!(item.entity===entity&&item.recordId===data.id)),...prefix,change]};
 }
 export function mergeSnapshot(workspace:Workspace,snapshot:LocalState):Workspace {
  let state=clone(snapshot);

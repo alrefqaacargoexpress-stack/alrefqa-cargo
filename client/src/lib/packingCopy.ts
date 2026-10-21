@@ -137,6 +137,20 @@ export interface PackingCopy extends Record<string, string> {
   deleteEntry: string;
   restoreEntry: string;
   uniqueItems: string;
+  deletedShipments: string;
+  deleteShipment: string;
+  shipmentDeleteReason: string;
+  restoreShipment: string;
+  confirmDeleteShipment: string;
+  confirmRestoreShipment: string;
+  shipmentDeleted: string;
+  shipmentDeletionHint: string;
+  noDeletedShipments: string;
+  deletedAt: string;
+  deletionReason: string;
+  manageShipments: string;
+  deletionRetainsData: string;
+  deleteOnlyAfterConfirm: string;
 }
 
 const common: PackingCopy = {
@@ -273,6 +287,20 @@ const common: PackingCopy = {
   deleteEntry: "",
   restoreEntry: "",
   uniqueItems: "",
+  deletedShipments: "",
+  deleteShipment: "",
+  shipmentDeleteReason: "",
+  restoreShipment: "",
+  confirmDeleteShipment: "",
+  confirmRestoreShipment: "",
+  shipmentDeleted: "",
+  shipmentDeletionHint: "",
+  noDeletedShipments: "",
+  deletedAt: "",
+  deletionReason: "",
+  manageShipments: "",
+  deletionRetainsData: "",
+  deleteOnlyAfterConfirm: "",
 };
 
 export const packingCopy: Record<PackingLanguage, PackingCopy> = {
@@ -416,6 +444,22 @@ export const packingCopy: Record<PackingLanguage, PackingCopy> = {
     confirmDelete:
       "تأكيد حذف الإدخال «{name}» من الكرتون {carton} بوزن {weight} كغ وعدد {pieces}؟",
     confirmRestore: "تأكيد استعادة الإدخال «{name}» من الكرتون {carton}؟",
+    deletedShipments: "الشحنات المحذوفة",
+    deleteShipment: "حذف الشحنة",
+    shipmentDeleteReason: "حذف بطلب المستخدم",
+    restoreShipment: "استعادة الشحنة",
+    confirmDeleteShipment:
+      "هل تؤكد حذف الشحنة {tracking}؟ حالتها الحالية: {status}. ستبقى البيانات كاملة قابلة للاستعادة.",
+    confirmRestoreShipment: "هل تؤكد استعادة الشحنة {tracking}؟",
+    shipmentDeleted: "هذه الشحنة محذوفة مؤقتًا",
+    shipmentDeletionHint:
+      "يحفظ الحذف البيانات كاملة ويمكن عكسه. تصبح الإزالة مشتركة بعد المزامنة اليدوية فقط؛ لا تتأثر الحسابات أو الفواتير.",
+    noDeletedShipments: "لا توجد شحنات محذوفة.",
+    deletedAt: "وقت الحذف",
+    deletionReason: "سبب الحذف",
+    manageShipments: "إدارة الشحنات والمحذوفات",
+    deletionRetainsData: "يبقى كامل محتوى الشحنة محفوظًا وقابلًا للاستعادة.",
+    deleteOnlyAfterConfirm: "لا يتم الحذف إلا بعد تأكيدك.",
   },
   en: {
     ...common,
@@ -557,6 +601,22 @@ export const packingCopy: Record<PackingLanguage, PackingCopy> = {
     confirmDelete:
       "Confirm deleting “{name}” from carton {carton}, weight {weight} kg and quantity {pieces}?",
     confirmRestore: "Confirm restoring “{name}” from carton {carton}?",
+    deletedShipments: "Deleted shipments",
+    deleteShipment: "Delete shipment",
+    shipmentDeleteReason: "Deleted at the user's request",
+    restoreShipment: "Restore shipment",
+    confirmDeleteShipment:
+      "Confirm deleting shipment {tracking}? Current status: {status}. All data will remain available to restore.",
+    confirmRestoreShipment: "Confirm restoring shipment {tracking}?",
+    shipmentDeleted: "This shipment is archived",
+    shipmentDeletionHint:
+      "Deletion keeps the complete shipment data and can be reversed. It becomes shared only after manual sync; accounts and invoices are unchanged.",
+    noDeletedShipments: "No deleted shipments.",
+    deletedAt: "Deleted at",
+    deletionReason: "Deletion reason",
+    manageShipments: "Manage shipments and deleted records",
+    deletionRetainsData: "All shipment contents remain saved and restorable.",
+    deleteOnlyAfterConfirm: "Deletion happens only after your confirmation.",
   },
   zh: {
     ...common,
@@ -695,6 +755,22 @@ export const packingCopy: Record<PackingLanguage, PackingCopy> = {
     confirmDelete:
       "确认删除纸箱 {carton} 中的“{name}”，重量 {weight} 公斤、数量 {pieces}？",
     confirmRestore: "确认恢复纸箱 {carton} 中的“{name}”？",
+    deletedShipments: "已删除货运",
+    deleteShipment: "删除货运",
+    shipmentDeleteReason: "应用户请求删除",
+    restoreShipment: "恢复货运",
+    confirmDeleteShipment:
+      "确认删除货运 {tracking}？当前状态：{status}。全部数据仍可恢复。",
+    confirmRestoreShipment: "确认恢复货运 {tracking}？",
+    shipmentDeleted: "此货运已归档",
+    shipmentDeletionHint:
+      "删除会保留完整货运数据并可撤销。手动同步后才会共享；账户和发票不受影响。",
+    noDeletedShipments: "没有已删除货运。",
+    deletedAt: "删除时间",
+    deletionReason: "删除原因",
+    manageShipments: "管理货运和已删除记录",
+    deletionRetainsData: "货运的全部内容都会保存并可恢复。",
+    deleteOnlyAfterConfirm: "仅在确认后删除。",
   },
   tr: {
     ...common,
@@ -837,6 +913,23 @@ export const packingCopy: Record<PackingLanguage, PackingCopy> = {
     confirmDelete:
       "{name} adlı girdinin {carton} kolisinden, {weight} kg ağırlık ve {pieces} adet ile silinmesini onaylıyor musunuz?",
     confirmRestore: "{carton} kolisindeki {name} girdisi geri yüklensin mi?",
+    deletedShipments: "Silinen gönderiler",
+    deleteShipment: "Gönderiyi sil",
+    shipmentDeleteReason: "Kullanıcının isteğiyle silindi",
+    restoreShipment: "Gönderiyi geri yükle",
+    confirmDeleteShipment:
+      "{tracking} gönderisi silinsin mi? Mevcut durum: {status}. Tüm veriler geri yükleme için saklanır.",
+    confirmRestoreShipment: "{tracking} gönderisi geri yüklensin mi?",
+    shipmentDeleted: "Bu gönderi arşivlendi",
+    shipmentDeletionHint:
+      "Silme işlemi tüm gönderi verilerini korur ve geri alınabilir. Yalnızca manuel eşitlemeden sonra paylaşılır; hesaplar ve faturalar değişmez.",
+    noDeletedShipments: "Silinen gönderi yok.",
+    deletedAt: "Silinme zamanı",
+    deletionReason: "Silme nedeni",
+    manageShipments: "Gönderileri ve silinen kayıtları yönet",
+    deletionRetainsData:
+      "Gönderinin tüm içeriği kayıtlı ve geri yüklenebilir kalır.",
+    deleteOnlyAfterConfirm: "Silme yalnızca onayınızdan sonra yapılır.",
   },
 };
 

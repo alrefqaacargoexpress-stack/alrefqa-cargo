@@ -129,15 +129,27 @@ function formatAmount(value: number, language: string) {
   }).format(value);
 }
 function displayState(state: LocalState, showFinance: boolean): LocalState {
-  if (showFinance) return state;
-  return {
+  const activeState = {
     ...state,
-    accounts: state.accounts.map(account => ({ ...account, balance: 0 })),
-    shipments: state.shipments.map(shipment => ({
+    shipments: state.shipments.filter(shipment => !shipment.deleted),
+  };
+  if (showFinance) return activeState;
+  return {
+    ...activeState,
+    accounts: activeState.accounts.map(account => ({ ...account, balance: 0 })),
+    shipments: activeState.shipments.map(shipment => ({
       ...shipment,
       amount: 0,
       ...(shipment.packing
-        ? { packing: { ...shipment.packing, pricePerKg: 0, ...(shipment.packing.pricePerKgMRU === undefined ? {} : { pricePerKgMRU: 0 }) } }
+        ? {
+            packing: {
+              ...shipment.packing,
+              pricePerKg: 0,
+              ...(shipment.packing.pricePerKgMRU === undefined
+                ? {}
+                : { pricePerKgMRU: 0 }),
+            },
+          }
         : {}),
     })),
     invoices: [],
@@ -154,11 +166,33 @@ function dateText(value: string | null, c: OperationsCopy) {
 function scopeLabels(c: OperationsCopy) {
   return { shared: c.shared, local: c.local, pending: c.pending };
 }
-function statusLabel(status: string, c: OperationsCopy, language: string = "ar") {
+function statusLabel(
+  status: string,
+  c: OperationsCopy,
+  language: string = "ar"
+) {
   if (status === "قيد التجهيز")
-    return ({ ar: "قيد التجهيز", en: "Preparing", zh: "准备中", tr: "Hazırlanıyor" } as Record<string, string>)[language] ?? "قيد التجهيز";
+    return (
+      (
+        {
+          ar: "قيد التجهيز",
+          en: "Preparing",
+          zh: "准备中",
+          tr: "Hazırlanıyor",
+        } as Record<string, string>
+      )[language] ?? "قيد التجهيز"
+    );
   if (status === "مسلّمة")
-    return ({ ar: "مسلّمة", en: "Delivered", zh: "已交付", tr: "Teslim edildi" } as Record<string, string>)[language] ?? "مسلّمة";
+    return (
+      (
+        {
+          ar: "مسلّمة",
+          en: "Delivered",
+          zh: "已交付",
+          tr: "Teslim edildi",
+        } as Record<string, string>
+      )[language] ?? "مسلّمة"
+    );
   if (status === "في الطريق") return c.inTransit;
   if (status === "وصلت للمكتب") return c.arrived;
   if (status === "جاهزة للتسليم") return c.ready;
@@ -225,7 +259,13 @@ export default function Operations() {
   useEffect(() => {
     const query = location.split("?")[1]?.split("#")[0];
     const requested = new URLSearchParams(query).get("tab");
-    if (requested === "overview" || requested === "shipments" || requested === "accounts" || requested === "invoices" || requested === "access")
+    if (
+      requested === "overview" ||
+      requested === "shipments" ||
+      requested === "accounts" ||
+      requested === "invoices" ||
+      requested === "access"
+    )
       setTab(requested);
   }, [location]);
 
@@ -313,6 +353,15 @@ export default function Operations() {
   ) => {
     const current = workspaceRef.current;
     if (!effectiveUserId || !current || !canWrite(effectiveRole, entity)) {
+      notify(c.accessDenied, "error");
+      return false;
+    }
+    if (
+      entity === "shipment" &&
+      current.state.shipments.some(
+        shipment => shipment.id === (data as Shipment).id && shipment.deleted
+      )
+    ) {
       notify(c.accessDenied, "error");
       return false;
     }
@@ -814,7 +863,10 @@ export default function Operations() {
               search={search}
               setSearch={setSearch}
               onEdit={item => {
-                if (item.packing) setLocation(`/operations/shipments/${encodeURIComponent(item.id)}`);
+                if (item.packing)
+                  setLocation(
+                    `/operations/shipments/${encodeURIComponent(item.id)}`
+                  );
                 else {
                   setEditing(item);
                   setModal("shipment");
@@ -1619,7 +1671,9 @@ function EntityModal({
           <input
             required
             readOnly={kind === "shipment" && Boolean(editing)}
-            maxLength={kind === "account" ? 200 : kind === "shipment" ? 128 : 240}
+            maxLength={
+              kind === "account" ? 200 : kind === "shipment" ? 128 : 240
+            }
             className={inputClass}
             value={value(
               kind === "account"

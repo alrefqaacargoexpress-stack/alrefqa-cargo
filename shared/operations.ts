@@ -28,6 +28,7 @@ export type Shipment = {
   eta: string;
   amount: number;
   packing?: PackingSession;
+  deleted?: { at: string; reason: string };
   scope?: DataScope;
   version?: number;
 };
@@ -56,6 +57,7 @@ export type PendingChange = {
   recordId: string;
   expectedVersion: number | null;
   data: EntityRecord;
+  action?: "delete-shipment" | "restore-shipment";
 };
 export type SyncResult = {
   applied: { changeId: string; entity: Entity; record: EntityRecord }[];

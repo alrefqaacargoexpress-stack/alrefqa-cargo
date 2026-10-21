@@ -210,6 +210,7 @@ export function createPackedShipment(
   };
 }
 function editable(shipment: PackedShipment) {
+  if (shipment.deleted) throw new Error("shipment_deleted");
   if (shipment.status !== "قيد التجهيز") throw new Error("shipment_not_open");
 }
 export function addPackingGoods(
@@ -254,6 +255,7 @@ export function changePackingStatus(
   shipment: PackedShipment,
   status: "في الطريق" | "مسلّمة"
 ): PackedShipment {
+  if (shipment.deleted) throw new Error("shipment_deleted");
   if (status === "في الطريق") {
     editable(shipment);
     if (!packingTotals(shipment.packing).pieces)
@@ -322,7 +324,7 @@ export function customerDirectory(
     row.accountIds.push(account.id);
   }
   for (const shipment of shipments)
-    if (shipment.packing)
+    if (!shipment.deleted && shipment.packing)
       for (const summary of packingCustomers({
         ...shipment.packing,
         pricePerKg: 0,
@@ -340,6 +342,7 @@ export function shipmentReports(
   shipments: readonly Shipment[],
   now = new Date()
 ) {
+  shipments = shipments.filter(shipment=>!shipment.deleted);
   const isToday = (date: string) => {
     const value = new Date(date);
     return (

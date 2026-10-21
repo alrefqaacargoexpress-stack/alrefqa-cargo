@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from "react";
-import { Link, useLocation, useRoute } from "wouter";
+import { Link, useLocation, useRoute, useSearch } from "wouter";
 import { Plus, Search } from "lucide-react";
+import ShipmentDeleteActions from "@/components/packing/ShipmentDeleteActions";
 import PackingLayout from "@/components/packing/PackingLayout";
 import {
   PackingField,
@@ -41,16 +42,32 @@ export default function PackingHub() {
   const [pricePerKg, setPricePerKg] = useState("0");
   const [pricePerKgMRU, setPricePerKgMRU] = useState("");
   const [saving, setSaving] = useState(false);
+  const query = useSearch();
+  const showDeletedShipments =
+    new URLSearchParams(query).get("deleted") === "1";
+  const setShowDeletedShipments = (value: boolean) =>
+    navigate(
+      value ? "/operations/shipments?deleted=1" : "/operations/shipments"
+    );
   const savingRef = useRef(false);
   const allShipments = workspace.state.shipments;
+  const visibleShipments = useMemo(
+    () =>
+      allShipments.filter(
+        shipment => Boolean(shipment.deleted) === showDeletedShipments
+      ),
+    [allShipments, showDeletedShipments]
+  );
   const packingShipments = useMemo(
-    () => allShipments.filter(isPackedShipment),
-    [allShipments]
+    () => visibleShipments.filter(isPackedShipment),
+    [visibleShipments]
   );
   const legacyShipments = useMemo(
-    () => allShipments.filter(shipment => !isPackedShipment(shipment)),
-    [allShipments]
+    () => visibleShipments.filter(shipment => !isPackedShipment(shipment)),
+    [visibleShipments]
   );
+  const deletedCount = allShipments.filter(shipment => shipment.deleted).length;
+  const activeCount = allShipments.length - deletedCount;
   const filtered = useMemo(
     () =>
       packingShipments.filter(shipment => matchesShipment(shipment, search)),
@@ -147,7 +164,9 @@ export default function PackingHub() {
         <>
           <section className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#dce4e7] bg-white p-4 shadow-sm">
             <div>
-              <p className="font-black text-[#092d50]">{c.shipments}</p>
+              <p className="font-black text-[#092d50]">
+                {showDeletedShipments ? c.deletedShipments : c.shipments}
+              </p>
               <p className="text-sm text-[#718088]">{c.createHelp}</p>
             </div>
             <Link
@@ -166,7 +185,23 @@ export default function PackingHub() {
               {message}
             </p>
           )}
-          <div className="mb-4 flex flex-wrap gap-3">
+          <div className="mb-4 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              aria-pressed={!showDeletedShipments}
+              onClick={() => setShowDeletedShipments(false)}
+              className={`rounded-xl border px-3 py-2 text-sm font-bold ${!showDeletedShipments ? "border-[#092d50] bg-[#092d50] text-white" : "border-slate-200 bg-white text-[#243f52]"}`}
+            >
+              {c.shipments} ({activeCount})
+            </button>
+            <button
+              type="button"
+              aria-pressed={showDeletedShipments}
+              onClick={() => setShowDeletedShipments(true)}
+              className={`rounded-xl border px-3 py-2 text-sm font-bold ${showDeletedShipments ? "border-[#092d50] bg-[#092d50] text-white" : "border-slate-200 bg-white text-[#243f52]"}`}
+            >
+              {c.deletedShipments} ({deletedCount})
+            </button>
             <label className="relative min-w-[220px] flex-1">
               <Search
                 size={16}
@@ -191,11 +226,20 @@ export default function PackingHub() {
                   c={c}
                   language={language}
                   showFinance={workspace.showFinance}
+                  workspace={workspace}
                 />
               ))}
             </div>
           ) : !filteredLegacy.length ? (
-            <EmptyPanel text={search ? c.noResults : c.noShipments} />
+            <EmptyPanel
+              text={
+                search
+                  ? c.noResults
+                  : showDeletedShipments
+                    ? c.noDeletedShipments
+                    : c.noShipments
+              }
+            />
           ) : null}
           {filteredLegacy.length > 0 && (
             <section className="mt-8 rounded-2xl border border-slate-200 bg-white p-4">
@@ -204,25 +248,52 @@ export default function PackingHub() {
                   {c.legacyShipment}
                 </h2>
                 <p className="text-sm text-[#718088]">{c.legacySummary}</p>
+                <Link
+                  href="/operations/shipments"
+                  className="mt-2 inline-block text-sm font-bold text-[#2d6380] underline"
+                >
+                  {c.manageShipments}
+                </Link>
               </div>
               <div className="grid gap-2">
                 {filteredLegacy.map(shipment => (
                   <div
                     key={shipment.id}
-                    className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-100 p-3 text-sm"
+                    className={`flex flex-wrap items-center justify-between gap-3 rounded-xl border p-3 text-sm ${shipment.deleted ? "border-amber-200 bg-amber-50/40" : "border-slate-100"}`}
                   >
-                    <span>
+                    <div>
                       <TrackingNumber value={shipment.tracking} />{" "}
                       <span className="ms-2 text-[#718088]">
-                        {shipment.status}
+                        {shipment.deleted ? c.deleted : shipment.status}
                       </span>
-                    </span>
-                    <Link
-                      className="font-bold text-[#2d6380] underline"
-                      href="/operations"
-                    >
-                      {c.viewOperations}
-                    </Link>
+                      {shipment.deleted && (
+                        <p className="mt-1 text-xs text-amber-800">
+                          {c.deletedAt}:{" "}
+                          {new Date(shipment.deleted.at).toLocaleString()} ·{" "}
+                          {c.deletionReason}: {shipment.deleted.reason}
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-3">
+                      <Link
+                        className="font-bold text-[#2d6380] underline"
+                        href={
+                          shipment.deleted
+                            ? `/operations/shipments/${shipment.id}`
+                            : "/operations"
+                        }
+                      >
+                        {shipment.deleted
+                          ? c.shipmentDetails
+                          : c.viewOperations}
+                      </Link>
+                      <ShipmentDeleteActions
+                        shipment={shipment}
+                        workspace={workspace}
+                        c={c}
+                        saving={saving}
+                      />
+                    </div>
                   </div>
                 ))}
               </div>
@@ -391,34 +462,68 @@ function ShipmentRow({
   c,
   language,
   showFinance,
+  workspace,
 }: {
   shipment: ReturnType<typeof import("@shared/packing").createPackedShipment>;
   c: ReturnType<typeof copyFor>;
   language: string;
   showFinance: boolean;
+  workspace: ReturnType<typeof useOperationsWorkspace>;
 }) {
   const totals = packingTotals(shipment.packing);
   const mruTotals = packingTotalsMRU(shipment.packing);
   return (
-    <Link
-      href={`/operations/shipments/${shipment.id}`}
-      className="block rounded-2xl border border-[#dce4e7] bg-white p-4 shadow-sm transition hover:border-[#9ab7c3] hover:shadow-md"
+    <article
+      className={`rounded-2xl border p-4 shadow-sm transition ${shipment.deleted ? "border-amber-200 bg-amber-50/40" : "border-[#dce4e7] bg-white"}`}
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <TrackingNumber value={shipment.tracking} />
-            <SourceBadge source={shipment.packing.source} c={c} />
-            <PackingScopeBadge scope={shipment.scope} c={c} />
+        <Link
+          href={`/operations/shipments/${shipment.id}`}
+          className="min-w-0 flex-1 rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-[#d9a441]"
+        >
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <TrackingNumber value={shipment.tracking} />
+              <SourceBadge source={shipment.packing.source} c={c} />
+              <PackingScopeBadge scope={shipment.scope} c={c} />
+            </div>
+            <p className="mt-2 text-sm text-[#718088]">
+              {shipment.route} ·{" "}
+              {formatLocalNumber(shipment.packing.cartons.length, language)}{" "}
+              {c.cartons}
+            </p>
           </div>
-          <p className="mt-2 text-sm text-[#718088]">
-            {shipment.route} ·{" "}
-            {formatLocalNumber(shipment.packing.cartons.length, language)}{" "}
-            {c.cartons}
-          </p>
+          <PackingStatusBadge status={shipment.status} c={c} />
+        </Link>
+        <div className="flex flex-wrap items-center gap-2">
+          {shipment.deleted && (
+            <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-bold text-amber-900">
+              {c.deleted}
+            </span>
+          )}
+          <ShipmentDeleteActions
+            shipment={shipment}
+            workspace={workspace}
+            c={c}
+            saving={false}
+            statusLabel={
+              shipment.status === "قيد التجهيز"
+                ? c.open
+                : shipment.status === "في الطريق"
+                  ? c.inTransit
+                  : shipment.status === "مسلّمة"
+                    ? c.delivered
+                    : shipment.status
+            }
+          />
         </div>
-        <PackingStatusBadge status={shipment.status} c={c} />
       </div>
+      {shipment.deleted && (
+        <p className="mt-2 text-xs text-amber-800">
+          {c.deletedAt}: {new Date(shipment.deleted.at).toLocaleString()} ·{" "}
+          {c.deletionReason}: {shipment.deleted.reason}
+        </p>
+      )}
       <div className="mt-4 grid grid-cols-2 gap-2 border-t border-slate-100 pt-3 text-sm sm:grid-cols-4">
         <Metric
           label={c.totalPieces}
@@ -447,7 +552,7 @@ function ShipmentRow({
           }
         />
       </div>
-    </Link>
+    </article>
   );
 }
 function Metric({ label, value }: { label: string; value: string }) {

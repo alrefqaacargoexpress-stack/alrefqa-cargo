@@ -3,6 +3,12 @@ import type { User } from "../drizzle/schema";
 import { ENV } from "./_core/env";
 import { canonicalPackingShipment, packingSchema } from "@shared/packing";
 import {
+  assertShipmentAction,
+  shipmentActionSchema,
+  shipmentDeletionSchema,
+  shipmentContent,
+} from "@shared/shipmentDeletion";
+import {
   type Account,
   type AppRole,
   canViewFinance,
@@ -58,6 +64,7 @@ export const shipmentDataSchema = z
     eta: boundedString(80),
     amount: nonNegative,
     packing: packingSchema.optional(),
+    deleted: shipmentDeletionSchema.optional(),
     ...optionalMeta,
   })
   .strict();
@@ -80,6 +87,7 @@ export const pendingChangeSchema = z
     entity: z.enum(["account", "shipment", "invoice"]),
     recordId: boundedString(128),
     expectedVersion: z.union([z.null(), safeNonNegative]),
+    action: shipmentActionSchema.optional(),
     data: z.union([accountDataSchema, shipmentDataSchema, invoiceDataSchema]),
   })
   .strict();
@@ -121,6 +129,8 @@ export function canManageMembers(
 
 export function parseChange(change: unknown): ValidChange {
   const parsed = pendingChangeSchema.parse(change);
+  if (parsed.action && parsed.entity !== "shipment")
+    throw new Error("invalid_shipment_action");
   if (parsed.data.id !== parsed.recordId) {
     // The record id is the authoritative key, but accepting a different display id would make
     // replay/debugging ambiguous. Keep the public contract and reject it explicitly.
@@ -209,9 +219,27 @@ function preserveStaffFinance(
 export function prepareRecordForWrite(
   role: AppRole | null,
   next: EntityRecord,
-  current: EntityRecord | null
+  current: EntityRecord | null,
+  action?: PendingChange["action"]
 ): EntityRecord {
   let result = structuredClone(preserveStaffFinance(role, next, current));
+  if ("tracking" in result) {
+    const oldShipment = current && "tracking" in current ? current : null;
+    assertShipmentAction(role, result, oldShipment, action);
+    if (
+      oldShipment &&
+      (oldShipment.deleted || action) &&
+      shipmentContent(canonicalPackingShipment(result)) !==
+        shipmentContent(canonicalPackingShipment(oldShipment))
+    )
+      throw new Error(
+        oldShipment.deleted
+          ? "deleted_shipment_readonly"
+          : "shipment_action_content_change_forbidden"
+      );
+    if (action === "delete-shipment" && result.deleted)
+      result.deleted.at = new Date().toISOString();
+  } else if (action) throw new Error("invalid_shipment_action");
   if (
     current &&
     "tracking" in current &&
@@ -394,7 +422,12 @@ export function applyChangeInMemory(
   }
   let data: EntityRecord;
   try {
-    data = prepareRecordForWrite(role, change.data, current?.data ?? null);
+    data = prepareRecordForWrite(
+      role,
+      change.data,
+      current?.data ?? null,
+      change.action
+    );
   } catch (error) {
     return {
       nextState,

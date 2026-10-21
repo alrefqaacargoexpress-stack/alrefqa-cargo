@@ -1,5 +1,9 @@
 import { z } from "zod";
 import { packingSchema } from "./packing";
+import {
+  shipmentDeletionSchema,
+  shipmentActionSchema,
+} from "./shipmentDeletion";
 const text = (max: number) => z.string().trim().min(1).max(max);
 const integer = z.number().finite().nonnegative().refine(Number.isSafeInteger);
 const money = z.number().finite().nonnegative().max(999999999);
@@ -37,6 +41,7 @@ export const localShipmentSchema = z
     eta: text(80),
     amount: money,
     packing: packingSchema.optional(),
+    deleted: shipmentDeletionSchema.optional(),
     ...meta,
   })
   .strict();
@@ -58,6 +63,7 @@ const change = z
     entity: z.enum(["account", "shipment", "invoice"]),
     recordId: text(128),
     expectedVersion: z.union([z.null(), integer]),
+    action: shipmentActionSchema.optional(),
     data: z.union([
       localAccountSchema,
       localShipmentSchema,
@@ -74,7 +80,8 @@ const change = z
           : localInvoiceSchema;
     if (
       !schema.safeParse(value.data).success ||
-      value.recordId !== value.data.id
+      value.recordId !== value.data.id ||
+      (value.action && value.entity !== "shipment")
     )
       ctx.addIssue({ code: "custom", message: "Invalid queued record" });
   });

@@ -162,8 +162,9 @@ export default function Customers() {
   const selected =
     directory.find(customer => customer.key === selectedKey) ?? null;
   const selectedShipments = selected
-    ? state.shipments.filter(shipment =>
-        selected.shipmentIds.includes(shipment.id)
+    ? state.shipments.filter(
+        shipment =>
+          !shipment.deleted && selected.shipmentIds.includes(shipment.id)
       )
     : [];
   const selectedAccounts = selected

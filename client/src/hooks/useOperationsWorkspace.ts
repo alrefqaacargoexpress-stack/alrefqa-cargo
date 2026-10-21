@@ -18,8 +18,10 @@ import {
   type LocalState,
   type Shipment,
   type SyncResult,
+  type PendingChange,
 } from "@shared/operations";
 import { canonicalPackingShipment, normalizeTracking } from "@shared/packing";
+import { assertShipmentAction } from "@shared/shipmentDeletion";
 const PROFILE = "alrefqaa-operations-last-profile-v1";
 type Profile = { userId: string; role: AppRole; name?: string };
 const words = {
@@ -215,7 +217,8 @@ export function useOperationsWorkspace() {
   }, [snapshot.data, activeId]);
   const saveShipment = async (
     shipment: Shipment,
-    label?: string
+    label?: string,
+    action?: PendingChange["action"]
   ): Promise<boolean> => {
     const id = userId,
       current = ref.current;
@@ -234,6 +237,12 @@ export function useOperationsWorkspace() {
       return false;
     }
     try {
+      assertShipmentAction(
+        role,
+        shipment,
+        current.state.shipments.find(s => s.id === shipment.id) ?? null,
+        action
+      );
       const safe = canonicalPackingShipment(
         canViewFinance(role)
           ? shipment
@@ -257,7 +266,8 @@ export function useOperationsWorkspace() {
         current,
         "shipment",
         safe,
-        label ?? shipment.tracking
+        label ?? shipment.tracking,
+        action
       );
       await saveWorkspace(id, next);
       if (owner.current !== id) return false;

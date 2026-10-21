@@ -147,8 +147,10 @@ export default function Reports() {
   const scopedShipments = useMemo(
     () =>
       scope === "shared"
-        ? state.shipments.filter(shipment => shipment.scope === "shared")
-        : state.shipments,
+        ? state.shipments.filter(
+            shipment => !shipment.deleted && shipment.scope === "shared"
+          )
+        : state.shipments.filter(shipment => !shipment.deleted),
     [scope, state.shipments]
   );
   const report = useMemo(

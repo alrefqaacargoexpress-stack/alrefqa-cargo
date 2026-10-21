@@ -158,7 +158,7 @@ export const appRouter = router({
             result = { applied: [], conflicts: [{ changeId: change.id, reason: "tracking_change_forbidden", current: currentPublic }] };
           } else {
             let nextData: EntityRecord;
-            try { nextData = prepareRecordForWrite(role, change.data, current ? asEntityRecord(current.data) : null); }
+            try { nextData = prepareRecordForWrite(role, change.data, current ? asEntityRecord(current.data) : null, change.action); }
             catch (error) {
               const rejection: SyncResult = { applied: [], conflicts: [{ changeId: change.id, reason: error instanceof Error ? error.message : "invalid_packing", current: currentPublic }] };
               await tx.insert(syncReceipts).values({ userId: ctx.user.id, changeId: change.id, result: rejection });
