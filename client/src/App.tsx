@@ -5,7 +5,14 @@ import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import Home from "./pages/Home";
-import Operations from "./pages/Operations";
+import { LanguageProvider, useLanguage } from "./contexts/LanguageContext";
+import { lazy, Suspense } from "react";
+
+const Operations = lazy(() => import("./pages/Operations"));
+function PageLoading() {
+  const { language } = useLanguage();
+  return <div className="p-8 text-center">{{ ar: "جارٍ تحميل الصفحة…", en: "Loading page…", zh: "正在加载页面…", tr: "Sayfa yükleniyor…" }[language]}</div>;
+}
 
 function Router() {
   return <Switch>
@@ -18,5 +25,5 @@ function Router() {
 }
 
 export default function App() {
-  return <ErrorBoundary><ThemeProvider defaultTheme="light"><TooltipProvider><Toaster /><Router /></TooltipProvider></ThemeProvider></ErrorBoundary>;
+  return <ErrorBoundary><LanguageProvider><ThemeProvider defaultTheme="light"><TooltipProvider><Toaster /><Suspense fallback={<PageLoading />}><Router /></Suspense></TooltipProvider></ThemeProvider></LanguageProvider></ErrorBoundary>;
 }

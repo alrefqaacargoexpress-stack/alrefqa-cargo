@@ -23,6 +23,11 @@ export async function setupVite(app: Express, server: Server) {
   app.use(vite.middlewares);
   app.use("*", async (req, res, next) => {
     const url = req.originalUrl;
+    const requestPath = url.split("?")[0];
+    if (/^\/(?:assets|icons|fonts)(?:\/|$)/.test(requestPath) || /^\/(?:sw\.js|precache-manifest\.js|manifest\.webmanifest)$/.test(requestPath)) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
 
     try {
       const clientTemplate = path.resolve(
@@ -60,7 +65,19 @@ export function serveStatic(app: Express) {
 
   app.use(express.static(distPath));
 
-  // fall through to index.html if the file doesn't exist
+  // Missing API/resource URLs must not receive the application's HTML shell.
+  app.use("*", (req, res, next) => {
+    const pathName = req.originalUrl.split("?")[0];
+    if (/^\/api(?:\/|$)/.test(pathName)) {
+      res.status(404).set("Content-Type", "application/json").json({ error: "Not found" });
+      return;
+    }
+    if (/^\/(?:assets|icons|fonts)(?:\/|$)/.test(pathName) || /^\/sw(?:\.|\/|$)/.test(pathName) || /^\/precache-manifest(?:\.|\/|$)/.test(pathName) || /^\/(?:manifest\.webmanifest|manus-routes\.json)$/.test(pathName)) {
+      res.status(404).set("Content-Type", "application/json").json({ error: "Not found" });
+      return;
+    }
+    next();
+  });
   app.use("*", (_req, res) => {
     res.sendFile(path.resolve(distPath, "index.html"));
   });

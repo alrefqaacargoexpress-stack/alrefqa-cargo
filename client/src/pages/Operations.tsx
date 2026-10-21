@@ -1,26 +1,19 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "wouter";
 import {
   ArrowDownToLine,
-  ArrowRight,
-  ArrowUpFromLine,
   Bell,
   Check,
-  ChevronDown,
   CircleDollarSign,
   Cloud,
   CloudOff,
   Download,
   FileSpreadsheet,
-  Filter,
   LayoutDashboard,
   Menu,
-  MoreHorizontal,
   Package,
   Plus,
   RefreshCw,
-  Search,
-  Settings2,
   ShieldCheck,
   Truck,
   Upload,
@@ -28,131 +21,1896 @@ import {
   Wifi,
   X,
 } from "lucide-react";
-import { exportAccountsWorkbook, parseAccountsWorkbook } from "@/lib/excel";
-import { enqueueChange, formatMRU, getPendingChanges, loadLocalState, saveLocalState, type Account, type DataScope, type LocalState } from "@/lib/offlineStore";
+import { startLogin } from "@/const";
+import { useLanguage } from "@/contexts/LanguageContext";
+import LanguageSwitcher from "@/components/LanguageSwitcher";
+import { trpc } from "@/lib/trpc";
+import {
+  exportAccountsWorkbook,
+  exportAccountsTemplate,
+  exportImportReport,
+  parseAccountsWorkbook,
+  type ImportResult,
+} from "@/lib/excel";
+import {
+  applySyncResult,
+  downloadLocalArchive,
+  loadWorkspace,
+  mergeSnapshot,
+  saveWorkspace,
+  stageChange,
+  type Workspace,
+} from "@/lib/offlineStore";
+import type {
+  Account,
+  AppRole,
+  Entity,
+  EntityRecord,
+  Invoice,
+  LocalState,
+  PendingChange,
+  Shipment,
+  SyncResult,
+} from "@shared/operations";
+import { canViewFinance, canWrite } from "@shared/operations";
+import {
+  operationsCopy,
+  type OperationsLanguage,
+  type OperationsCopy,
+} from "@/lib/operationsCopy";
+import {
+  Field,
+  inputClass,
+  Modal,
+  ScopeBadge,
+  SearchBox,
+  StatusBadge,
+} from "@/components/operations/OperationsPrimitives";
 
-const logo = "https://www.alrefqaacargo.space/manus-storage/alrafkah-logo-final_cabb0750.webp";
+const logo = "/icons/logo.webp";
 type Tab = "overview" | "shipments" | "accounts" | "invoices" | "access";
-type Role = "مدير النظام" | "الموظف" | "المحاسب" | "المشاهد";
-
-function ScopeBadge({ scope }: { scope?: DataScope }) {
-  const config = scope === "local" ? { label: "محلية", cls: "bg-[#eef3fb] text-[#456c9a]" } : scope === "pending" ? { label: "بانتظار المزامنة", cls: "bg-[#fff4dc] text-[#a56e18]" } : { label: "مشتركة", cls: "bg-[#e7f4ec] text-[#367558]" };
-  return <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold ${config.cls}`}><span className="h-1.5 w-1.5 rounded-full bg-current" />{config.label}</span>;
+type NoticeTone = "ok" | "error" | "info";
+type Notice = { tone: NoticeTone; text: string } | null;
+type OfflineProfile = { userId: string; name: string; role: AppRole | null };
+const MAX_MONEY = 999999999;
+const ROLE_VALUES: AppRole[] = ["admin", "staff", "accountant", "viewer"];
+const OFFLINE_PROFILE_KEY = "alrefqaa-operations-last-profile-v1";
+function isAppRole(value: unknown): value is AppRole {
+  return typeof value === "string" && ROLE_VALUES.includes(value as AppRole);
 }
+function readOfflineProfile(): OfflineProfile | null {
+  if (
+    typeof window === "undefined" ||
+    typeof navigator === "undefined" ||
+    navigator.onLine
+  )
+    return null;
+  try {
+    const value = JSON.parse(
+      window.localStorage.getItem(OFFLINE_PROFILE_KEY) ?? "null"
+    ) as Partial<OfflineProfile> | null;
+    if (
+      !value?.userId ||
+      !/^\d+$/.test(String(value.userId)) ||
+      (value.role !== null &&
+        value.role !== undefined &&
+        !isAppRole(value.role))
+    )
+      return null;
+    return {
+      userId: String(value.userId),
+      name: String(value.name ?? ""),
+      role: value.role ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
+const emptyState: LocalState = {
+  accounts: [],
+  shipments: [],
+  invoices: [],
+  lastSyncedAt: null,
+};
 
-function StatusBadge({ label }: { label: string }) {
-  const cls = label === "في الطريق" ? "bg-[#e7eff8] text-[#3b6590]" : label === "وصلت للمكتب" ? "bg-[#eef0fb] text-[#6466a1]" : label === "جاهزة للتسليم" ? "bg-[#e5f4ec] text-[#307553]" : "bg-[#fff2da] text-[#a66d13]";
-  return <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${cls}`}>{label}</span>;
+function languageCopy(language: string): OperationsCopy {
+  return operationsCopy[
+    (language as OperationsLanguage) in operationsCopy
+      ? (language as OperationsLanguage)
+      : "ar"
+  ];
+}
+function roleText(role: AppRole | null, c: OperationsCopy) {
+  return role ? c[role] : c.noRole;
+}
+function formatAmount(value: number, language: string) {
+  return new Intl.NumberFormat(language === "ar" ? "ar-MR" : language, {
+    maximumFractionDigits: 2,
+  }).format(value);
+}
+function displayState(state: LocalState, showFinance: boolean): LocalState {
+  if (showFinance) return state;
+  return {
+    ...state,
+    accounts: state.accounts.map(account => ({ ...account, balance: 0 })),
+    shipments: state.shipments.map(shipment => ({ ...shipment, amount: 0 })),
+    invoices: [],
+  };
+}
+function sanitizedAccounts(accounts: Account[], showFinance: boolean) {
+  return showFinance
+    ? accounts
+    : accounts.map(account => ({ ...account, balance: 0 }));
+}
+function dateText(value: string | null, c: OperationsCopy) {
+  return value ? new Date(value).toLocaleString() : c.never;
+}
+function scopeLabels(c: OperationsCopy) {
+  return { shared: c.shared, local: c.local, pending: c.pending };
+}
+function statusLabel(status: string, c: OperationsCopy) {
+  if (status === "في الطريق") return c.inTransit;
+  if (status === "وصلت للمكتب") return c.arrived;
+  if (status === "جاهزة للتسليم") return c.ready;
+  if (status === "مدفوعة") return c.paid;
+  return c.awaitingPayment;
+}
+function serviceLabel(service: string, c: OperationsCopy) {
+  if (service === "جوي") return c.air;
+  if (service === "بحري") return c.sea;
+  return c.express;
 }
 
 export default function Operations() {
+  const { language, dir } = useLanguage();
+  const c = languageCopy(language);
+  const me = trpc.auth.me.useQuery(undefined, {
+    retry: false,
+    refetchOnWindowFocus: false,
+  });
+  const userId = me.data?.id == null ? null : String(me.data.id);
+  const access = trpc.operations.access.useQuery(undefined, {
+    enabled: Boolean(userId),
+    retry: false,
+  });
+  const role = access.data?.role ?? null;
+  const snapshot = trpc.operations.snapshot.useQuery(undefined, {
+    enabled: Boolean(userId && role),
+    retry: false,
+  });
+  const syncMutation = trpc.operations.sync.useMutation();
+  const tabAccess = trpc.operations.members.useQuery(undefined, {
+    enabled: role === "admin",
+    retry: false,
+  });
+  const setRoleMutation = trpc.operations.setRole.useMutation();
   const [tab, setTab] = useState<Tab>("overview");
-  const [role, setRole] = useState<Role>("مدير النظام");
-  const [state, setState] = useState<LocalState>(() => loadLocalState());
-  const [queue, setQueue] = useState(getPendingChanges());
-  const [online, setOnline] = useState(typeof navigator === "undefined" ? true : navigator.onLine);
-  const [notice, setNotice] = useState("");
+  const [workspace, setWorkspace] = useState<Workspace | null>(null);
+  const workspaceRef = useRef<Workspace | null>(null);
+  const [workspaceError, setWorkspaceError] = useState<string | null>(null);
+  const [online, setOnline] = useState(
+    typeof navigator === "undefined" ? true : navigator.onLine
+  );
+  const [notice, setNotice] = useState<Notice>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [search, setSearch] = useState("");
-  const [importReport, setImportReport] = useState<{ accepted: number; rejected: number } | null>(null);
+  const [modal, setModal] = useState<"account" | "shipment" | "invoice" | null>(
+    null
+  );
+  const [editing, setEditing] = useState<Account | Shipment | Invoice | null>(
+    null
+  );
+  const [importPreview, setImportPreview] = useState<ImportResult | null>(null);
+  const [conflicts, setConflicts] = useState<SyncResult["conflicts"]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
-  const canEdit = role !== "المشاهد";
-  const canFinance = role === "مدير النظام" || role === "المحاسب";
+  const [offlineUser, setOfflineUser] = useState<OfflineProfile | null>(null);
+  const offlineCandidate = readOfflineProfile();
+  const offlineMode = !me.data && Boolean(offlineUser);
+  const effectiveUserId =
+    userId ?? (offlineMode ? (offlineUser?.userId ?? null) : null);
+  const effectiveRole = offlineMode ? (offlineUser?.role ?? null) : role;
+  const showFinance = canViewFinance(effectiveRole);
 
   useEffect(() => {
-    const onOnline = () => setOnline(true);
-    const onOffline = () => setOnline(false);
-    window.addEventListener("online", onOnline);
-    window.addEventListener("offline", onOffline);
-    return () => { window.removeEventListener("online", onOnline); window.removeEventListener("offline", onOffline); };
+    const on = () => setOnline(true);
+    const off = () => setOnline(false);
+    window.addEventListener("online", on);
+    window.addEventListener("offline", off);
+    return () => {
+      window.removeEventListener("online", on);
+      window.removeEventListener("offline", off);
+    };
   }, []);
-
-  const showNotice = (message: string) => { setNotice(message); window.setTimeout(() => setNotice(""), 3000); };
-  const updateState = (next: LocalState, entity: "account" | "shipment" | "invoice", label: string) => {
-    setState(next);
-    saveLocalState(next);
-    const nextQueue = enqueueChange({ entity, label });
-    setQueue(nextQueue);
-  };
-  const syncNow = () => {
-    if (!online) { showNotice("لا يمكن المزامنة الآن — الجهاز غير متصل"); return; }
-    setQueue([]);
-    window.localStorage.setItem("alrefqa-copy-queue-v1", "[]");
-    const next = { ...state, lastSyncedAt: "الآن" };
-    setState(next);
-    saveLocalState(next);
-    showNotice("تمت مزامنة التغييرات المحلية بنجاح");
-  };
-  const createDraft = () => {
-    if (!canEdit) { showNotice("دور المشاهد لا يسمح بإنشاء مسودات"); return; }
-    const next = { ...state, shipments: [{ id: `sh-${Date.now()}`, tracking: `RQ-LOCAL-${String(state.shipments.length + 1).padStart(3, "0")}`, account: "مسودة محلية جديدة", route: "دبي → نواكشوط", service: "سريع" as const, status: "بانتظار الدفع" as const, eta: "غير محدد", amount: 0, scope: "pending" as const }, ...state.shipments] };
-    updateState(next, "shipment", "إنشاء شحنة محلية جديدة");
-    setTab("shipments");
-    showNotice("حُفظت الشحنة كمسودة محلية وبانتظار المزامنة");
-  };
-  const handleImport = async (file?: File) => {
-    if (!file) return;
+  useEffect(() => {
+    if (!effectiveUserId) return;
     try {
-      const result = await parseAccountsWorkbook(file);
-      const next = { ...state, accounts: [...result.rows, ...state.accounts] };
-      updateState(next, "account", `استيراد ${result.rows.length} حسابات من Excel`);
-      setImportReport({ accepted: result.rows.length, rejected: result.rejected.length });
-      showNotice(`تمت قراءة ${result.rows.length} حسابات — راجع حالة المزامنة قبل المشاركة`);
+      const loaded = loadWorkspace(effectiveUserId);
+      workspaceRef.current = loaded;
+      setWorkspace(loaded);
+      setWorkspaceError(null);
     } catch (error) {
-      showNotice(error instanceof Error ? error.message : "تعذر قراءة ملف Excel");
+      workspaceRef.current = null;
+      setWorkspace(null);
+      setWorkspaceError(error instanceof Error ? error.message : c.saveError);
+    }
+  }, [effectiveUserId]);
+  useEffect(() => {
+    if (!userId || !access.data) return;
+    try {
+      window.localStorage.setItem(
+        OFFLINE_PROFILE_KEY,
+        JSON.stringify({
+          userId,
+          name: me.data?.name ?? me.data?.email ?? "",
+          role: access.data.role,
+        } satisfies OfflineProfile)
+      );
+    } catch {
+      /* optional profile cache, no credentials */
+    }
+  }, [access.data, me.data, userId]);
+  useEffect(() => {
+    let cancelled = false;
+    if (!userId || !snapshot.data)
+      return () => {
+        cancelled = true;
+      };
+    const latest = workspaceRef.current;
+    if (!latest)
+      return () => {
+        cancelled = true;
+      };
+    void (async () => {
+      try {
+        const next = mergeSnapshot(latest, snapshot.data);
+        await saveWorkspace(userId, next);
+        if (!cancelled) {
+          workspaceRef.current = next;
+          setWorkspace(next);
+        }
+      } catch (error) {
+        if (!cancelled)
+          setNotice({
+            tone: "error",
+            text: error instanceof Error ? error.message : c.saveError,
+          });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [snapshot.data, userId]);
+
+  const rawState = workspace?.state ?? emptyState;
+  const state = displayState(rawState, showFinance);
+  const queue = workspace?.queue ?? [];
+  const notify = (text: string, tone: NoticeTone = "ok") => {
+    setNotice({ text, tone });
+    window.setTimeout(() => setNotice(null), 4200);
+  };
+  const writeLocal = async (
+    entity: Entity,
+    data: Account | Shipment | Invoice,
+    label: string
+  ) => {
+    const current = workspaceRef.current;
+    if (!effectiveUserId || !current || !canWrite(effectiveRole, entity)) {
+      notify(c.accessDenied, "error");
+      return false;
+    }
+    try {
+      const safeData =
+        !showFinance && entity === "account"
+          ? { ...(data as Account), balance: 0 }
+          : !showFinance && entity === "shipment"
+            ? { ...(data as Shipment), amount: 0 }
+            : data;
+      const next = stageChange(current, entity, safeData, label);
+      await saveWorkspace(effectiveUserId, next);
+      workspaceRef.current = next;
+      setWorkspace(next);
+      notify(c.savedDraft);
+      return true;
+    } catch (error) {
+      notify(error instanceof Error ? error.message : c.saveError, "error");
+      return false;
+    }
+  };
+  const handleSync = async () => {
+    const current = workspaceRef.current;
+    if (!current || !userId || offlineMode || !online) {
+      if (!online) notify(c.offline, "error");
+      return;
+    }
+    if (!current.queue.length) {
+      notify(c.noPending, "info");
+      return;
+    }
+    const batch = current.queue.slice(0, 500);
+    const remaining = current.queue.length - batch.length;
+    if (
+      !window.confirm(
+        `${c.confirmSync}\n\n${batch.map(item => `• ${item.label}`).join("\n")}${remaining ? `\n\n${remaining} ${c.remaining}` : ""}`
+      )
+    )
+      return;
+    try {
+      const result = await syncMutation.mutateAsync({ changes: batch });
+      const latest = workspaceRef.current ?? current;
+      const next = applySyncResult(latest, result);
+      await saveWorkspace(userId, next);
+      workspaceRef.current = next;
+      setWorkspace(next);
+      setConflicts(result.conflicts);
+      if (result.conflicts.length)
+        notify(
+          `${result.applied.length} ${c.applied} · ${result.conflicts.length} ${c.conflicts}`,
+          "info"
+        );
+      else if (result.applied.length)
+        notify(
+          `${c.syncSuccess}${remaining ? ` (${remaining} ${c.remaining})` : ""}`
+        );
+      else notify(c.syncNoApplied, "info");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : c.syncError, "error");
+    }
+  };
+  const resolveConflict = async (
+    conflict: SyncResult["conflicts"][number],
+    useServer: boolean
+  ) => {
+    const current = workspaceRef.current;
+    if (!current || !userId) return;
+    const pending = current.queue.find(item => item.id === conflict.changeId);
+    if (!pending) return;
+    try {
+      if (useServer) {
+        if (!conflict.current || !window.confirm(c.useServerConfirm)) return;
+        downloadLocalArchive(userId);
+      }
+      const result: SyncResult = {
+        applied:
+          useServer && conflict.current
+            ? [
+                {
+                  changeId: conflict.changeId,
+                  entity: pending.entity,
+                  record: conflict.current,
+                },
+              ]
+            : [],
+        conflicts: [],
+      };
+      const next = applySyncResult(current, result);
+      await saveWorkspace(userId, next);
+      workspaceRef.current = next;
+      setWorkspace(next);
+      setConflicts(items =>
+        items.filter(item => item.changeId !== conflict.changeId)
+      );
+      if (!useServer) notify(c.keepLocal);
+      else notify(c.useServer);
+    } catch (error) {
+      notify(
+        error instanceof Error ? error.message : c.operationError,
+        "error"
+      );
+    }
+  };
+  const handleImportFile = async (file?: File) => {
+    const current = workspaceRef.current;
+    if (
+      !file ||
+      !current ||
+      !effectiveUserId ||
+      !canWrite(effectiveRole, "account")
+    )
+      return notify(c.accessDenied, "error");
+    try {
+      setImportPreview(
+        await parseAccountsWorkbook(
+          file,
+          current.state.accounts.map(account => account.id)
+        )
+      );
+    } catch (error) {
+      notify(
+        error instanceof Error ? error.message : c.operationError,
+        "error"
+      );
     } finally {
       if (inputRef.current) inputRef.current.value = "";
     }
   };
+  const confirmImport = async () => {
+    const current = workspaceRef.current;
+    if (
+      !importPreview ||
+      !current ||
+      !effectiveUserId ||
+      !canWrite(effectiveRole, "account")
+    ) {
+      notify(c.accessDenied, "error");
+      return;
+    }
+    const ids = new Set(current.state.accounts.map(account => account.id));
+    const available = importPreview.rows.filter(row => !ids.has(row.id));
+    if (available.length !== importPreview.rows.length)
+      notify(
+        `${importPreview.rows.length - available.length} ${c.duplicate}`,
+        "error"
+      );
+    if (!available.length) {
+      setImportPreview(null);
+      return;
+    }
+    const safeRows = available.map(row =>
+      showFinance ? row : { ...row, balance: 0 }
+    );
+    try {
+      const nextState = {
+        ...current.state,
+        accounts: [...safeRows, ...current.state.accounts],
+      };
+      const draft = { ...current, state: nextState };
+      const staged = stageChange(
+        draft,
+        "account",
+        safeRows[0],
+        `${c.import} ${safeRows.length} ${c.accounts}`
+      );
+      const final = safeRows
+        .slice(1)
+        .reduce(
+          (currentDraft, account) =>
+            stageChange(
+              currentDraft,
+              "account",
+              account,
+              `${c.import} ${c.accountEntity} ${account.id}`
+            ),
+          staged
+        );
+      await saveWorkspace(effectiveUserId, final);
+      workspaceRef.current = final;
+      setWorkspace(final);
+      notify(c.savedDraft);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : c.saveError, "error");
+    }
+    setImportPreview(null);
+  };
 
-  const filteredAccounts = useMemo(() => state.accounts.filter(account => `${account.id} ${account.name} ${account.phone}`.toLowerCase().includes(search.toLowerCase())), [state.accounts, search]);
-  const filteredShipments = useMemo(() => state.shipments.filter(shipment => `${shipment.tracking} ${shipment.account} ${shipment.route}`.toLowerCase().includes(search.toLowerCase())), [state.shipments, search]);
-  const totalReceivables = state.accounts.reduce((sum, account) => sum + account.balance, 0);
-  const navItems: { id: Tab; label: string; icon: typeof LayoutDashboard }[] = [
-    { id: "overview", label: "نظرة عامة", icon: LayoutDashboard },
-    { id: "shipments", label: "الشحنات", icon: Package },
-    { id: "accounts", label: "الحسابات", icon: Users },
-    { id: "invoices", label: "الفوترة", icon: CircleDollarSign },
-    { id: "access", label: "الصلاحيات", icon: ShieldCheck },
+  if ((me.isLoading && online) || (!offlineMode && access.isLoading))
+    return <Gate title={c.loading} c={c} />;
+  if (!me.data && !offlineUser)
+    return (
+      <Gate
+        title={c.loginRequired}
+        c={c}
+        action={
+          <div className="flex flex-wrap justify-center gap-2">
+            <button
+              onClick={() => startLogin()}
+              className="rounded-xl bg-sky-900 px-4 py-2 font-bold text-white"
+            >
+              {c.login}
+            </button>
+            {offlineCandidate && (
+              <button
+                onClick={() => setOfflineUser(offlineCandidate)}
+                className="rounded-xl border border-slate-300 px-4 py-2 font-bold text-slate-700"
+              >
+                {c.localData}
+              </button>
+            )}
+          </div>
+        }
+      />
+    );
+  if (!offlineMode && (me.isError || !me.data))
+    return (
+      <Gate
+        title={c.loginRequired}
+        c={c}
+        action={
+          <button
+            onClick={() => startLogin()}
+            className="rounded-xl bg-sky-900 px-4 py-2 font-bold text-white"
+          >
+            {c.login}
+          </button>
+        }
+      />
+    );
+  if (!offlineMode && (access.isError || !access.data || !role))
+    return <Gate title={c.accessDenied} c={c} />;
+  if (workspaceError)
+    return (
+      <Gate
+        title={c.recoverStorage}
+        c={c}
+        archiveUserId={effectiveUserId ?? undefined}
+        action={
+          <div className="grid gap-3">
+            <p className="text-red-700">{workspaceError}</p>
+            <p className="text-sm">{c.archiveHint}</p>
+            <Link href="/" className="font-bold">
+              {c.backHome}
+            </Link>
+            <button
+              onClick={() => downloadLocalArchive(effectiveUserId ?? undefined)}
+              className="rounded-xl bg-sky-900 px-4 py-2 font-bold text-white"
+            >
+              {c.archive}
+            </button>
+          </div>
+        }
+      />
+    );
+
+  const visibleTabs: { id: Tab; label: string; icon: typeof Package }[] = [
+    { id: "overview", label: c.overview, icon: LayoutDashboard },
+    { id: "shipments", label: c.shipments, icon: Package },
+    { id: "accounts", label: c.accounts, icon: Users },
+    ...(showFinance
+      ? [{ id: "invoices" as Tab, label: c.invoices, icon: CircleDollarSign }]
+      : []),
+    ...(effectiveRole === "admin" && !offlineMode
+      ? [{ id: "access" as Tab, label: c.access, icon: ShieldCheck }]
+      : []),
   ];
-
-  return <div className="min-h-screen bg-[#f6f8f7] text-[#102f45]">
-    <input ref={inputRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={event => void handleImport(event.target.files?.[0])} />
-    {notice && <div className="fixed left-1/2 top-5 z-50 flex -translate-x-1/2 items-center gap-2 rounded-2xl bg-[#092d50] px-4 py-3 text-sm font-semibold text-white shadow-xl"><Check size={16} className="text-[#e1b452]" />{notice}</div>}
-    <aside className={`fixed inset-y-0 right-0 z-40 w-72 border-l border-[#dce4e7] bg-[#092d50] p-5 text-white transition-transform lg:translate-x-0 ${sidebarOpen ? "translate-x-0" : "translate-x-full"}`}>
-      <div className="flex items-center justify-between"><Link href="/" className="flex items-center gap-3"><img src={logo} alt="" className="h-10 w-10 rounded-xl object-cover" /><div><div className="font-bold">مؤسسة الرفكة</div><div className="text-[10px] tracking-[.15em] text-white/50">مركز العمليات</div></div></Link><button className="rounded-lg p-1.5 text-white/60 lg:hidden" onClick={() => setSidebarOpen(false)}><X size={18} /></button></div>
-      <div className="mt-10 rounded-2xl border border-white/10 bg-white/5 p-3"><div className="flex items-center gap-2 text-xs text-white/55"><span className={`h-2 w-2 rounded-full ${online ? "bg-[#71c59a]" : "bg-[#e0a449]"}`} />{online ? "متصل بالخادم" : "وضع عدم الاتصال"}</div><div className="mt-3 flex items-center justify-between text-xs"><span className="text-white/45">طابور محلي</span><span className="font-bold text-[#e3b75c]">{queue.length} تغيير</span></div></div>
-      <nav className="mt-8 space-y-1">{navItems.map(item => <button key={item.id} onClick={() => { setTab(item.id); setSidebarOpen(false); setSearch(""); }} className={`flex w-full items-center gap-3 rounded-xl px-3.5 py-3 text-right text-sm font-semibold transition ${tab === item.id ? "bg-white text-[#092d50]" : "text-white/65 hover:bg-white/10 hover:text-white"}`}><item.icon size={18} />{item.label}{item.id === "access" && <span className="mr-auto rounded-full bg-[#e1b452]/15 px-2 py-0.5 text-[10px] text-[#eac776]">RBAC</span>}</button>)}</nav>
-      <div className="absolute inset-x-5 bottom-5 rounded-2xl border border-white/10 p-3 text-xs text-white/50"><div className="flex items-center gap-2 text-white/75"><ShieldCheck size={15} className="text-[#e1b452]" /> مساحة مستقلة وآمنة</div><p className="mt-2 leading-5">هذه اللوحة لا تقرأ بيانات الموقع الأصلي ولا تنقلها تلقائيًا.</p></div>
-    </aside>
-
-    <div className="lg:mr-72"><header className="sticky top-0 z-30 border-b border-[#dce4e7] bg-[#f6f8f7]/95 px-5 py-4 backdrop-blur-lg lg:px-8"><div className="flex items-center justify-between gap-4"><div className="flex items-center gap-3"><button className="rounded-xl border border-[#dce4e7] bg-white p-2.5 lg:hidden" onClick={() => setSidebarOpen(true)}><Menu size={19} /></button><div><div className="text-xs font-semibold text-[#8a999d]">الأربعاء، 21 أكتوبر 2026</div><h1 className="mt-1 text-xl font-bold text-[#092d50]">{tab === "overview" ? "صباح الخير، فريق الرفكة" : navItems.find(item => item.id === tab)?.label}</h1></div></div><div className="flex items-center gap-2 sm:gap-3"><div className={`hidden items-center gap-2 rounded-full border px-3 py-2 text-xs font-bold sm:flex ${online ? "border-[#cde3d6] bg-[#eff9f3] text-[#38775c]" : "border-[#f0dba9] bg-[#fff8e7] text-[#a16f1d]"}`}>{online ? <Wifi size={14} /> : <CloudOff size={14} />}{online ? "متصل" : "دون اتصال"}</div><button className="rounded-xl border border-[#dce4e7] bg-white p-2.5 text-[#65757e]"><Bell size={18} /></button><div className="flex items-center gap-2 rounded-xl border border-[#dce4e7] bg-white px-2.5 py-2"><div className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#e6edf1] text-xs font-bold text-[#315d78]">م</div><div className="hidden text-right sm:block"><div className="text-xs font-bold">محمد المدير</div><div className="text-[10px] text-[#879398]">{role}</div></div><ChevronDown size={14} className="text-[#8c999d]" /></div></div></div></header>
-      <main className="p-5 lg:p-8">
-        <div className="mb-7 flex flex-col justify-between gap-4 md:flex-row md:items-center"><div><div className="flex items-center gap-2 text-xs text-[#7d8e94]"><Link href="/" className="hover:text-[#2e6280]">الموقع العام</Link><ArrowRight size={13} /><span>النسخة المستقلة</span></div></div><div className="flex flex-wrap gap-2"><button onClick={() => setTab("accounts")} className="inline-flex items-center gap-2 rounded-xl border border-[#d4e0e4] bg-white px-3.5 py-2.5 text-xs font-bold text-[#315d78]"><Download size={15} /> تصدير الحسابات</button><button onClick={createDraft} className="inline-flex items-center gap-2 rounded-xl bg-[#092d50] px-3.5 py-2.5 text-xs font-bold text-white shadow-sm hover:bg-[#123f68]"><Plus size={16} /> شحنة جديدة</button></div></div>
-        <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#d9e7dd] bg-[#f0f8f2] px-4 py-3"><div className="flex items-center gap-3"><div className="flex h-9 w-9 items-center justify-center rounded-xl bg-white text-[#3a805f]">{online ? <Cloud size={18} /> : <CloudOff size={18} />}</div><div><div className="text-xs font-bold text-[#2e634a]">{online ? "مستعد للمزامنة" : "تعمل الآن دون اتصال"}</div><div className="mt-0.5 text-[11px] text-[#70887b]">آخر مزامنة: {state.lastSyncedAt ?? "لم تتم بعد"} · التغييرات المحلية لا تُشارك تلقائيًا</div></div></div><button onClick={syncNow} className="inline-flex items-center gap-2 rounded-xl bg-white px-3 py-2 text-xs font-bold text-[#367558] shadow-sm"><RefreshCw size={14} /> مزامنة الآن ({queue.length})</button></div>
-        {tab === "overview" && <Overview state={state} totalReceivables={totalReceivables} setTab={setTab} />}
-        {tab === "shipments" && <Shipments state={state} items={filteredShipments} search={search} setSearch={setSearch} />}
-        {tab === "accounts" && <Accounts accounts={filteredAccounts} allAccounts={state.accounts} search={search} setSearch={setSearch} onImport={() => inputRef.current?.click()} onExport={() => exportAccountsWorkbook(state.accounts)} importReport={importReport} canEdit={canEdit} />}
-        {tab === "invoices" && <Invoices state={state} canFinance={canFinance} />}
-        {tab === "access" && <Access role={role} setRole={setRole} />}
-      </main></div>
-  </div>;
+  const filteredAccounts = state.accounts.filter(item =>
+    `${item.id} ${item.name} ${item.phone} ${item.city}`
+      .toLocaleLowerCase()
+      .includes(search.toLocaleLowerCase())
+  );
+  const filteredShipments = state.shipments.filter(item =>
+    `${item.id} ${item.tracking} ${item.account} ${item.route}`
+      .toLocaleLowerCase()
+      .includes(search.toLocaleLowerCase())
+  );
+  const filteredInvoices = state.invoices.filter(item =>
+    `${item.id} ${item.account}`
+      .toLocaleLowerCase()
+      .includes(search.toLocaleLowerCase())
+  );
+  const setCurrentTab = (next: Tab) => {
+    if (next === "invoices" && !canViewFinance(effectiveRole)) return;
+    if (next === "access" && (effectiveRole !== "admin" || offlineMode)) return;
+    setTab(next);
+    setSearch("");
+    setSidebarOpen(false);
+  };
+  return (
+    <div dir={dir} className="min-h-screen bg-slate-50 text-slate-900">
+      <input
+        ref={inputRef}
+        type="file"
+        accept=".xlsx"
+        className="hidden"
+        onChange={event => void handleImportFile(event.target.files?.[0])}
+      />
+      {notice && (
+        <div
+          className={`fixed left-1/2 top-4 z-[60] -translate-x-1/2 rounded-xl px-4 py-3 text-sm font-semibold text-white shadow-lg ${notice.tone === "error" ? "bg-red-700" : notice.tone === "info" ? "bg-slate-800" : "bg-emerald-700"}`}
+          role="status"
+        >
+          {notice.text}
+        </div>
+      )}
+      <aside
+        className={`fixed inset-y-0 start-0 z-40 w-72 bg-sky-950 p-5 text-white transition-transform lg:translate-x-0 ${sidebarOpen ? "translate-x-0" : dir === "rtl" ? "translate-x-full" : "-translate-x-full"}`}
+      >
+        <div className="flex items-center justify-between">
+          <Link href="/" className="flex items-center gap-3">
+            <img
+              src={logo}
+              alt=""
+              className="h-10 w-10 rounded-xl object-cover"
+            />
+            <div>
+              <div className="font-bold">{c.title}</div>
+              <div className="text-[10px] text-white/60">
+                {roleText(effectiveRole, c)}
+              </div>
+            </div>
+          </Link>
+          <button onClick={() => setSidebarOpen(false)} className="lg:hidden">
+            <X size={18} />
+          </button>
+        </div>
+        <div className="mt-8 rounded-xl border border-white/10 p-3 text-xs">
+          <div className="flex items-center gap-2">
+            <span
+              className={`h-2 w-2 rounded-full ${online ? "bg-emerald-300" : "bg-amber-300"}`}
+            />
+            {online ? c.online : c.offline}
+          </div>
+          <div className="mt-2 text-white/70">
+            {queue.length} {c.pending}
+          </div>
+        </div>
+        <nav className="mt-6 grid gap-1">
+          {visibleTabs.map(item => (
+            <button
+              key={item.id}
+              onClick={() => setCurrentTab(item.id)}
+              className={`flex items-center gap-3 rounded-xl px-3 py-3 text-start text-sm font-semibold ${tab === item.id ? "bg-white text-sky-950" : "text-white/75 hover:bg-white/10"}`}
+            >
+              <item.icon size={17} />
+              {item.label}
+            </button>
+          ))}
+        </nav>
+      </aside>
+      <div className="lg:ms-72">
+        <header className="sticky top-0 z-30 flex items-center justify-between gap-4 border-b border-slate-200 bg-slate-50/95 px-5 py-4 backdrop-blur-lg lg:px-8">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setSidebarOpen(true)}
+              className="rounded-xl border border-slate-200 bg-white p-2 lg:hidden"
+            >
+              <Menu size={18} />
+            </button>
+            <div>
+              <div className="text-xs text-slate-500">{c.title}</div>
+              <h1 className="mt-1 text-xl font-bold">
+                {tab === "overview"
+                  ? c.greeting
+                  : visibleTabs.find(item => item.id === tab)?.label}
+              </h1>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <LanguageSwitcher />
+            <span className="hidden items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-bold sm:flex">
+              {online ? <Wifi size={14} /> : <CloudOff size={14} />}
+              {online ? c.online : c.offline}
+            </span>
+            <div className="hidden rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs sm:block">
+              {me.data?.name ?? me.data?.email ?? roleText(effectiveRole, c)}
+            </div>
+          </div>
+        </header>
+        <main className="space-y-6 p-5 lg:p-8">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2 text-sm text-slate-500">
+              <Link href="/" className="hover:text-sky-800">
+                {c.title}
+              </Link>
+              <span>/</span>
+              <span>{visibleTabs.find(item => item.id === tab)?.label}</span>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={() =>
+                  downloadLocalArchive(effectiveUserId ?? undefined)
+                }
+                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold"
+              >
+                <Download size={15} />
+                {c.archive}
+              </button>
+              <button
+                onClick={() => {
+                  setEditing(null);
+                  setModal("account");
+                }}
+                disabled={!canWrite(effectiveRole, "account")}
+                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold disabled:opacity-40"
+              >
+                <Plus size={15} />
+                {c.newAccount}
+              </button>
+              <button
+                onClick={() => {
+                  setEditing(null);
+                  setModal("shipment");
+                }}
+                disabled={!canWrite(effectiveRole, "shipment")}
+                className="inline-flex items-center gap-2 rounded-xl bg-sky-950 px-3 py-2 text-sm font-bold text-white disabled:opacity-40"
+              >
+                <Plus size={15} />
+                {c.newShipment}
+              </button>
+            </div>
+          </div>
+          {snapshot.isError && (
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-900">
+              <span>
+                {c.snapshotError} · {c.localData}
+              </span>
+              <button
+                onClick={() => void snapshot.refetch()}
+                className="inline-flex items-center gap-2 rounded-xl bg-white px-3 py-2 font-bold"
+              >
+                <RefreshCw size={15} />
+                {c.retrySnapshot}
+              </button>
+            </div>
+          )}
+          {offlineMode && (
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+              {c.localWarning} ({roleText(effectiveRole, c)})
+            </div>
+          )}
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-emerald-100 bg-emerald-50 p-4">
+            <div className="flex items-center gap-3">
+              <div className="rounded-xl bg-white p-2 text-emerald-700">
+                {online ? <Cloud size={18} /> : <CloudOff size={18} />}
+              </div>
+              <div>
+                <div className="text-sm font-bold text-emerald-900">
+                  {online ? c.online : c.offline}
+                </div>
+                <div className="text-xs text-emerald-800/70">
+                  {c.synced}:{" "}
+                  {snapshot.isError
+                    ? c.localData
+                    : dateText(state.lastSyncedAt, c)}{" "}
+                  · {c.reviewHint}
+                </div>
+              </div>
+            </div>
+            <button
+              onClick={handleSync}
+              disabled={
+                syncMutation.isPending ||
+                !queue.length ||
+                !online ||
+                !effectiveUserId ||
+                offlineMode
+              }
+              className="inline-flex items-center gap-2 rounded-xl bg-white px-3 py-2 text-sm font-bold text-emerald-800 disabled:opacity-40"
+            >
+              <RefreshCw
+                size={15}
+                className={syncMutation.isPending ? "animate-spin" : ""}
+              />
+              {c.sync} ({queue.length})
+            </button>
+          </div>
+          {conflicts.length > 0 && (
+            <ConflictPanel
+              conflicts={conflicts}
+              queue={queue}
+              c={c}
+              onKeep={item => resolveConflict(item, false)}
+              onServer={item => resolveConflict(item, true)}
+            />
+          )}
+          {tab === "overview" && (
+            <Overview
+              state={state}
+              c={c}
+              role={effectiveRole}
+              showFinance={showFinance}
+              language={language}
+              onTab={setCurrentTab}
+            />
+          )}
+          {tab === "shipments" && (
+            <Shipments
+              items={filteredShipments}
+              state={state}
+              c={c}
+              search={search}
+              setSearch={setSearch}
+              onEdit={item => {
+                setEditing(item);
+                setModal("shipment");
+              }}
+              canEdit={canWrite(effectiveRole, "shipment")}
+              showFinance={showFinance}
+            />
+          )}
+          {tab === "accounts" && (
+            <Accounts
+              items={filteredAccounts}
+              all={state.accounts}
+              state={state}
+              c={c}
+              search={search}
+              setSearch={setSearch}
+              onEdit={item => {
+                setEditing(item);
+                setModal("account");
+              }}
+              canEdit={canWrite(effectiveRole, "account")}
+              language={language}
+              onImport={() => inputRef.current?.click()}
+              onExport={() =>
+                exportAccountsWorkbook(
+                  sanitizedAccounts(rawState.accounts, showFinance)
+                )
+              }
+              onTemplate={exportAccountsTemplate}
+              showFinance={showFinance}
+            />
+          )}
+          {tab === "invoices" && (
+            <Invoices
+              items={filteredInvoices}
+              state={state}
+              c={c}
+              search={search}
+              setSearch={setSearch}
+              onNew={() => {
+                setEditing(null);
+                setModal("invoice");
+              }}
+              onEdit={item => {
+                setEditing(item);
+                setModal("invoice");
+              }}
+              canEdit={canWrite(effectiveRole, "invoice")}
+              language={language}
+            />
+          )}
+          {tab === "access" && (
+            <Access
+              c={c}
+              members={tabAccess.data ?? []}
+              currentUserId={userId}
+              pending={setRoleMutation.isPending}
+              onSetRole={async (memberId, nextRole) => {
+                if (
+                  !ROLE_VALUES.includes(nextRole) ||
+                  String(memberId) === userId
+                )
+                  return notify(c.accessDenied, "error");
+                try {
+                  await setRoleMutation.mutateAsync({
+                    userId: Number(memberId),
+                    role: nextRole,
+                  });
+                  await tabAccess.refetch();
+                  notify(c.roleSaved);
+                } catch (error) {
+                  notify(
+                    error instanceof Error ? error.message : c.operationError,
+                    "error"
+                  );
+                }
+              }}
+            />
+          )}
+        </main>
+      </div>
+      {modal && (
+        <EntityModal
+          kind={modal}
+          editing={editing}
+          state={rawState}
+          c={c}
+          showFinance={showFinance}
+          onClose={() => setModal(null)}
+          onSave={async (entity, data, label) => {
+            if (await writeLocal(entity, data, label)) setModal(null);
+          }}
+        />
+      )}
+      {importPreview && (
+        <ImportModal
+          result={importPreview}
+          c={c}
+          language={language}
+          onClose={() => setImportPreview(null)}
+          onConfirm={confirmImport}
+          onReport={() => exportImportReport(importPreview)}
+        />
+      )}
+    </div>
+  );
 }
 
-function Metric({ label, value, hint, icon: Icon, tone }: { label: string; value: string; hint: string; icon: typeof Package; tone: string }) { return <div className="rounded-2xl border border-[#dfe7e8] bg-white p-5"><div className="flex items-start justify-between"><div><div className="text-xs font-semibold text-[#87959a]">{label}</div><div className="mt-2 text-2xl font-bold text-[#092d50]">{value}</div></div><div className={`flex h-10 w-10 items-center justify-center rounded-xl ${tone}`}><Icon size={19} /></div></div><div className="mt-4 text-[11px] text-[#7b8a8f]">{hint}</div></div>; }
+function Gate({
+  title,
+  c,
+  action,
+  archiveUserId,
+}: {
+  title: string;
+  c: OperationsCopy;
+  action?: React.ReactNode;
+  archiveUserId?: string;
+}) {
+  return (
+    <div
+      dir="auto"
+      className="flex min-h-screen items-center justify-center bg-slate-50 p-5"
+    >
+      <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-sm">
+        <div className="mb-5 flex items-center justify-between">
+          <Link href="/" className="text-sm font-bold text-sky-800">
+            {c.backHome}
+          </Link>
+          <LanguageSwitcher />
+        </div>
+        <img src={logo} alt="" className="mx-auto mb-5 h-14 w-14 rounded-2xl" />
+        <h1 className="text-xl font-bold text-slate-900">{title}</h1>
+        {action && <div className="mt-5">{action}</div>}
+        {archiveUserId && (
+          <button
+            onClick={() => downloadLocalArchive(archiveUserId)}
+            className="mt-4 text-sm font-bold text-sky-800"
+          >
+            {c.archive}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
 
-function Overview({ state, totalReceivables, setTab }: { state: LocalState; totalReceivables: number; setTab: (tab: Tab) => void }) { return <>
-  <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><Metric label="الشحنات النشطة" value="36" hint="+8.4% مقارنة بالأسبوع السابق" icon={Package} tone="bg-[#e7eff8] text-[#3b6590]" /><Metric label="في الطريق" value="18" hint="12 شحنة جوية · 6 بحرية" icon={Truck} tone="bg-[#eef0fb] text-[#6568a0]" /><Metric label="الحسابات" value={String(state.accounts.length + 124)} hint="3 حسابات بانتظار المزامنة" icon={Users} tone="bg-[#e8f4ec] text-[#39765a]" /><Metric label="مستحقات اليوم" value={`${formatMRU(totalReceivables)} أوقية`} hint="4 فواتير تحتاج متابعة" icon={CircleDollarSign} tone="bg-[#fff2da] text-[#a46d16]" /></div>
-  <div className="mt-6 grid gap-6 xl:grid-cols-[1.35fr_.65fr]"><section className="rounded-2xl border border-[#dfe7e8] bg-white"><div className="flex items-center justify-between border-b border-[#edf0f1] px-5 py-4"><div><h2 className="font-bold text-[#092d50]">آخر الشحنات</h2><p className="mt-1 text-xs text-[#87959a]">مرئية للفريق حسب الصلاحيات</p></div><button onClick={() => setTab("shipments")} className="text-xs font-bold text-[#3a6680]">عرض الكل</button></div><div className="divide-y divide-[#edf0f1]">{state.shipments.slice(0, 4).map(shipment => <div key={shipment.id} className="flex flex-wrap items-center gap-4 px-5 py-4"><div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#eef3f5] text-[#3d6c84]"><Package size={17} /></div><div className="min-w-[150px] flex-1"><div className="text-sm font-bold text-[#173e55]">{shipment.tracking}</div><div className="mt-1 text-xs text-[#869499]">{shipment.account} · {shipment.route}</div></div><StatusBadge label={shipment.status} /><ScopeBadge scope={shipment.scope} /></div>)}</div></section><section className="rounded-2xl border border-[#dfe7e8] bg-[#092d50] p-5 text-white"><div className="flex items-center justify-between"><div className="text-xs font-bold text-white/55">حدود البيانات</div><ShieldCheck size={18} className="text-[#e1b452]" /></div><h2 className="mt-4 text-xl font-bold">ما تراه هنا<br />لا يغيّر موقعك الأصلي.</h2><p className="mt-3 text-sm leading-6 text-white/60">هذه مساحة مستقلة. البيانات المشتركة تُحفظ في قاعدة النسخة، أما المسودات المحلية فتظل على هذا الجهاز حتى تضغط «مزامنة الآن».</p><div className="mt-7 space-y-3"><div className="flex items-center gap-3 rounded-xl bg-white/8 px-3 py-2.5 text-xs"><span className="h-2 w-2 rounded-full bg-[#6fca9a]" /> بيانات مشتركة بين الموظفين</div><div className="flex items-center gap-3 rounded-xl bg-white/8 px-3 py-2.5 text-xs"><span className="h-2 w-2 rounded-full bg-[#e1b452]" /> مسودة محلية بانتظار المراجعة</div></div></section></div>
-  <div className="mt-6 rounded-2xl border border-[#dfe7e8] bg-white p-5"><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-bold text-[#092d50]">اختصارات التشغيل</h2><p className="mt-1 text-xs text-[#87959a]">ابدأ من الإجراء الذي تحتاجه الآن</p></div><div className="flex flex-wrap gap-2"><button onClick={() => setTab("shipments")} className="inline-flex items-center gap-2 rounded-xl bg-[#f0f4f5] px-3.5 py-2.5 text-xs font-bold text-[#3a647c]"><Plus size={15} /> إضافة شحنة</button><button onClick={() => setTab("accounts")} className="inline-flex items-center gap-2 rounded-xl bg-[#f0f4f5] px-3.5 py-2.5 text-xs font-bold text-[#3a647c]"><FileSpreadsheet size={15} /> مراجعة Excel</button><button onClick={() => setTab("access")} className="inline-flex items-center gap-2 rounded-xl bg-[#f0f4f5] px-3.5 py-2.5 text-xs font-bold text-[#3a647c]"><Settings2 size={15} /> إدارة الأدوار</button></div></div></div>
-</>; }
+function Overview({
+  state,
+  c,
+  role,
+  showFinance,
+  language,
+  onTab,
+}: {
+  state: LocalState;
+  c: OperationsCopy;
+  role: AppRole | null;
+  showFinance: boolean;
+  language: string;
+  onTab: (tab: Tab) => void;
+}) {
+  const inTransit = state.shipments.filter(
+    item => item.status === "في الطريق"
+  ).length;
+  const receivables = state.accounts.reduce(
+    (sum, item) => sum + item.balance,
+    0
+  );
+  return (
+    <>
+      <div
+        className={`grid gap-4 sm:grid-cols-2 ${showFinance ? "xl:grid-cols-4" : "xl:grid-cols-3"}`}
+      >
+        <Metric
+          icon={Package}
+          label={c.activeShipments}
+          value={String(state.shipments.length)}
+        />
+        <Metric icon={Truck} label={c.inTransit} value={String(inTransit)} />
+        <Metric
+          icon={Users}
+          label={c.accounts}
+          value={String(state.accounts.length)}
+        />
+        {showFinance && (
+          <Metric
+            icon={CircleDollarSign}
+            label={c.receivables}
+            value={formatAmount(receivables, language)}
+          />
+        )}
+      </div>
+      <div className="grid gap-5 xl:grid-cols-[1.4fr_.6fr]">
+        <section className="rounded-2xl border border-slate-200 bg-white">
+          <div className="flex items-center justify-between border-b border-slate-100 p-5">
+            <div>
+              <h2 className="font-bold">{c.shipments}</h2>
+              <p className="mt-1 text-xs text-slate-500">{c.counts}</p>
+            </div>
+            <button
+              onClick={() => onTab("shipments")}
+              className="text-sm font-bold text-sky-800"
+            >
+              {c.all}
+            </button>
+          </div>
+          {state.shipments.slice(0, 5).map(item => (
+            <div
+              key={item.id}
+              className="flex flex-wrap items-center gap-3 border-b border-slate-100 px-5 py-4 last:border-0"
+            >
+              <div className="rounded-xl bg-slate-100 p-2 text-sky-800">
+                <Package size={16} />
+              </div>
+              <div className="min-w-[160px] flex-1">
+                <div className="font-bold">{item.tracking}</div>
+                <div className="mt-1 text-xs text-slate-500">
+                  {item.account} · {item.route}
+                </div>
+              </div>
+              <StatusBadge label={statusLabel(item.status, c)} />
+              <ScopeBadge scope={item.scope} labels={scopeLabels(c)} />
+            </div>
+          ))}
+          {state.shipments.length === 0 && (
+            <div className="p-8 text-center text-sm text-slate-500">
+              {c.noData}
+            </div>
+          )}
+        </section>
+        <section className="rounded-2xl bg-sky-950 p-6 text-white">
+          <ShieldCheck size={22} className="text-amber-300" />
+          <h2 className="mt-4 text-xl font-bold">{roleText(role, c)}</h2>
+          <p className="mt-3 text-sm leading-6 text-white/70">{c.reviewHint}</p>
+          <div className="mt-6 text-sm text-white/70">{c.localData}</div>
+        </section>
+      </div>
+    </>
+  );
+}
+function Metric({
+  icon: Icon,
+  label,
+  value,
+}: {
+  icon: typeof Package;
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-5">
+      <Icon size={19} className="text-sky-800" />
+      <div className="mt-4 text-xs text-slate-500">{label}</div>
+      <div className="mt-1 text-2xl font-bold text-slate-900">{value}</div>
+    </div>
+  );
+}
 
-function Toolbar({ search, setSearch, placeholder }: { search: string; setSearch: (value: string) => void; placeholder: string }) { return <div className="flex flex-wrap gap-2"><div className="relative min-w-[220px] flex-1"><Search size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-[#97a5aa]" /><input value={search} onChange={event => setSearch(event.target.value)} placeholder={placeholder} className="h-10 w-full rounded-xl border border-[#dfe7e8] bg-[#fbfcfb] pr-9 text-xs outline-none focus:border-[#2e6280]" /></div><button className="inline-flex h-10 items-center gap-2 rounded-xl border border-[#dfe7e8] bg-white px-3 text-xs font-bold text-[#6e7d83]"><Filter size={15} /> تصفية</button></div>; }
+function Shipments({
+  items,
+  state,
+  c,
+  search,
+  setSearch,
+  onEdit,
+  canEdit,
+  showFinance,
+}: {
+  items: Shipment[];
+  state: LocalState;
+  c: OperationsCopy;
+  search: string;
+  setSearch: (value: string) => void;
+  onEdit: (item: Shipment) => void;
+  canEdit: boolean;
+  showFinance: boolean;
+}) {
+  return (
+    <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 p-5">
+        <div>
+          <h2 className="font-bold">{c.shipments}</h2>
+          <p className="mt-1 text-xs text-slate-500">
+            {state.shipments.length}
+          </p>
+        </div>
+        <SearchBox value={search} onChange={setSearch} placeholder={c.search} />
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[780px] text-start text-sm">
+          <thead className="bg-slate-50 text-xs text-slate-500">
+            <tr>
+              {[
+                c.tracking,
+                c.account,
+                c.route,
+                c.service,
+                c.status,
+                c.eta,
+                "",
+              ].map((head, i) => (
+                <th key={i} className="px-5 py-3 text-start font-semibold">
+                  {head}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {items.map(item => (
+              <tr key={item.id} className="border-t border-slate-100">
+                <td className="px-5 py-4 font-bold">{item.tracking}</td>
+                <td className="px-5 py-4">{item.account}</td>
+                <td className="px-5 py-4">{item.route}</td>
+                <td className="px-5 py-4">{serviceLabel(item.service, c)}</td>
+                <td className="px-5 py-4">
+                  <StatusBadge label={statusLabel(item.status, c)} />
+                </td>
+                <td className="px-5 py-4">{item.eta}</td>
+                <td className="px-5 py-4">
+                  <button
+                    disabled={!canEdit}
+                    onClick={() => onEdit(item)}
+                    className="font-bold text-sky-800 disabled:opacity-30"
+                  >
+                    {c.edit}
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {items.length === 0 && (
+        <div className="p-10 text-center text-sm text-slate-500">
+          {c.noResults}
+        </div>
+      )}
+    </section>
+  );
+}
 
-function Shipments({ state, items, search, setSearch }: { state: LocalState; items: LocalState["shipments"]; search: string; setSearch: (value: string) => void }) { return <section className="rounded-2xl border border-[#dfe7e8] bg-white"><div className="flex flex-col gap-4 border-b border-[#edf0f1] p-5 md:flex-row md:items-center md:justify-between"><div><h2 className="font-bold text-[#092d50]">سجل الشحنات</h2><p className="mt-1 text-xs text-[#87959a]">{state.shipments.length} شحنات في هذه النسخة</p></div><Toolbar search={search} setSearch={setSearch} placeholder="ابحث برقم الشحنة أو الحساب" /></div><div className="overflow-x-auto"><table className="w-full min-w-[760px] text-right text-sm"><thead className="bg-[#fafbfb] text-xs text-[#89969b]"><tr><th className="px-5 py-3 font-semibold">رقم الشحنة</th><th className="px-5 py-3 font-semibold">الحساب</th><th className="px-5 py-3 font-semibold">المسار</th><th className="px-5 py-3 font-semibold">الخدمة</th><th className="px-5 py-3 font-semibold">الحالة</th><th className="px-5 py-3 font-semibold">المصدر</th><th className="px-5 py-3" /></tr></thead><tbody className="divide-y divide-[#edf0f1]">{items.map(shipment => <tr key={shipment.id} className="hover:bg-[#fbfcfc]"><td className="px-5 py-4 font-bold text-[#173e55]">{shipment.tracking}<div className="mt-1 text-[11px] font-normal text-[#9aa6aa]">الوصول: {shipment.eta}</div></td><td className="px-5 py-4 text-xs text-[#536a74]">{shipment.account}</td><td className="px-5 py-4 text-xs text-[#536a74]">{shipment.route}</td><td className="px-5 py-4 text-xs text-[#536a74]">{shipment.service}</td><td className="px-5 py-4"><StatusBadge label={shipment.status} /></td><td className="px-5 py-4"><ScopeBadge scope={shipment.scope} /></td><td className="px-5 py-4"><button className="text-[#89969b]"><MoreHorizontal size={17} /></button></td></tr>)}</tbody></table></div></section>; }
+function Accounts({
+  items,
+  all,
+  state,
+  c,
+  search,
+  setSearch,
+  onEdit,
+  canEdit,
+  onImport,
+  onExport,
+  onTemplate,
+  showFinance,
+  language,
+}: {
+  items: Account[];
+  all: Account[];
+  state: LocalState;
+  c: OperationsCopy;
+  search: string;
+  setSearch: (value: string) => void;
+  onEdit: (item: Account) => void;
+  canEdit: boolean;
+  onImport: () => void;
+  onExport: () => void;
+  onTemplate: () => void;
+  showFinance: boolean;
+  language: string;
+}) {
+  return (
+    <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+      <div className="grid gap-4 border-b border-slate-100 p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="font-bold">{c.accounts}</h2>
+            <p className="mt-1 text-xs text-slate-500">
+              {all.length} · {c.reviewHint}
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              disabled={!canEdit}
+              onClick={onImport}
+              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold disabled:opacity-40"
+            >
+              <Upload size={15} />
+              {c.import}
+            </button>
+            <button
+              onClick={onTemplate}
+              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold"
+            >
+              <FileSpreadsheet size={15} />
+              {c.template}
+            </button>
+            <button
+              onClick={onExport}
+              className="inline-flex items-center gap-2 rounded-xl bg-sky-950 px-3 py-2 text-sm font-bold text-white"
+            >
+              <ArrowDownToLine size={15} />
+              {c.export}
+            </button>
+          </div>
+        </div>
+        <SearchBox value={search} onChange={setSearch} placeholder={c.search} />
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[760px] text-start text-sm">
+          <thead className="bg-slate-50 text-xs text-slate-500">
+            <tr>
+              {[
+                c.account,
+                c.phone,
+                c.city,
+                c.shipments,
+                ...(showFinance ? [c.amount] : []),
+                "",
+              ].map((head, i) => (
+                <th key={i} className="px-5 py-3 text-start font-semibold">
+                  {head}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {items.map(item => (
+              <tr key={item.id} className="border-t border-slate-100">
+                <td className="px-5 py-4">
+                  <div className="font-bold">{item.name}</div>
+                  <div className="mt-1 text-xs text-slate-500">{item.id}</div>
+                </td>
+                <td className="px-5 py-4">{item.phone}</td>
+                <td className="px-5 py-4">{item.city}</td>
+                <td className="px-5 py-4">{item.shipments}</td>
+                <td className="px-5 py-4">
+                  {formatAmount(item.balance, language)}
+                </td>
+                <td className="px-5 py-4">
+                  <div className="flex items-center gap-2">
+                    <ScopeBadge scope={item.scope} labels={scopeLabels(c)} />
+                    <button
+                      disabled={!canEdit}
+                      onClick={() => onEdit(item)}
+                      className="font-bold text-sky-800 disabled:opacity-30"
+                    >
+                      {c.edit}
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {items.length === 0 && (
+        <div className="p-10 text-center text-sm text-slate-500">
+          {c.noResults}
+        </div>
+      )}
+      <div className="border-t border-slate-100 px-5 py-3 text-xs text-slate-500">
+        {items.length} / {state.accounts.length}
+      </div>
+    </section>
+  );
+}
 
-function Accounts({ accounts, allAccounts, search, setSearch, onImport, onExport, importReport, canEdit }: { accounts: Account[]; allAccounts: Account[]; search: string; setSearch: (value: string) => void; onImport: () => void; onExport: () => void; importReport: { accepted: number; rejected: number } | null; canEdit: boolean }) { return <section className="rounded-2xl border border-[#dfe7e8] bg-white"><div className="flex flex-col gap-4 border-b border-[#edf0f1] p-5"><div className="flex flex-col justify-between gap-3 md:flex-row md:items-center"><div><h2 className="font-bold text-[#092d50]">الحسابات</h2><p className="mt-1 text-xs text-[#87959a]">استيراد وتصدير صريح — لا اتصال تلقائي بالموقع الأصلي</p></div><div className="flex flex-wrap gap-2"><button disabled={!canEdit} onClick={onImport} className="inline-flex items-center gap-2 rounded-xl border border-[#dfe7e8] bg-white px-3 py-2.5 text-xs font-bold text-[#3a647c] disabled:cursor-not-allowed disabled:opacity-45"><Upload size={15} /> استيراد Excel</button><button onClick={onExport} className="inline-flex items-center gap-2 rounded-xl bg-[#092d50] px-3 py-2.5 text-xs font-bold text-white"><ArrowDownToLine size={15} /> تصدير XLSX</button></div></div><Toolbar search={search} setSearch={setSearch} placeholder="ابحث باسم الحساب أو الهاتف" />{importReport && <div className="flex flex-wrap items-center gap-3 rounded-xl bg-[#fff8e8] px-3 py-2.5 text-xs text-[#96661b]"><FileSpreadsheet size={15} /><span>آخر استيراد: {importReport.accepted} مقبولة و{importReport.rejected} مرفوضة. تم إبقاؤها محلية حتى المراجعة والمزامنة.</span></div>}</div><div className="overflow-x-auto"><table className="w-full min-w-[720px] text-right text-sm"><thead className="bg-[#fafbfb] text-xs text-[#89969b]"><tr><th className="px-5 py-3 font-semibold">الحساب</th><th className="px-5 py-3 font-semibold">الهاتف</th><th className="px-5 py-3 font-semibold">المدينة</th><th className="px-5 py-3 font-semibold">الشحنات</th><th className="px-5 py-3 font-semibold">الرصيد</th><th className="px-5 py-3 font-semibold">المصدر</th></tr></thead><tbody className="divide-y divide-[#edf0f1]">{accounts.map(account => <tr key={`${account.id}-${account.name}`}><td className="px-5 py-4"><div className="font-bold text-[#173e55]">{account.name}</div><div className="mt-1 text-[11px] text-[#9aa6aa]">{account.id} · {account.updatedAt}</div></td><td className="px-5 py-4 text-xs text-[#536a74]">{account.phone}</td><td className="px-5 py-4 text-xs text-[#536a74]">{account.city}</td><td className="px-5 py-4 font-semibold text-[#3a647c]">{account.shipments}</td><td className="px-5 py-4 font-semibold text-[#173e55]">{formatMRU(account.balance)} أوقية</td><td className="px-5 py-4"><ScopeBadge scope={account.scope} /></td></tr>)}</tbody></table></div>{accounts.length === 0 && <div className="p-10 text-center text-sm text-[#87959a]">لا توجد حسابات مطابقة للبحث.</div>}<div className="border-t border-[#edf0f1] px-5 py-3 text-[11px] text-[#99a5a9]">عرض {accounts.length} من {allAccounts.length} حسابات في مساحة النسخة الجديدة</div></section>; }
+function Invoices({
+  items,
+  state,
+  c,
+  search,
+  setSearch,
+  onNew,
+  onEdit,
+  canEdit,
+  language,
+}: {
+  items: Invoice[];
+  state: LocalState;
+  c: OperationsCopy;
+  search: string;
+  setSearch: (value: string) => void;
+  onNew: () => void;
+  onEdit: (item: Invoice) => void;
+  canEdit: boolean;
+  language: string;
+}) {
+  const total = state.invoices.reduce((sum, item) => sum + item.amount, 0);
+  return (
+    <section className="rounded-2xl border border-slate-200 bg-white">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 p-5">
+        <div>
+          <h2 className="font-bold">{c.invoices}</h2>
+          <p className="mt-1 text-xs text-slate-500">{c.financeDenied}</p>
+        </div>
+        <button
+          disabled={!canEdit}
+          onClick={onNew}
+          className="inline-flex items-center gap-2 rounded-xl bg-sky-950 px-3 py-2 text-sm font-bold text-white disabled:opacity-40"
+        >
+          <Plus size={15} />
+          {c.newInvoice}
+        </button>
+      </div>
+      <div className="grid gap-3 p-5 sm:grid-cols-3">
+        <Metric
+          icon={CircleDollarSign}
+          label={c.total}
+          value={formatAmount(total, language)}
+        />
+        <Metric
+          icon={CircleDollarSign}
+          label={c.awaitingPayment}
+          value={String(
+            state.invoices.filter(item => item.status === "بانتظار الدفع")
+              .length
+          )}
+        />
+        <Metric
+          icon={Check}
+          label={c.paid}
+          value={String(
+            state.invoices.filter(item => item.status === "مدفوعة").length
+          )}
+        />
+      </div>
+      <div className="px-5 pb-5">
+        <SearchBox value={search} onChange={setSearch} placeholder={c.search} />
+      </div>
+      <div className="divide-y divide-slate-100">
+        {items.map(item => (
+          <div
+            key={item.id}
+            className="flex flex-wrap items-center gap-3 px-5 py-4"
+          >
+            <CircleDollarSign size={18} className="text-sky-800" />
+            <div className="min-w-[150px] flex-1">
+              <div className="font-bold">{item.id}</div>
+              <div className="text-xs text-slate-500">
+                {item.account} · {item.issuedAt}
+              </div>
+            </div>
+            <strong>{formatAmount(item.amount, "ar-MR")}</strong>
+            <StatusBadge label={statusLabel(item.status, c)} />
+            <button
+              disabled={!canEdit}
+              onClick={() => onEdit(item)}
+              className="font-bold text-sky-800 disabled:opacity-30"
+            >
+              {c.edit}
+            </button>
+          </div>
+        ))}
+        {items.length === 0 && (
+          <div className="p-10 text-center text-sm text-slate-500">
+            {c.noResults}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
 
-function Invoices({ state, canFinance }: { state: LocalState; canFinance: boolean }) { return <section className="rounded-2xl border border-[#dfe7e8] bg-white"><div className="flex items-center justify-between border-b border-[#edf0f1] p-5"><div><h2 className="font-bold text-[#092d50]">الفوترة</h2><p className="mt-1 text-xs text-[#87959a]">الوصول المالي مقيد حسب الدور</p></div><button disabled={!canFinance} className="inline-flex items-center gap-2 rounded-xl bg-[#092d50] px-3 py-2.5 text-xs font-bold text-white disabled:opacity-40"><Plus size={15} /> فاتورة جديدة</button></div><div className="grid gap-4 p-5 sm:grid-cols-3"><div className="rounded-2xl bg-[#f5f8f7] p-4"><div className="text-xs text-[#829096]">إجمالي هذا الشهر</div><div className="mt-2 text-xl font-bold text-[#092d50]">{formatMRU(state.invoices.reduce((sum, invoice) => sum + invoice.amount, 0))}</div></div><div className="rounded-2xl bg-[#fff8e8] p-4"><div className="text-xs text-[#a17a32]">بانتظار الدفع</div><div className="mt-2 text-xl font-bold text-[#8a6118]">{state.invoices.filter(invoice => invoice.status === "بانتظار الدفع").length}</div></div><div className="rounded-2xl bg-[#eef8f2] p-4"><div className="text-xs text-[#5b8870]">مدفوعة</div><div className="mt-2 text-xl font-bold text-[#2d6e50]">{state.invoices.filter(invoice => invoice.status === "مدفوعة").length}</div></div></div><div className="divide-y divide-[#edf0f1]">{state.invoices.map(invoice => <div key={invoice.id} className="flex flex-wrap items-center gap-4 px-5 py-4"><div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#eef3f5] text-[#3d6c84]"><CircleDollarSign size={17} /></div><div className="min-w-[150px] flex-1"><div className="text-sm font-bold text-[#173e55]">{invoice.id}</div><div className="mt-1 text-xs text-[#89969b]">{invoice.account} · {invoice.issuedAt}</div></div><div className="text-sm font-bold text-[#173e55]">{formatMRU(invoice.amount)} أوقية</div><StatusBadge label={invoice.status === "مدفوعة" ? "جاهزة للتسليم" : "بانتظار الدفع"} /></div>)}</div></section>; }
+function Access({
+  c,
+  members,
+  currentUserId,
+  pending,
+  onSetRole,
+}: {
+  c: OperationsCopy;
+  members: {
+    userId: number | string;
+    name: string;
+    email: string;
+    role: AppRole | null;
+  }[];
+  currentUserId: string | null;
+  pending: boolean;
+  onSetRole: (id: number | string, role: AppRole) => Promise<void>;
+}) {
+  const roles: AppRole[] = ["admin", "staff", "accountant", "viewer"];
+  return (
+    <section className="rounded-2xl border border-slate-200 bg-white">
+      <div className="border-b border-slate-100 p-5">
+        <h2 className="font-bold">{c.members}</h2>
+        <p className="mt-1 text-xs text-slate-500">{c.readOnly}</p>
+      </div>
+      <div className="divide-y divide-slate-100">
+        {members.map(member => (
+          <div
+            key={member.userId}
+            className="flex flex-wrap items-center gap-3 p-5"
+          >
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 font-bold text-sky-900">
+              {member.name?.slice(0, 1) || "?"}
+            </div>
+            <div className="min-w-[180px] flex-1">
+              <div className="font-bold">{member.name}</div>
+              <div className="text-xs text-slate-500">{member.email}</div>
+            </div>
+            <select
+              value={member.role ?? ""}
+              disabled={String(member.userId) === currentUserId || pending}
+              onChange={event => {
+                if (isAppRole(event.target.value))
+                  void onSetRole(member.userId, event.target.value);
+              }}
+              className={inputClass}
+            >
+              <option value="">{c.noRole}</option>
+              {roles.map(role => (
+                <option key={role} value={role}>
+                  {roleText(role, c)}
+                </option>
+              ))}
+            </select>
+          </div>
+        ))}
+        {members.length === 0 && (
+          <div className="p-10 text-center text-sm text-slate-500">
+            {c.noMembers}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
 
-function Access({ role, setRole }: { role: Role; setRole: (role: Role) => void }) { const roles: { name: Role; desc: string; access: string }[] = [{ name: "مدير النظام", desc: "إدارة كل البيانات والأدوار والمزامنة", access: "كامل" }, { name: "الموظف", desc: "الشحنات والحسابات التشغيلية", access: "تشغيل" }, { name: "المحاسب", desc: "الفواتير والأرصدة والتقارير", access: "مالي" }, { name: "المشاهد", desc: "عرض دون تعديل أو استيراد", access: "قراءة" }]; return <section className="grid gap-6 xl:grid-cols-[1fr_.75fr]"><div className="rounded-2xl border border-[#dfe7e8] bg-white p-5"><div className="flex items-center justify-between"><div><h2 className="font-bold text-[#092d50]">الأدوار والصلاحيات</h2><p className="mt-1 text-xs text-[#87959a]">نموذج RBAC مستقل عن حسابات الموقع الأصلي</p></div><ShieldCheck size={22} className="text-[#2e7280]" /></div><div className="mt-5 space-y-3">{roles.map(item => <button key={item.name} onClick={() => setRole(item.name)} className={`flex w-full items-center gap-4 rounded-2xl border p-4 text-right transition ${role === item.name ? "border-[#9bbcc7] bg-[#f1f7f8]" : "border-[#e5eaeb] bg-white hover:bg-[#fbfcfc]"}`}><div className={`flex h-10 w-10 items-center justify-center rounded-xl text-sm font-bold ${role === item.name ? "bg-[#092d50] text-white" : "bg-[#edf2f4] text-[#64808c]"}`}>{item.name[0]}</div><div className="flex-1"><div className="font-bold text-[#173e55]">{item.name}</div><div className="mt-1 text-xs text-[#89969b]">{item.desc}</div></div><span className="rounded-full bg-[#f3f5f5] px-2.5 py-1 text-[11px] font-bold text-[#718188]">{item.access}</span></button>)}</div></div><div className="rounded-2xl bg-[#092d50] p-6 text-white"><div className="flex items-center gap-2 text-xs text-white/55"><ShieldCheck size={16} className="text-[#e1b452]" /> سياسة الوصول الحالية</div><h2 className="mt-5 text-xl font-bold">أنت تختبر دور<br />«{role}» الآن.</h2><p className="mt-4 text-sm leading-7 text-white/60">التغيير هنا يوضح تجربة الدور داخل النسخة. عند ربط الحسابات الفعلية، تُحفظ الأدوار في قاعدة بيانات النسخة ولا تمتد إلى الموقع الأصلي.</p><div className="mt-7 border-t border-white/10 pt-5 text-xs text-white/55"><div className="flex items-center justify-between py-2"><span>البيانات المشتركة</span><span className="font-bold text-[#77c99d]">مسموحة حسب الدور</span></div><div className="flex items-center justify-between py-2"><span>المسودات المحلية</span><span className="font-bold text-[#e1b452]">على هذا الجهاز</span></div></div></div></section>; }
+function EntityModal({
+  kind,
+  editing,
+  state,
+  c,
+  showFinance,
+  onClose,
+  onSave,
+}: {
+  kind: "account" | "shipment" | "invoice";
+  editing: Account | Shipment | Invoice | null;
+  state: LocalState;
+  c: OperationsCopy;
+  showFinance: boolean;
+  onClose: () => void;
+  onSave: (entity: Entity, data: EntityRecord, label: string) => void;
+}) {
+  const generatedId = `${kind}-${crypto.randomUUID().slice(0, 8)}`;
+  const initial =
+    editing ??
+    (kind === "account"
+      ? {
+          id: generatedId,
+          name: "",
+          phone: "",
+          city: "",
+          shipments: 0,
+          balance: 0,
+          updatedAt: new Date().toISOString(),
+          scope: "pending" as const,
+        }
+      : kind === "shipment"
+        ? {
+            id: generatedId,
+            tracking: "",
+            account: "",
+            route: "",
+            service: "سريع" as const,
+            status: "بانتظار الدفع" as const,
+            eta: "",
+            amount: 0,
+            scope: "pending" as const,
+          }
+        : {
+            id: generatedId,
+            account: "",
+            amount: 0,
+            status: "بانتظار الدفع" as const,
+            issuedAt: new Date().toISOString().slice(0, 10),
+            scope: "pending" as const,
+          });
+  const [form, setForm] = useState<EntityRecord>(initial as EntityRecord);
+  const [error, setError] = useState("");
+  const set = (key: string, value: string | number) => {
+    setError("");
+    setForm(previous => ({ ...previous, [key]: value }) as EntityRecord);
+  };
+  const submit = (event: React.FormEvent) => {
+    event.preventDefault();
+    const current = form as Record<string, unknown>;
+    const required =
+      kind === "account"
+        ? ["name", "phone"]
+        : kind === "shipment"
+          ? ["tracking", "account", "route"]
+          : ["account"];
+    if (required.some(key => !String(current[key] ?? "").trim())) {
+      setError(c.required);
+      return;
+    }
+    if (
+      kind === "account" &&
+      (!/^\+?[\d\s().-]{6,30}$/.test(String(current.phone)) ||
+        String(current.phone).replace(/\D/g, "").length < 6)
+    ) {
+      setError(c.invalidPhone);
+      return;
+    }
+    const id = String(current.id ?? "").trim() || generatedId;
+    if (!/^[\p{L}\p{N}_.-]{1,80}$/u.test(id)) {
+      setError(c.required);
+      return;
+    }
+    const list =
+      kind === "account"
+        ? state.accounts
+        : kind === "shipment"
+          ? state.shipments
+          : state.invoices;
+    if (!editing && list.some(item => item.id === id)) {
+      setError(c.duplicate);
+      return;
+    }
+    const amount = Number(current.amount ?? 0);
+    const balance = Number(current.balance ?? 0);
+    if (
+      (kind === "account" &&
+        showFinance &&
+        (!Number.isFinite(balance) || balance < 0 || balance > MAX_MONEY)) ||
+      (kind !== "account" &&
+        showFinance &&
+        (!Number.isFinite(amount) || amount < 0 || amount > MAX_MONEY))
+    ) {
+      setError(c.invalidAmount);
+      return;
+    }
+    const normalized = {
+      ...current,
+      id,
+      ...(kind === "account"
+        ? {
+            city: String(current.city ?? "").trim() || "غير محدد",
+            balance: showFinance ? balance : 0,
+          }
+        : {}),
+      ...(kind === "shipment"
+        ? {
+            eta: String(current.eta ?? "").trim() || "غير محدد",
+            amount: showFinance ? amount : 0,
+          }
+        : {}),
+      ...(kind === "invoice" ? { amount } : {}),
+    } as EntityRecord;
+    onSave(
+      kind,
+      { ...normalized, scope: "pending" } as EntityRecord,
+      `${editing ? c.edit : c.create} ${kind === "account" ? c.accountEntity : kind === "shipment" ? c.shipment : c.invoice} ${id}`
+    );
+  };
+  const moneyProps = { min: 0, step: "0.01", max: MAX_MONEY };
+  const value = (key: string) =>
+    String((form as unknown as Record<string, unknown>)[key] ?? "");
+  return (
+    <Modal
+      title={
+        editing
+          ? c.edit
+          : kind === "account"
+            ? c.newAccount
+            : kind === "shipment"
+              ? c.newShipment
+              : c.newInvoice
+      }
+      onClose={onClose}
+    >
+      <form onSubmit={submit} className="grid gap-4 sm:grid-cols-2">
+        <Field label={c.id}>
+          <input
+            className={inputClass}
+            maxLength={80}
+            readOnly={Boolean(editing)}
+            pattern={"^[\\p{L}\\p{N}_.\\-]{1,80}$"}
+            value={value("id")}
+            onChange={e => set("id", e.target.value)}
+          />
+        </Field>
+        <Field
+          label={
+            kind === "account"
+              ? c.name
+              : kind === "shipment"
+                ? c.tracking
+                : c.account
+          }
+          required
+        >
+          <input
+            required
+            readOnly={kind === "shipment" && Boolean(editing)}
+            maxLength={kind === "account" ? 200 : kind === "shipment" ? 128 : 240}
+            className={inputClass}
+            value={value(
+              kind === "account"
+                ? "name"
+                : kind === "shipment"
+                  ? "tracking"
+                  : "account"
+            )}
+            onChange={e =>
+              set(
+                kind === "account"
+                  ? "name"
+                  : kind === "shipment"
+                    ? "tracking"
+                    : "account",
+                e.target.value
+              )
+            }
+          />
+        </Field>
+        {kind === "account" && (
+          <>
+            <Field label={c.phone} required>
+              <input
+                required
+                pattern="^\+?[\d\s().-]{6,30}$"
+                maxLength={30}
+                className={inputClass}
+                value={value("phone")}
+                onChange={e => set("phone", e.target.value)}
+              />
+            </Field>
+            <Field label={c.city}>
+              <input
+                maxLength={160}
+                className={inputClass}
+                value={value("city")}
+                onChange={e => set("city", e.target.value)}
+              />
+            </Field>
+            {showFinance && (
+              <Field label={c.amount}>
+                <input
+                  type="number"
+                  {...moneyProps}
+                  className={inputClass}
+                  value={value("balance")}
+                  onChange={e => set("balance", Number(e.target.value))}
+                />
+              </Field>
+            )}
+          </>
+        )}
+        {kind === "shipment" && (
+          <>
+            <Field label={c.account} required>
+              <input
+                required
+                maxLength={160}
+                className={inputClass}
+                value={value("account")}
+                onChange={e => set("account", e.target.value)}
+              />
+            </Field>
+            <Field label={c.route} required>
+              <input
+                required
+                maxLength={200}
+                className={inputClass}
+                value={value("route")}
+                onChange={e => set("route", e.target.value)}
+              />
+            </Field>
+            <Field label={c.service}>
+              <select
+                className={inputClass}
+                value={value("service")}
+                onChange={e => set("service", e.target.value)}
+              >
+                <option value="سريع">{c.express}</option>
+                <option value="جوي">{c.air}</option>
+                <option value="بحري">{c.sea}</option>
+              </select>
+            </Field>
+            <Field label={c.status}>
+              <select
+                className={inputClass}
+                value={value("status")}
+                onChange={e => set("status", e.target.value)}
+              >
+                <option value="في الطريق">{c.inTransit}</option>
+                <option value="وصلت للمكتب">{c.arrived}</option>
+                <option value="جاهزة للتسليم">{c.ready}</option>
+                <option value="بانتظار الدفع">{c.awaitingPayment}</option>
+              </select>
+            </Field>
+            <Field label={c.eta}>
+              <input
+                maxLength={80}
+                className={inputClass}
+                value={value("eta")}
+                onChange={e => set("eta", e.target.value)}
+              />
+            </Field>
+            {showFinance && (
+              <Field label={c.amount}>
+                <input
+                  type="number"
+                  {...moneyProps}
+                  className={inputClass}
+                  value={value("amount")}
+                  onChange={e => set("amount", Number(e.target.value))}
+                />
+              </Field>
+            )}
+          </>
+        )}
+        {kind === "invoice" && (
+          <>
+            <Field label={c.amount}>
+              <input
+                type="number"
+                {...moneyProps}
+                className={inputClass}
+                value={value("amount")}
+                onChange={e => set("amount", Number(e.target.value))}
+              />
+            </Field>
+            <Field label={c.status}>
+              <select
+                className={inputClass}
+                value={value("status")}
+                onChange={e => set("status", e.target.value)}
+              >
+                <option value="بانتظار الدفع">{c.awaitingPayment}</option>
+                <option value="مدفوعة">{c.paid}</option>
+              </select>
+            </Field>
+            <Field label={c.issuedAt}>
+              <input
+                type="date"
+                className={inputClass}
+                value={value("issuedAt")}
+                onChange={e => set("issuedAt", e.target.value)}
+              />
+            </Field>
+          </>
+        )}
+        {error && (
+          <p
+            role="alert"
+            className="text-sm font-semibold text-red-700 sm:col-span-2"
+          >
+            {error}
+          </p>
+        )}
+        <div className="flex justify-end gap-2 sm:col-span-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-bold"
+          >
+            {c.cancel}
+          </button>
+          <button
+            type="submit"
+            className="rounded-xl bg-sky-950 px-4 py-2 text-sm font-bold text-white"
+          >
+            {c.save}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function ConflictPanel({
+  conflicts,
+  queue,
+  c,
+  onKeep,
+  onServer,
+}: {
+  conflicts: SyncResult["conflicts"];
+  queue: PendingChange[];
+  c: OperationsCopy;
+  onKeep: (item: SyncResult["conflicts"][number]) => void;
+  onServer: (item: SyncResult["conflicts"][number]) => void;
+}) {
+  return (
+    <section className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+      <h2 className="font-bold text-amber-950">{c.conflicts}</h2>
+      {conflicts.map(item => (
+        <div
+          key={item.changeId}
+          className="mt-3 flex flex-wrap items-center gap-3 rounded-xl bg-white p-3 text-sm"
+        >
+          <div className="min-w-[180px] flex-1">
+            {queue.find(change => change.id === item.changeId)?.label}
+            <div className="text-xs text-slate-500">{item.reason}</div>
+          </div>
+          <button
+            onClick={() => onKeep(item)}
+            className="rounded-lg border border-amber-300 px-3 py-2 text-xs font-bold"
+          >
+            {c.keepLocal}
+          </button>
+          <button
+            disabled={!item.current}
+            onClick={() => onServer(item)}
+            className="rounded-lg bg-amber-700 px-3 py-2 text-xs font-bold text-white disabled:opacity-40"
+          >
+            {c.useServer}
+          </button>
+        </div>
+      ))}
+    </section>
+  );
+}
+function ImportModal({
+  result,
+  c,
+  language,
+  onClose,
+  onConfirm,
+  onReport,
+}: {
+  result: ImportResult;
+  c: OperationsCopy;
+  language: string;
+  onClose: () => void;
+  onConfirm: () => void;
+  onReport: () => void;
+}) {
+  const preview = result.rows.slice(0, 50);
+  return (
+    <Modal title={c.importPreview} onClose={onClose}>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="rounded-xl bg-emerald-50 p-4">
+          <div className="text-xs text-emerald-800">{c.accepted}</div>
+          <div className="mt-1 text-2xl font-bold text-emerald-900">
+            {result.rows.length}
+          </div>
+        </div>
+        <div className="rounded-xl bg-red-50 p-4">
+          <div className="text-xs text-red-800">{c.rejected}</div>
+          <div className="mt-1 text-2xl font-bold text-red-900">
+            {result.rejected.length}
+          </div>
+        </div>
+      </div>
+      <div className="mt-4 max-h-64 overflow-auto rounded-xl border border-slate-200">
+        <table className="w-full min-w-[620px] text-start text-xs">
+          <thead className="bg-slate-50">
+            <tr>
+              {[c.account, c.name, c.phone, c.city, c.amount].map(head => (
+                <th key={head} className="px-3 py-2 text-start">
+                  {head}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {preview.map(row => (
+              <tr key={row.id} className="border-t border-slate-100">
+                <td className="px-3 py-2">{row.id}</td>
+                <td className="px-3 py-2">{row.name}</td>
+                <td className="px-3 py-2">{row.phone}</td>
+                <td className="px-3 py-2">{row.city}</td>
+                <td className="px-3 py-2">
+                  {formatAmount(row.balance, language)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {result.rows.length > 50 && (
+        <p className="mt-2 text-xs text-slate-500">
+          {result.rows.length - 50} {c.moreRows}
+        </p>
+      )}
+      {result.rejected.length > 0 && (
+        <div className="mt-4 max-h-40 overflow-y-auto rounded-xl bg-slate-50 p-3 text-xs">
+          {result.rejected.map(item => (
+            <div key={item.row} className="border-b border-slate-200 py-2">
+              {item.row}: {item.reason}
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="mt-5 flex flex-wrap justify-end gap-2">
+        <button
+          onClick={onReport}
+          className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-bold"
+        >
+          {c.export} {c.errors}
+        </button>
+        <button
+          onClick={onClose}
+          className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-bold"
+        >
+          {c.cancel}
+        </button>
+        <button
+          disabled={!result.rows.length}
+          onClick={onConfirm}
+          className="rounded-xl bg-sky-950 px-4 py-2 text-sm font-bold text-white disabled:opacity-40"
+        >
+          {c.confirmImport}
+        </button>
+      </div>
+    </Modal>
+  );
+}

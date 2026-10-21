@@ -80,10 +80,10 @@ createRoot(document.getElementById("root")!).render(
   </trpc.Provider>
 );
 
-if ("serviceWorker" in navigator) {
+if (import.meta.env.PROD && "serviceWorker" in navigator) {
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("/sw.js").catch(() => {
-      // Offline support remains available through localStorage if SW registration is blocked.
+    navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" }).catch(error => {
+      console.warn("Offline shell registration failed", error);
     });
   });
 }

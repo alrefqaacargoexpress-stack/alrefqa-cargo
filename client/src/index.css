@@ -50,12 +50,14 @@
   --radius-xl: calc(var(--radius) + 4px);
 }
 
-* { box-sizing: border-box; }
-html { scroll-behavior: smooth; }
-body { margin: 0; background: var(--background); color: var(--foreground); font-family: "IBM Plex Sans Arabic", system-ui, sans-serif; }
-button, input { font: inherit; }
-button:not(:disabled), a, [role="button"] { cursor: pointer; }
-a { color: inherit; text-decoration: none; }
+@layer base {
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; background: var(--background); color: var(--foreground); font-family: "IBM Plex Sans Arabic", "Inter", system-ui, sans-serif; }
+  button, input { font: inherit; }
+  button:not(:disabled), a, [role="button"] { cursor: pointer; }
+  a { color: inherit; text-decoration: none; }
+}
 ::selection { background: #d9a441; color: #092d50; }
 
 .route-line { transform: rotate(-18deg); opacity: .72; }

@@ -1,117 +1,848 @@
-import { useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "wouter";
 import {
   ArrowLeft,
-  ArrowUpLeft,
+  ArrowRight,
   Check,
+  ChevronDown,
   ChevronLeft,
-  Clock3,
-  Copy,
+  ChevronRight,
+  Clipboard,
   Globe2,
-  MapPin,
+  Mail,
   Menu,
   Package,
   Phone,
   Plane,
-  Search,
   Ship,
   ShieldCheck,
   Truck,
   X,
   Zap,
 } from "lucide-react";
+import LanguageSwitcher from "@/components/LanguageSwitcher";
+import { useLanguage } from "@/contexts/LanguageContext";
+import {
+  officeConfig,
+  type OfficeId,
+  type PublicCopy,
+  publicCopy,
+} from "@/lib/publicCopy";
 
-const logo = "https://www.alrefqaacargo.space/manus-storage/alrafkah-logo-final_cabb0750.webp";
+const logo = "/icons/logo.webp";
+const mainWhatsapp = "+22233331818";
 
-const services = [
-  { icon: Truck, eyebrow: "الاختيار اليومي", title: "الشحن العادي", text: "نقل آمن وموثوق للبضائع والطرود مع متابعة واضحة لكل مرحلة.", tone: "blue" },
-  { icon: Zap, eyebrow: "للطلبات العاجلة", title: "الشحن السريع", text: "مسارات جوية أسرع من الإمارات وتركيا إلى موريتانيا حسب الجدول المتاح.", tone: "gold" },
-  { icon: Ship, eyebrow: "للبضائع الكبيرة", title: "الشحن البحري", text: "خيار اقتصادي للشحنات الكبيرة من مكاتبنا ونقاط الاستلام إلى موريتانيا.", tone: "sand" },
-];
+type BeforeInstallPromptEvent = Event & {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
+};
 
-const offices = [
-  { name: "نواكشوط", label: "المكتب الرئيسي", phone: "+222 333 31818", color: "bg-[#e7f0f5]" },
-  { name: "دبي", label: "مركز التجميع", phone: "+971 422 20199", color: "bg-[#f8eed6]" },
-  { name: "إسطنبول", label: "نقطة الاستلام", phone: "تواصل مع الفريق", color: "bg-[#e9efe6]" },
-];
+const serviceIcons = [Truck, Zap, Ship, Truck] as const;
+const walletNumbers = [
+  { id: "bankily", value: "20066062" },
+  { id: "masrivi", value: "20066062" },
+  { id: "gazapay", value: "20066062" },
+  { id: "sedad", value: "22106435" },
+] as const;
+
+function whatsappHref(message: string, number = mainWhatsapp) {
+  return `https://wa.me/${number.replace(/\D/g, "")}?text=${encodeURIComponent(message)}`;
+}
+
+function roleForOffice(id: OfficeId, copy: PublicCopy) {
+  if (id === "nouakchott") return copy.offices.mainOffice;
+  if (id === "dubai") return copy.offices.collection;
+  return copy.offices.servicePoint;
+}
+
+function isStandalone() {
+  if (typeof window === "undefined") return false;
+  const iosStandalone = Boolean(
+    (navigator as Navigator & { standalone?: boolean }).standalone
+  );
+  return (
+    window.matchMedia("(display-mode: standalone)").matches || iosStandalone
+  );
+}
+
+function isIos() {
+  if (typeof navigator === "undefined") return false;
+  return /iphone|ipad|ipod/i.test(navigator.userAgent);
+}
 
 export default function Home() {
+  const { language, dir } = useLanguage();
+  const copy = publicCopy[language];
   const [menuOpen, setMenuOpen] = useState(false);
   const [tracking, setTracking] = useState("");
-  const [tracked, setTracked] = useState<string | null>(null);
+  const [trackingError, setTrackingError] = useState(false);
+  const [trackingOpened, setTrackingOpened] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
-  const trackingResult = useMemo(() => tracked ? { code: tracked, status: "في الطريق", location: "مركز الفرز — دبي", eta: "24 أكتوبر 2026" } : null, [tracked]);
+  const [copyError, setCopyError] = useState<string | null>(null);
+  const [installPrompt, setInstallPrompt] =
+    useState<BeforeInstallPromptEvent | null>(null);
+  const [installed, setInstalled] = useState(isStandalone);
+  const [installMessage, setInstallMessage] = useState("");
 
-  const copy = async (value: string, key: string) => {
-    try { await navigator.clipboard.writeText(value); } catch { /* clipboard may be blocked offline */ }
-    setCopied(key);
-    window.setTimeout(() => setCopied(null), 1600);
+  useEffect(() => {
+    const handleBeforeInstallPrompt = (event: Event) => {
+      event.preventDefault();
+      setInstallPrompt(event as BeforeInstallPromptEvent);
+    };
+    const handleAppInstalled = () => {
+      setInstalled(true);
+      setInstallPrompt(null);
+      setInstallMessage(copy.install.installed);
+    };
+    window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+    window.addEventListener("appinstalled", handleAppInstalled);
+    return () => {
+      window.removeEventListener(
+        "beforeinstallprompt",
+        handleBeforeInstallPrompt
+      );
+      window.removeEventListener("appinstalled", handleAppInstalled);
+    };
+  }, [copy.install.installed]);
+
+  const handleInstall = async () => {
+    if (installed) return;
+    if (!installPrompt) {
+      setInstallMessage(isIos() ? copy.install.ios : copy.install.unavailable);
+      return;
+    }
+    await installPrompt.prompt();
+    const result = await installPrompt.userChoice;
+    setInstallPrompt(null);
+    if (result.outcome === "accepted") {
+      setInstalled(true);
+      setInstallMessage(copy.install.installed);
+    } else {
+      setInstallMessage(copy.install.dismissed);
+    }
   };
 
-  const submitTracking = (event: React.FormEvent) => {
+  const fallbackCopy = (value: string, key: string) => {
+    const textarea = document.createElement("textarea");
+    textarea.value = value;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.select();
+    let copiedByFallback = false;
+    try {
+      copiedByFallback = document.execCommand("copy");
+    } catch {
+      copiedByFallback = false;
+    }
+    textarea.remove();
+    if (copiedByFallback) {
+      setCopied(key);
+      window.setTimeout(() => setCopied(null), 1800);
+      return true;
+    }
+    return false;
+  };
+
+  const copyWallet = async (value: string, key: string) => {
+    setCopyError(null);
+    let success = false;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(value);
+        success = true;
+      }
+    } catch {
+      success = false;
+    }
+    if (!success) success = fallbackCopy(value, key);
+    if (success) {
+      setCopied(key);
+      window.setTimeout(() => setCopied(null), 1800);
+    } else {
+      setCopyError(key);
+    }
+  };
+
+  const submitTracking = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const value = tracking.trim().toUpperCase() || "RQ-2026-1842";
-    setTracked(value);
+    const value = tracking.trim();
+    if (!value) {
+      setTrackingError(true);
+      setTrackingOpened(false);
+      return;
+    }
+    setTrackingError(false);
+    const href = whatsappHref(`${copy.tracking.whatsappText} ${value}`);
+    window.open(href, "_blank", "noopener,noreferrer");
+    setTrackingOpened(true);
   };
+
+  const Arrow = dir === "rtl" ? ArrowLeft : ArrowRight;
 
   return (
-    <div className="min-h-screen overflow-x-hidden bg-[#f7f8f5] text-[#112c43]">
+    <div
+      dir={dir}
+      className="min-h-screen overflow-x-hidden bg-[#f7f8f5] text-[#112c43]"
+    >
       <div className="bg-[#092d50] px-5 py-2.5 text-center text-xs text-white/80">
-        <span className="inline-flex items-center gap-2"><ShieldCheck size={14} className="text-[#e4b556]" /> هذه نسخة مستقلة — بياناتها منفصلة عن الموقع الأصلي ولا تُنقل تلقائيًا</span>
+        <span className="inline-flex items-center gap-2">
+          <ShieldCheck size={14} className="shrink-0 text-[#e4b556]" />
+          {copy.topNotice}
+        </span>
       </div>
       <header className="sticky top-0 z-40 border-b border-[#dce4e7] bg-[#f7f8f5]/95 backdrop-blur-lg">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-5 py-4 lg:px-8">
-          <a href="#top" className="flex items-center gap-3" aria-label="الرفكة">
-            <img src={logo} alt="شعار مؤسسة الرفكة" className="h-11 w-11 rounded-xl object-cover shadow-sm" />
-            <div className="leading-tight"><div className="font-bold text-[#092d50]">مؤسسة الرفكة</div><div className="text-[11px] tracking-[0.14em] text-[#7b8991]">للشحن والنقل</div></div>
+        <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-5 py-4 lg:px-8">
+          <a
+            href="#top"
+            className="flex shrink-0 items-center gap-3"
+            aria-label={copy.logoAlt}
+          >
+            <img
+              src={logo}
+              alt={copy.logoAlt}
+              className="h-11 w-11 rounded-xl object-cover shadow-sm"
+            />
+            <div className="leading-tight">
+              <div className="font-bold text-[#092d50]">
+                الرفكة <span className="font-semibold">Al-Rafqaa</span>
+              </div>
+              <div className="text-[11px] tracking-[0.14em] text-[#7b8991]">
+                {copy.brandTagline}
+              </div>
+            </div>
           </a>
-          <nav className="hidden items-center gap-7 text-sm font-medium text-[#52636e] md:flex">
-            <a href="#services" className="transition hover:text-[#092d50]">الخدمات</a>
-            <a href="#about" className="transition hover:text-[#092d50]">عن الرفكة</a>
-            <a href="#tracking" className="transition hover:text-[#092d50]">التتبع</a>
-            <a href="#contact" className="transition hover:text-[#092d50]">اتصل بنا</a>
+          <nav
+            className="hidden items-center gap-6 text-sm font-medium text-[#52636e] md:flex"
+            aria-label={copy.a11y.mainNavigation}
+          >
+            <a href="#services" className="transition hover:text-[#092d50]">
+              {copy.nav.services}
+            </a>
+            <a href="#tracking" className="transition hover:text-[#092d50]">
+              {copy.nav.tracking}
+            </a>
+            <details className="relative group">
+              <summary className="flex cursor-pointer list-none items-center gap-1 transition hover:text-[#092d50]">
+                {copy.nav.offices}
+                <ChevronDown size={15} />
+              </summary>
+              <div className="absolute start-0 top-8 min-w-52 rounded-2xl border border-[#dce4e7] bg-white p-2 shadow-xl">
+                <a
+                  href="#offices"
+                  className="block rounded-xl px-3 py-2 text-start hover:bg-[#f1f5f2]"
+                >
+                  {copy.offices.title}
+                </a>
+                <a
+                  href={whatsappHref(copy.offices.requestAddress)}
+                  className="block rounded-xl px-3 py-2 text-start hover:bg-[#f1f5f2]"
+                >
+                  {copy.offices.requestAddress}
+                </a>
+              </div>
+            </details>
+            <a href="#contact" className="transition hover:text-[#092d50]">
+              {copy.nav.contact}
+            </a>
           </nav>
-          <div className="flex items-center gap-3">
-            <Link href="/operations" className="hidden rounded-full bg-[#092d50] px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-[#123f68] sm:inline-flex">مركز العمليات <ArrowUpLeft size={15} className="mr-2" /></Link>
-            <button onClick={() => setMenuOpen(!menuOpen)} className="rounded-xl border border-[#d9e1e3] p-2.5 text-[#092d50] md:hidden" aria-label="فتح القائمة">{menuOpen ? <X size={20} /> : <Menu size={20} />}</button>
+          <div className="flex items-center gap-2 sm:gap-3">
+            <LanguageSwitcher />
+            <Link
+              href="/operations"
+              className="hidden rounded-full bg-[#092d50] px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-[#123f68] sm:inline-flex"
+            >
+              {copy.nav.operations}
+              <Arrow size={15} className="ms-2" />
+            </Link>
+            <button
+              onClick={() => setMenuOpen(value => !value)}
+              className="rounded-xl border border-[#d9e1e3] p-2.5 text-[#092d50] md:hidden"
+              aria-label={menuOpen ? copy.a11y.closeMenu : copy.a11y.openMenu}
+              aria-expanded={menuOpen}
+            >
+              <span className="sr-only">
+                {menuOpen ? copy.a11y.closeMenu : copy.a11y.openMenu}
+              </span>
+              {menuOpen ? <X size={20} /> : <Menu size={20} />}
+            </button>
           </div>
         </div>
-        {menuOpen && <div className="border-t border-[#dce4e7] bg-[#f7f8f5] px-5 py-4 md:hidden"><div className="flex flex-col gap-4 text-sm font-medium"><a href="#services" onClick={() => setMenuOpen(false)}>الخدمات</a><a href="#about" onClick={() => setMenuOpen(false)}>عن الرفكة</a><a href="#tracking" onClick={() => setMenuOpen(false)}>تتبع شحنتك</a><Link href="/operations" onClick={() => setMenuOpen(false)}>مركز العمليات</Link></div></div>}
+        {menuOpen && (
+          <div className="border-t border-[#dce4e7] bg-[#f7f8f5] px-5 py-4 md:hidden">
+            <div className="flex flex-col gap-3 text-sm font-medium">
+              <a href="#services" onClick={() => setMenuOpen(false)}>
+                {copy.nav.services}
+              </a>
+              <a href="#tracking" onClick={() => setMenuOpen(false)}>
+                {copy.nav.tracking}
+              </a>
+              <details>
+                <summary className="flex cursor-pointer list-none items-center justify-between py-1">
+                  {copy.nav.offices}
+                  <ChevronDown size={15} />
+                </summary>
+                <div className="mt-2 flex flex-col gap-3 border-s-2 border-[#d9a441] ps-3">
+                  <a href="#offices" onClick={() => setMenuOpen(false)}>
+                    {copy.offices.title}
+                  </a>
+                  <a href={whatsappHref(copy.offices.requestAddress)}>
+                    {copy.offices.requestAddress}
+                  </a>
+                </div>
+              </details>
+              <a href="#contact" onClick={() => setMenuOpen(false)}>
+                {copy.nav.contact}
+              </a>
+              <Link href="/operations" onClick={() => setMenuOpen(false)}>
+                {copy.nav.operations}
+              </Link>
+            </div>
+          </div>
+        )}
       </header>
 
       <main id="top">
         <section className="relative mx-auto grid max-w-7xl gap-12 px-5 pb-20 pt-16 lg:grid-cols-[1.08fr_.92fr] lg:items-center lg:px-8 lg:pb-28 lg:pt-24">
-          <div className="pointer-events-none absolute -left-36 top-10 h-96 w-96 rounded-full bg-[#e3eef2] blur-3xl" />
+          <div className="pointer-events-none absolute -start-36 top-10 h-96 w-96 rounded-full bg-[#e3eef2] blur-3xl" />
           <div className="relative z-10">
-            <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-[#cfdde3] bg-white/70 px-3.5 py-2 text-xs font-semibold text-[#315c76]"><span className="h-2 w-2 rounded-full bg-[#d9a441]" /> من الصحراء إلى باب منزلك</div>
-            <h1 className="max-w-2xl text-5xl font-bold leading-[1.13] tracking-tight text-[#092d50] sm:text-6xl">نقل آمن،<br /><span className="text-[#c28d2b]">وصول مضمون.</span></h1>
-            <p className="mt-6 max-w-xl text-lg leading-8 text-[#5b6a73]">نجمع بين الخبرة المحلية والربط العالمي لنقدم لك تجربة شحن واضحة، مرنة، ويمكن الاعتماد عليها — من أول استلام إلى آخر تسليم.</p>
-            <div className="mt-9 flex flex-wrap gap-3"><a href="#services" className="inline-flex items-center gap-2 rounded-full bg-[#092d50] px-5 py-3.5 text-sm font-bold text-white shadow-lg shadow-[#092d50]/15 transition hover:-translate-y-0.5 hover:bg-[#123f68]">استكشف الخدمات <ArrowLeft size={17} /></a><a href="#tracking" className="inline-flex items-center gap-2 rounded-full border border-[#c6d4da] bg-white px-5 py-3.5 text-sm font-bold text-[#092d50] transition hover:border-[#092d50]">تتبع شحنتك <Search size={17} /></a></div>
-            <div className="mt-10 flex flex-wrap items-center gap-7 text-sm text-[#65747b]"><div className="flex items-center gap-2"><Check size={17} className="text-[#2b7b63]" /> شحن موثوق</div><div className="flex items-center gap-2"><Check size={17} className="text-[#2b7b63]" /> متابعة واضحة</div><div className="flex items-center gap-2"><Check size={17} className="text-[#2b7b63]" /> مسارات متعددة</div></div>
-          </div>
-          <div className="relative min-h-[420px] lg:min-h-[520px]">
-            <div className="absolute inset-5 rounded-[2.25rem] bg-[#092d50] shadow-2xl shadow-[#092d50]/20" />
-            <div className="route-line absolute right-0 top-16 h-52 w-52 rounded-full border border-[#d9a441]/50" />
-            <div className="route-line absolute left-3 top-28 h-72 w-72 rounded-full border border-white/20" />
-            <div className="absolute inset-x-12 top-12 bottom-12 flex flex-col justify-between overflow-hidden rounded-[1.75rem] border border-white/15 bg-gradient-to-br from-[#153f61] via-[#0d3557] to-[#071f38] p-7 text-white">
-              <div className="flex items-center justify-between"><span className="rounded-full bg-white/10 px-3 py-1.5 text-xs text-white/70">AL-RAFQAH / ROUTE 01</span><Globe2 size={22} className="text-[#e0af4e]" /></div>
-              <div><div className="mb-5 text-sm text-white/60">الرحلة الحالية</div><div className="flex items-end justify-between gap-4"><div><div className="text-4xl font-bold tracking-tight">دبي</div><div className="mt-1 text-sm text-white/60">مركز التجميع</div></div><div className="mb-2 flex-1"><div className="relative h-px bg-white/25"><span className="absolute -top-1.5 right-0 h-3 w-3 rounded-full bg-[#d9a441] shadow-[0_0_0_5px_rgba(217,164,65,.2)]" /><span className="absolute -top-1.5 left-0 h-3 w-3 rounded-full bg-white/60" /></div><div className="mt-3 text-center text-xs text-white/50">جوي · 06:30</div></div><div className="text-left"><div className="text-4xl font-bold tracking-tight">نواكشوط</div><div className="mt-1 text-sm text-white/60">الوصول المتوقع</div></div></div></div>
-              <div className="grid grid-cols-3 gap-3 border-t border-white/10 pt-5 text-xs"><div><div className="text-white/50">رقم الرحلة</div><div className="mt-1 font-semibold">RQ-2026-1842</div></div><div><div className="text-white/50">الحالة</div><div className="mt-1 flex items-center gap-1.5 font-semibold text-[#e6c16d]"><span className="h-1.5 w-1.5 rounded-full bg-[#e6c16d]" /> في الطريق</div></div><div><div className="text-white/50">التحديث</div><div className="mt-1 font-semibold">منذ 12 دقيقة</div></div></div>
+            <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-[#cfdde3] bg-white/70 px-3.5 py-2 text-xs font-semibold text-[#315c76]">
+              <span className="h-2 w-2 rounded-full bg-[#d9a441]" />
+              {copy.hero.eyebrow}
             </div>
-            <div className="absolute -bottom-1 -left-1 flex items-center gap-3 rounded-2xl border border-[#e0e7e8] bg-white p-4 shadow-xl"><div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#e8f3ee] text-[#2b7b63]"><ShieldCheck size={22} /></div><div><div className="text-xs text-[#7a878c]">شبكة موثوقة</div><div className="mt-0.5 font-bold text-[#092d50]">متابعة في كل خطوة</div></div></div>
-            <div className="absolute -right-1 top-24 flex items-center gap-3 rounded-2xl border border-[#e0e7e8] bg-white p-3.5 shadow-xl"><div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#fbf1d9] text-[#ba8223]"><Plane size={20} /></div><div><div className="text-[11px] text-[#7a878c]">مساراتنا</div><div className="font-bold text-[#092d50]">الصين · دبي · تركيا</div></div></div>
+            <h1 className="max-w-2xl text-5xl font-bold leading-[1.13] tracking-tight text-[#092d50] sm:text-6xl">
+              {copy.hero.title}
+              <br />
+              <span className="text-[#c28d2b]">{copy.hero.titleAccent}</span>
+            </h1>
+            <p className="mt-6 max-w-xl text-lg leading-8 text-[#5b6a73]">
+              {copy.hero.description}
+            </p>
+            <div className="mt-9 flex flex-wrap gap-3">
+              <a
+                href="#services"
+                className="inline-flex items-center gap-2 rounded-full bg-[#092d50] px-5 py-3.5 text-sm font-bold text-white shadow-lg shadow-[#092d50]/15 transition hover:-translate-y-0.5 hover:bg-[#123f68]"
+              >
+                {copy.hero.servicesCta}
+                <Arrow size={17} />
+              </a>
+              <a
+                href="#tracking"
+                className="inline-flex items-center gap-2 rounded-full border border-[#c6d4da] bg-white px-5 py-3.5 text-sm font-bold text-[#092d50] transition hover:border-[#092d50]"
+              >
+                {copy.hero.trackingCta}
+                <Package size={17} />
+              </a>
+            </div>
+            <div className="mt-10 flex flex-wrap items-center gap-7 text-sm text-[#65747b]">
+              {copy.hero.proof.map(item => (
+                <div key={item} className="flex items-center gap-2">
+                  <Check size={17} className="text-[#2b7b63]" />
+                  {item}
+                </div>
+              ))}
+            </div>
+          </div>
+          <div
+            className="relative min-h-[420px] lg:min-h-[520px]"
+            aria-label={copy.hero.routeNote}
+          >
+            <div className="absolute inset-5 rounded-[2.25rem] bg-[#092d50] shadow-2xl shadow-[#092d50]/20" />
+            <div className="route-line absolute end-0 top-16 h-52 w-52 rounded-full border border-[#d9a441]/50" />
+            <div className="route-line absolute start-3 top-28 h-72 w-72 rounded-full border border-white/20" />
+            <div className="absolute inset-x-12 top-12 bottom-12 flex flex-col justify-between overflow-hidden rounded-[1.75rem] border border-white/15 bg-gradient-to-br from-[#153f61] via-[#0d3557] to-[#071f38] p-7 text-white">
+              <div className="flex items-center justify-between gap-3">
+                <span className="rounded-full bg-white/10 px-3 py-1.5 text-xs text-white/70">
+                  {copy.hero.routeLabel}
+                </span>
+                <Globe2 size={22} className="text-[#e0af4e]" />
+              </div>
+              <div>
+                <div className="mb-5 text-sm text-white/60">
+                  {copy.hero.routeCaption}
+                </div>
+                <div className="flex flex-col items-start justify-between gap-5 sm:flex-row sm:items-end">
+                  <div>
+                    <div className="text-xl font-bold tracking-tight sm:text-4xl">
+                      {copy.hero.routeOrigin}
+                    </div>
+                    <div className="mt-1 text-sm text-white/60">
+                      {copy.hero.routeMiddle}
+                    </div>
+                  </div>
+                  <div className="mb-2 w-full flex-1 sm:w-auto">
+                    <div className="relative h-px bg-white/25">
+                      <span className="absolute -top-1.5 end-0 h-3 w-3 rounded-full bg-[#d9a441] shadow-[0_0_0_5px_rgba(217,164,65,.2)]" />
+                      <span className="absolute -top-1.5 start-0 h-3 w-3 rounded-full bg-white/60" />
+                    </div>
+                  </div>
+                  <div className="text-end">
+                    <div className="text-2xl font-bold tracking-tight sm:text-4xl">
+                      {copy.hero.routeDestination}
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div className="border-t border-white/10 pt-5 text-xs text-white/55">
+                {copy.hero.routeNote}
+              </div>
+            </div>
+            <div className="absolute -bottom-1 -start-1 flex items-center gap-3 rounded-2xl border border-[#e0e7e8] bg-white p-4 shadow-xl">
+              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#e8f3ee] text-[#2b7b63]">
+                <ShieldCheck size={22} />
+              </div>
+              <div>
+                <div className="text-xs text-[#7a878c]">
+                  {copy.hero.networkEyebrow}
+                </div>
+                <div className="mt-0.5 font-bold text-[#092d50]">
+                  {copy.hero.networkTitle}
+                </div>
+              </div>
+            </div>
+            <div className="absolute -end-1 top-24 hidden items-center gap-3 rounded-2xl border border-[#e0e7e8] bg-white p-3.5 shadow-xl sm:flex">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#fbf1d9] text-[#ba8223]">
+                <Plane size={20} />
+              </div>
+              <div>
+                <div className="text-[11px] text-[#7a878c]">
+                  {copy.hero.routeLabel}
+                </div>
+                <div className="font-bold text-[#092d50]">
+                  {copy.hero.routeOrigin}
+                </div>
+              </div>
+            </div>
           </div>
         </section>
 
-        <section id="services" className="border-y border-[#e1e7e8] bg-white px-5 py-20 lg:px-8"><div className="mx-auto max-w-7xl"><div className="mb-10 flex flex-col justify-between gap-4 md:flex-row md:items-end"><div><div className="mb-3 text-xs font-bold tracking-[0.18em] text-[#b17b1f]">خدماتنا المتميزة</div><h2 className="text-3xl font-bold text-[#092d50] sm:text-4xl">الخيار المناسب لكل رحلة.</h2></div><p className="max-w-md leading-7 text-[#718088]">نصمم خياراتنا لتناسب طبيعة بضاعتك وموعدك وميزانيتك، مع فريق يتابع التفاصيل معك.</p></div><div className="grid gap-4 md:grid-cols-3">{services.map(service => <article key={service.title} className="group rounded-3xl border border-[#e2e8e9] bg-[#fbfcfb] p-6 transition hover:-translate-y-1 hover:border-[#b9cbd3] hover:shadow-lg"><div className={`mb-10 flex h-12 w-12 items-center justify-center rounded-2xl ${service.tone === "gold" ? "bg-[#fbf0d5] text-[#b27b1f]" : service.tone === "sand" ? "bg-[#edf1e9] text-[#58735e]" : "bg-[#e7f0f5] text-[#2e6280]"}`}><service.icon size={23} /></div><div className="text-xs font-bold text-[#9aabb1]">{service.eyebrow}</div><h3 className="mt-2 text-xl font-bold text-[#092d50]">{service.title}</h3><p className="mt-3 leading-7 text-[#6c7b82]">{service.text}</p><a href="#contact" className="mt-6 inline-flex items-center gap-2 text-sm font-bold text-[#2e6280]">اطلب التفاصيل <ChevronLeft size={16} /></a></article>)}</div></div></section>
+        <section
+          id="services"
+          className="border-y border-[#e1e7e8] bg-white px-5 py-20 lg:px-8"
+        >
+          <div className="mx-auto max-w-7xl">
+            <div className="mb-10 flex flex-col justify-between gap-4 md:flex-row md:items-end">
+              <div>
+                <div className="mb-3 text-xs font-bold tracking-[0.18em] text-[#b17b1f]">
+                  {copy.services.eyebrow}
+                </div>
+                <h2 className="text-3xl font-bold text-[#092d50] sm:text-4xl">
+                  {copy.services.title}
+                </h2>
+              </div>
+              <p className="max-w-md leading-7 text-[#718088]">
+                {copy.services.description}
+              </p>
+            </div>
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+              {copy.services.items.map((service, index) => {
+                const Icon = serviceIcons[index];
+                return (
+                  <article
+                    key={service.title}
+                    className="group rounded-3xl border border-[#e2e8e9] bg-[#fbfcfb] p-6 transition hover:-translate-y-1 hover:border-[#b9cbd3] hover:shadow-lg"
+                  >
+                    <div
+                      className={`mb-10 flex h-12 w-12 items-center justify-center rounded-2xl ${service.tone === "gold" ? "bg-[#fbf0d5] text-[#b27b1f]" : service.tone === "sand" ? "bg-[#edf1e9] text-[#58735e]" : service.tone === "green" ? "bg-[#e8f3ee] text-[#2b7b63]" : "bg-[#e7f0f5] text-[#2e6280]"}`}
+                    >
+                      <Icon size={23} />
+                    </div>
+                    <div className="text-xs font-bold text-[#9aabb1]">
+                      {service.eyebrow}
+                    </div>
+                    <h3 className="mt-2 text-xl font-bold text-[#092d50]">
+                      {service.title}
+                    </h3>
+                    <p className="mt-3 leading-7 text-[#6c7b82]">
+                      {service.text}
+                    </p>
+                    <a
+                      href="#contact"
+                      className="mt-6 inline-flex items-center gap-2 text-sm font-bold text-[#2e6280]"
+                    >
+                      {copy.services.detailCta}
+                      <ChevronLeft size={16} />
+                    </a>
+                  </article>
+                );
+              })}
+            </div>
+          </div>
+        </section>
 
-        <section id="tracking" className="mx-auto max-w-7xl px-5 py-20 lg:px-8"><div className="grid gap-8 rounded-[2rem] bg-[#e8eff1] p-7 md:p-10 lg:grid-cols-[.85fr_1.15fr] lg:items-center"><div><div className="mb-3 text-xs font-bold tracking-[0.18em] text-[#b17b1f]">تتبع شحنتك</div><h2 className="text-3xl font-bold text-[#092d50]">كل تحديث في مكانه.</h2><p className="mt-4 max-w-md leading-7 text-[#62737d]">أدخل رقم التتبع الخاص بك لتعرف آخر محطة وصلت إليها شحنتك. جرّب الرقم الموجود كمثال.</p><div className="mt-7 flex flex-wrap items-center gap-2 text-xs text-[#5c6f78]"><span className="rounded-full bg-white px-3 py-2">مثال: RQ-2026-1842</span><span className="rounded-full bg-white px-3 py-2">متاح قريبًا للعامة</span></div></div><div className="rounded-3xl bg-white p-5 shadow-sm md:p-7"><form onSubmit={submitTracking} className="flex flex-col gap-3 sm:flex-row"><div className="relative flex-1"><Package className="absolute right-4 top-1/2 -translate-y-1/2 text-[#91a1a8]" size={19} /><input value={tracking} onChange={event => setTracking(event.target.value)} placeholder="أدخل رقم الشحنة" className="h-14 w-full rounded-2xl border border-[#d8e1e4] bg-[#fbfcfb] pr-12 text-sm outline-none transition placeholder:text-[#9aa8ad] focus:border-[#2d6380] focus:ring-4 focus:ring-[#2d6380]/10" /></div><button className="h-14 rounded-2xl bg-[#092d50] px-6 font-bold text-white transition hover:bg-[#123f68]">تتبع الآن</button></form>{trackingResult && <div className="mt-5 rounded-2xl border border-[#d7e8df] bg-[#f4fbf7] p-4"><div className="flex flex-wrap items-center justify-between gap-3"><div><div className="text-xs text-[#74917f]">رقم الشحنة</div><div className="mt-1 font-bold text-[#173d34]">{trackingResult.code}</div></div><div className="rounded-full bg-[#d9f1e2] px-3 py-1.5 text-xs font-bold text-[#2b7656]">{trackingResult.status}</div></div><div className="mt-4 grid gap-3 border-t border-[#d7e8df] pt-4 text-sm sm:grid-cols-2"><div><span className="text-[#7f958a]">آخر موقع</span><div className="mt-1 font-semibold text-[#173d34]">{trackingResult.location}</div></div><div><span className="text-[#7f958a]">الوصول المتوقع</span><div className="mt-1 font-semibold text-[#173d34]">{trackingResult.eta}</div></div></div></div>}</div></div></section>
+        <section id="tracking" className="mx-auto max-w-7xl px-5 py-20 lg:px-8">
+          <div className="grid gap-8 rounded-[2rem] bg-[#e8eff1] p-7 md:p-10 lg:grid-cols-[.85fr_1.15fr] lg:items-center">
+            <div>
+              <div className="mb-3 text-xs font-bold tracking-[0.18em] text-[#b17b1f]">
+                {copy.tracking.eyebrow}
+              </div>
+              <h2 className="text-3xl font-bold text-[#092d50]">
+                {copy.tracking.title}
+              </h2>
+              <p className="mt-4 max-w-md leading-7 text-[#62737d]">
+                {copy.tracking.description}
+              </p>
+              <div className="mt-7 flex flex-wrap items-center gap-2 text-xs text-[#5c6f78]">
+                <span className="rounded-full bg-white px-3 py-2">
+                  {copy.tracking.exampleLabel}
+                </span>
+                <span className="rounded-full bg-white px-3 py-2">
+                  {copy.tracking.privacy}
+                </span>
+              </div>
+            </div>
+            <div className="rounded-3xl bg-white p-5 shadow-sm md:p-7">
+              <form
+                onSubmit={submitTracking}
+                className="flex flex-col gap-3 sm:flex-row"
+              >
+                <div className="flex-1">
+                  <label htmlFor="tracking-number" className="sr-only">
+                    {copy.tracking.inputLabel}
+                  </label>
+                  <div className="relative">
+                    <Package
+                      className="absolute end-4 top-1/2 -translate-y-1/2 text-[#91a1a8]"
+                      size={19}
+                    />
+                    <input
+                      id="tracking-number"
+                      value={tracking}
+                      onChange={event => {
+                        setTracking(event.target.value);
+                        setTrackingError(false);
+                        setTrackingOpened(false);
+                      }}
+                      placeholder={copy.tracking.placeholder}
+                      className="h-14 w-full rounded-2xl border border-[#d8e1e4] bg-[#fbfcfb] pe-12 ps-4 text-sm outline-none transition placeholder:text-[#9aa8ad] focus:border-[#2d6380] focus:ring-4 focus:ring-[#2d6380]/10"
+                    />
+                  </div>
+                </div>
+                <button className="h-14 rounded-2xl bg-[#092d50] px-6 font-bold text-white transition hover:bg-[#123f68]">
+                  {copy.tracking.button}
+                </button>
+              </form>
+              {trackingError && (
+                <p
+                  role="alert"
+                  className="mt-3 text-sm font-semibold text-[#a34747]"
+                >
+                  {copy.tracking.required}
+                </p>
+              )}
+              {trackingOpened && (
+                <p
+                  role="status"
+                  className="mt-3 text-sm font-semibold text-[#2b7656]"
+                >
+                  {copy.tracking.opened}
+                  <a href={whatsappHref(`${copy.tracking.whatsappText} ${tracking.trim()}`)} target="_blank" rel="noopener noreferrer" className="ms-2 underline">{copy.tracking.button}</a>
+                </p>
+              )}
+            </div>
+          </div>
+        </section>
 
-        <section id="about" className="bg-[#092d50] px-5 py-20 text-white lg:px-8"><div className="mx-auto grid max-w-7xl gap-12 lg:grid-cols-[1fr_.9fr] lg:items-center"><div><div className="mb-3 text-xs font-bold tracking-[0.18em] text-[#e2b557]">عن الرفكة</div><h2 className="max-w-xl text-3xl font-bold leading-tight sm:text-4xl">نربط تجارتك بالعالم،<br />ونبقي التفاصيل قريبة منك.</h2><p className="mt-5 max-w-xl leading-8 text-white/65">من الصين ودبي وتركيا إلى موريتانيا، نوفر خيارات شحن جوية وبحرية مدروسة للتجار والأفراد. فريقنا يساعدك في الشراء، الاستلام، المتابعة، والوصول إلى الخطوة التالية بوضوح.</p><div className="mt-8 flex flex-wrap gap-3"><div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3"><div className="text-2xl font-bold">3</div><div className="mt-1 text-xs text-white/55">مسارات أساسية</div></div><div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3"><div className="text-2xl font-bold">24/7</div><div className="mt-1 text-xs text-white/55">وضوح في الحالة</div></div><div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3"><div className="text-2xl font-bold">1:1</div><div className="mt-1 text-xs text-white/55">متابعة مباشرة</div></div></div></div><div className="rounded-3xl border border-white/10 bg-white/5 p-6"><div className="mb-5 flex items-center justify-between"><div className="font-bold">خطوطنا اللوجستية</div><MapPin size={20} className="text-[#e2b557]" /></div>{["الصين → موريتانيا", "دبي → موريتانيا", "تركيا → موريتانيا"].map((route, index) => <div key={route} className="flex items-center gap-4 border-t border-white/10 py-4"><span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#e2b557]/15 text-sm font-bold text-[#e2b557]">0{index + 1}</span><span className="font-semibold">{route}</span><ArrowLeft size={16} className="mr-auto text-white/35" /></div>)}</div></div></section>
+        <section
+          id="about"
+          className="bg-[#092d50] px-5 py-20 text-white lg:px-8"
+        >
+          <div className="mx-auto grid max-w-7xl gap-12 lg:grid-cols-[1fr_.9fr] lg:items-center">
+            <div>
+              <div className="mb-3 text-xs font-bold tracking-[0.18em] text-[#e2b557]">
+                {copy.about.eyebrow}
+              </div>
+              <h2 className="max-w-xl text-3xl font-bold leading-tight sm:text-4xl">
+                {copy.about.title}
+              </h2>
+              <p className="mt-5 max-w-xl leading-8 text-white/65">
+                {copy.about.description}
+              </p>
+              <div className="mt-8 rounded-2xl border border-white/10 bg-white/5 p-4 text-sm leading-7 text-white/70">
+                {copy.about.routeNote}
+              </div>
+            </div>
+            <div className="rounded-3xl border border-white/10 bg-white/5 p-6">
+              <div className="mb-5 flex items-center justify-between gap-4">
+                <div className="font-bold">{copy.about.routeTitle}</div>
+                <Globe2 size={20} className="text-[#e2b557]" />
+              </div>
+              {copy.about.routes.map((route, index) => (
+                <div
+                  key={route}
+                  className="flex items-center gap-4 border-t border-white/10 py-4"
+                >
+                  <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#e2b557]/15 text-sm font-bold text-[#e2b557]">
+                    0{index + 1}
+                  </span>
+                  <span className="font-semibold">{route}</span>
+                  <Arrow size={16} className="ms-auto text-white/35" />
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
 
-        <section id="contact" className="mx-auto max-w-7xl px-5 py-20 lg:px-8"><div className="grid gap-8 lg:grid-cols-[.7fr_1.3fr]"><div><div className="mb-3 text-xs font-bold tracking-[0.18em] text-[#b17b1f]">نحن متاحون لخدمتك</div><h2 className="text-3xl font-bold text-[#092d50]">تواصل مع فريق الرفكة.</h2><p className="mt-4 leading-7 text-[#6e7c82]">اختر المكتب الأقرب، وأرسل لنا تفاصيل شحنتك قبل الإرسال لنتأكد من العنوان والخدمة المناسبة.</p><div className="mt-7 flex items-center gap-3 rounded-2xl bg-[#f1f5f2] p-4"><div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white text-[#2d7660]"><Phone size={19} /></div><div><div className="text-xs text-[#81928f]">للاستفسارات العاجلة</div><a href="tel:+22233331818" className="font-bold text-[#173e35]">+222 333 31818</a></div></div></div><div className="grid gap-3 sm:grid-cols-3">{offices.map(office => <article key={office.name} className={`rounded-3xl ${office.color} p-5`}><div className="flex items-center justify-between"><MapPin size={19} className="text-[#2e6280]" /><span className="text-xs text-[#65757b]">{office.label}</span></div><h3 className="mt-12 text-xl font-bold text-[#092d50]">{office.name}</h3><div className="mt-2 text-sm text-[#63737a]">{office.phone}</div><a href="#contact" className="mt-5 inline-flex items-center gap-1 text-xs font-bold text-[#2e6280]">عرض التفاصيل <ChevronLeft size={14} /></a></article>)}</div></div><div className="mt-8 grid gap-3 rounded-3xl border border-[#e1e7e8] bg-white p-5 sm:grid-cols-4 sm:p-6"><div className="sm:col-span-4"><div className="mb-3 text-sm font-bold text-[#092d50]">المحافظ الإلكترونية في موريتانيا</div><div className="text-xs text-[#7b898e]">اختر المحفظة، انسخ الرقم، ثم أرسل إيصال الدفع إلى المكتب.</div></div>{[{ name: "بنكيلي", value: "20066062" }, { name: "مصرفي", value: "20066062" }, { name: "غزة باي", value: "20066062" }, { name: "السداد", value: "22106435" }].map(wallet => <button key={wallet.name} onClick={() => copy(wallet.value, wallet.name)} className="flex items-center justify-between rounded-2xl bg-[#f7f8f5] p-4 text-right transition hover:bg-[#edf2ef]"><div><div className="font-bold text-[#092d50]">{wallet.name}</div><div className="mt-1 text-xs text-[#77868b]">{wallet.value}</div></div>{copied === wallet.name ? <Check size={17} className="text-[#2b7b63]" /> : <Copy size={16} className="text-[#8d9aa0]" />}</button>)}</div></section>
+        <section id="offices" className="mx-auto max-w-7xl px-5 py-20 lg:px-8">
+          <div className="mb-10 flex flex-col justify-between gap-4 md:flex-row md:items-end">
+            <div>
+              <div className="mb-3 text-xs font-bold tracking-[0.18em] text-[#b17b1f]">
+                {copy.offices.eyebrow}
+              </div>
+              <h2 className="text-3xl font-bold text-[#092d50] sm:text-4xl">
+                {copy.offices.title}
+              </h2>
+            </div>
+            <p className="max-w-xl leading-7 text-[#6e7c82]">
+              {copy.offices.description}
+            </p>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {officeConfig.map(office => (
+              <article
+                key={office.id}
+                className="rounded-3xl border border-[#e1e7e8] bg-white p-5 shadow-sm"
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <span className="rounded-full bg-[#eef3f0] px-3 py-1 text-xs font-semibold text-[#456e61]">
+                    {roleForOffice(office.id, copy)}
+                  </span>
+                  <Globe2 size={19} className="text-[#2e6280]" />
+                </div>
+                <h3 className="mt-8 text-xl font-bold text-[#092d50]">
+                  {copy.offices.names[office.id]}
+                </h3>
+                <div className="mt-3 text-sm leading-6 text-[#63737a]">
+                  {office.address ?? copy.offices.addressPending}
+                </div>
+                <p className="mt-1 text-xs leading-5 text-[#87949a]">
+                  {copy.offices.addressPendingDetail}
+                </p>
+                <div className="mt-5 flex flex-col gap-2">
+                  {office.phone ? (
+                    <a
+                      href={`tel:${office.phone}`}
+                      dir="ltr"
+                      className="inline-flex items-center gap-2 text-sm font-semibold text-[#2e6280]"
+                    >
+                      <Phone size={15} />
+                      {office.phone}
+                    </a>
+                  ) : (
+                    <span className="inline-flex items-center gap-2 text-sm font-semibold text-[#2e6280]">
+                      <Phone size={15} />
+                      {copy.offices.noPhone}
+                    </span>
+                  )}
+                  <a
+                    href={whatsappHref(
+                      `${copy.offices.requestAddress}: ${copy.offices.names[office.id]}`,
+                      office.whatsapp
+                    )}
+                    className="inline-flex items-center gap-2 text-xs font-bold text-[#2b7656]"
+                  >
+                    <MessageIcon />
+                    {copy.offices.requestAddress}
+                  </a>
+                  {office.phone && (
+                    <a
+                      href={`mailto:${office.email}`}
+                      className="inline-flex items-center gap-2 text-xs font-semibold text-[#6c7b82]"
+                    >
+                      <Mail size={14} />
+                      {copy.offices.emailOffice}
+                    </a>
+                  )}
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+
+        <section id="contact" className="mx-auto max-w-7xl px-5 pb-20 lg:px-8">
+          <div className="grid gap-8 lg:grid-cols-[.7fr_1.3fr]">
+            <div>
+              <div className="mb-3 text-xs font-bold tracking-[0.18em] text-[#b17b1f]">
+                {copy.contact.eyebrow}
+              </div>
+              <h2 className="text-3xl font-bold text-[#092d50]">
+                {copy.contact.title}
+              </h2>
+              <p className="mt-4 leading-7 text-[#6e7c82]">
+                {copy.contact.description}
+              </p>
+              <div className="mt-7 flex items-center gap-3 rounded-2xl bg-[#f1f5f2] p-4">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white text-[#2d7660]">
+                  <Phone size={19} />
+                </div>
+                <div>
+                  <div className="text-xs text-[#81928f]">
+                    {copy.contact.urgent}
+                  </div>
+                  <a
+                    href={`https://wa.me/${mainWhatsapp.replace(/\D/g, "")}`}
+                    className="font-bold text-[#173e35]"
+                    dir="ltr"
+                  >
+                    {mainWhatsapp}
+                  </a>
+                </div>
+              </div>
+              <div className="mt-3 flex items-center gap-3 rounded-2xl border border-[#e1e7e8] bg-white p-4">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#eef3f0] text-[#2d7660]">
+                  <Mail size={19} />
+                </div>
+                <div>
+                  <div className="text-xs text-[#81928f]">
+                    {copy.contact.email}
+                  </div>
+                  <a
+                    href={`mailto:${copy.contact.emailValue}`}
+                    className="break-all text-sm font-bold text-[#173e35]"
+                  >
+                    {copy.contact.emailValue}
+                  </a>
+                </div>
+              </div>
+            </div>
+            <div className="rounded-3xl border border-[#e1e7e8] bg-white p-5 sm:p-6">
+              <div className="mb-3 text-sm font-bold text-[#092d50]">
+                {copy.wallet.title}
+              </div>
+              <div className="text-xs leading-6 text-[#7b898e]">
+                {copy.wallet.description}
+              </div>
+              <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                {walletNumbers.map(wallet => {
+                  const label = copy.wallet.names[wallet.id];
+                  const hasError = copyError === wallet.id;
+                  return (
+                    <div
+                      key={wallet.id}
+                      className="rounded-2xl bg-[#f7f8f5] p-4"
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <div className="font-bold text-[#092d50]">
+                            {label}
+                          </div>
+                          <input
+                            readOnly
+                            value={wallet.value}
+                            aria-label={`${label} number`}
+                            className="mt-1 w-28 bg-transparent text-xs text-[#77868b] outline-none"
+                            dir="ltr"
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => copyWallet(wallet.value, wallet.id)}
+                          className="inline-flex shrink-0 items-center gap-2 rounded-xl bg-white px-3 py-2 text-xs font-bold text-[#2e6280] shadow-sm"
+                          aria-label={`${copy.wallet.copy} ${label}`}
+                        >
+                          {copied === wallet.id ? (
+                            <Check size={15} className="text-[#2b7b63]" />
+                          ) : (
+                            <Clipboard size={15} />
+                          )}
+                          {copied === wallet.id
+                            ? copy.wallet.copied
+                            : copy.wallet.copy}
+                        </button>
+                      </div>
+                      {hasError && (
+                        <p
+                          role="alert"
+                          className="mt-2 text-xs font-semibold leading-5 text-[#a34747]"
+                        >
+                          {copy.wallet.copyFailed}
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </section>
       </main>
-      <footer className="border-t border-[#dce4e7] bg-white px-5 py-8 lg:px-8"><div className="mx-auto flex max-w-7xl flex-col justify-between gap-4 text-sm text-[#7c898e] sm:flex-row sm:items-center"><div className="flex items-center gap-3"><img src={logo} alt="" className="h-8 w-8 rounded-lg object-cover" /><span>© 2026 مؤسسة الرفكة للشحن والنقل</span></div><div className="flex items-center gap-5"><Link href="/operations" className="font-semibold text-[#2e6280]">مركز العمليات</Link><span>الاثنين – السبت · 08:00 – 18:30</span></div></div></footer>
+
+      <footer className="border-t border-[#dce4e7] bg-white px-5 py-8 lg:px-8">
+        <div className="mx-auto flex max-w-7xl flex-col gap-7">
+          <div className="grid gap-5 md:grid-cols-[1fr_auto_auto] md:items-center">
+            <div className="flex items-center gap-3">
+              <img
+                src={logo}
+                alt=""
+                className="h-8 w-8 rounded-lg object-cover"
+              />
+              <span className="text-sm text-[#7c898e]">
+                {copy.footer.copyright}
+              </span>
+            </div>
+            <div className="text-sm text-[#7c898e]">
+              <div className="font-semibold text-[#092d50]">
+                {copy.hours.title}
+              </div>
+              <div className="mt-1">{copy.hours.weekdays}</div>
+              <div>{copy.hours.sunday}</div>
+            </div>
+            <div className="flex flex-col items-start gap-2 text-sm">
+              <Link href="/operations" className="font-semibold text-[#2e6280]">
+                {copy.footer.operations}
+              </Link>
+              <span className="text-[#7c898e]">{copy.footer.privacy}</span>
+            </div>
+          </div>
+          <div className="flex flex-col gap-3 rounded-2xl bg-[#f1f5f2] p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <div className="font-bold text-[#092d50]">
+                {copy.install.title}
+              </div>
+              <div className="mt-1 text-xs leading-5 text-[#6c7b82]">
+                {copy.install.description}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={handleInstall}
+              disabled={installed}
+              className="inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-xl bg-[#092d50] px-4 text-sm font-bold text-white transition hover:bg-[#123f68] disabled:cursor-default disabled:bg-[#668091]"
+            >
+              <DownloadIcon />
+              {installed ? copy.install.installed : copy.install.button}
+            </button>
+          </div>
+          {installMessage && (
+            <p role="status" className="text-sm text-[#5f7078]">
+              {installMessage}
+            </p>
+          )}
+        </div>
+      </footer>
     </div>
+  );
+}
+
+function MessageIcon() {
+  return (
+    <span
+      aria-hidden="true"
+      className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full bg-[#2b7656] text-[9px] font-bold text-white"
+    >
+      W
+    </span>
+  );
+}
+
+function DownloadIcon() {
+  return (
+    <span
+      aria-hidden="true"
+      className="inline-flex h-4 w-4 items-center justify-center rounded border border-white/50 text-[10px]"
+    >
+      ↓
+    </span>
   );
 }
