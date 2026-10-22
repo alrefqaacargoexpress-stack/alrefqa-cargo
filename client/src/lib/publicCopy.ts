@@ -62,11 +62,14 @@ const ar = {
   hero: {
     eyebrow: "من مستودعاتنا إلى موريتانيا",
     title: "نقل آمن،",
-    titleAccent: "ووصول أوضح.",
+    titleAccent: "وصول مضمون",
     description:
-      "نربط خبرتنا المحلية بمسارات الشحن الدولية لنقدم لك تجربة واضحة ومرنة، من أول استلام إلى آخر تسليم.",
+      "مؤسسة الرفكة تجمع بين التراث والحداثة لتقديم خدمات شحن موثوقة وسريعة.",
+    storyLine: "من الصحراء إلى باب منزلك – نحن نوصل أحلامك.",
+    imageAlt:
+      "قافلة جمال وصناديق تحمل شعار الرفكة في شارع دبي وبرج العرب في الخلفية",
     servicesCta: "استكشف الخدمات",
-    trackingCta: "اسأل عن شحنتك",
+    trackingCta: "تتبع شحنتك",
     proof: ["شحن موثوق", "متابعة مباشرة", "مسارات متعددة"],
     routeLabel: "مسارات الرفكة",
     routeCaption: "توضيح بصري للمسارات المتاحة",
@@ -222,11 +225,14 @@ const en = {
   hero: {
     eyebrow: "From our warehouses to Mauritania",
     title: "Safe shipping,",
-    titleAccent: "clearer arrival.",
+    titleAccent: "Guaranteed arrival",
     description:
-      "We connect local experience with international shipping routes for a clear, flexible service from first pickup to final delivery.",
+      "Al-Rafqaa brings together heritage and modernity to provide reliable, fast shipping services.",
+    storyLine: "From the desert to your doorstep – we deliver your dreams.",
+    imageAlt:
+      "Al-Rafqaa camel caravan with logoed boxes on a Dubai street and Burj Al Arab in the background",
     servicesCta: "Explore services",
-    trackingCta: "Ask about a shipment",
+    trackingCta: "Track your shipment",
     proof: ["Reliable shipping", "Direct support", "Multiple routes"],
     routeLabel: "Al-Rafqaa routes",
     routeCaption: "Illustration of available routes",
@@ -388,11 +394,14 @@ const zh = {
   hero: {
     eyebrow: "从我们的仓库运往毛里塔尼亚",
     title: "安全运输，",
-    titleAccent: "清晰到达。",
+    titleAccent: "安心送达",
     description:
-      "我们将本地经验与国际运输线路连接起来，从首次收货到最终交付，提供清晰而灵活的服务。",
+      "Al-Rafqaa 将传统与现代结合，提供可靠而快捷的货运服务。",
+    storyLine: "从沙漠到您家门口——我们传递您的梦想。",
+    imageAlt:
+      "迪拜街头载有 Al-Rafqaa 标志箱子的骆驼商队，背景是帆船酒店",
     servicesCta: "查看服务",
-    trackingCta: "咨询货件",
+    trackingCta: "查询货件",
     proof: ["可靠运输", "直接支持", "多条线路"],
     routeLabel: "Al-Rafqaa 线路",
     routeCaption: "可用线路示意图",
@@ -544,11 +553,14 @@ const tr = {
   hero: {
     eyebrow: "Depolarımızdan Moritanya’ya",
     title: "Güvenli taşıma,",
-    titleAccent: "daha net teslimat.",
+    titleAccent: "Garantili teslimat",
     description:
-      "Yerel deneyimi uluslararası kargo rotalarıyla birleştirerek ilk teslim alımdan son teslimata kadar açık ve esnek bir hizmet sunuyoruz.",
+      "Al-Rafqaa, güvenilir ve hızlı kargo hizmetleri sunmak için geleneği modernlikle buluşturur.",
+    storyLine: "Çölden kapınıza – hayallerinizi ulaştırıyoruz.",
+    imageAlt:
+      "Dubai caddesinde, arka planda Burj Al Arab ile Al-Rafqaa logolu kutular taşıyan deve kervanı",
     servicesCta: "Hizmetleri keşfet",
-    trackingCta: "Gönderiyi sor",
+    trackingCta: "Gönderinizi takip edin",
     proof: ["Güvenilir taşıma", "Doğrudan destek", "Çoklu rotalar"],
     routeLabel: "Al-Rafqaa rotaları",
     routeCaption: "Mevcut rotaların görsel açıklaması",

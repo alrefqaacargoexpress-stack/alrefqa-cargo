@@ -4,14 +4,12 @@ import { Link } from "wouter";
 import {
   ArrowLeft,
   ArrowRight,
-  Check,
   ChevronDown,
   Globe2,
   Mail,
   Menu,
   Package,
   Phone,
-  Plane,
   ShieldCheck,
   X,
 } from "lucide-react";
@@ -257,107 +255,100 @@ export default function Home() {
       </header>
 
       <main id="top">
-        <section className="relative mx-auto grid max-w-7xl gap-12 px-5 pb-20 pt-16 lg:grid-cols-[1.08fr_.92fr] lg:items-center lg:px-8 lg:pb-28 lg:pt-24">
-          <div className="pointer-events-none absolute -start-36 top-10 h-96 w-96 rounded-full bg-[#e3eef2] blur-3xl" />
-          <div className="relative z-10">
-            <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-[#cfdde3] bg-white/70 px-3.5 py-2 text-xs font-semibold text-[#315c76]">
-              <span className="h-2 w-2 rounded-full bg-[#d9a441]" />
-              {copy.hero.eyebrow}
-            </div>
-            <h1 className="max-w-2xl text-5xl font-bold leading-[1.13] tracking-tight text-[#092d50] sm:text-6xl">
-              {copy.hero.title}
-              <br />
-              <span className="text-[#c28d2b]">{copy.hero.titleAccent}</span>
-            </h1>
-            <p className="mt-6 max-w-xl text-lg leading-8 text-[#5b6a73]">
-              {copy.hero.description}
-            </p>
-            <div className="mt-9 flex flex-wrap gap-3">
-              <a
-                href="#tracking"
-                className="inline-flex items-center gap-2 rounded-full border border-[#c6d4da] bg-white px-5 py-3.5 text-sm font-bold text-[#092d50] transition hover:border-[#092d50]"
+        <section className="relative overflow-hidden bg-[#092d50]">
+          <div className="relative">
+            <img
+              src="/images/alrefqa-camel-caravan.webp"
+              alt={copy.hero.imageAlt}
+              className="block h-auto w-full"
+            />
+            <div
+              style={{ direction: "ltr" }}
+              className={`absolute inset-0 hidden items-center lg:flex ${
+                dir === "rtl" ? "justify-end" : "justify-start"
+              }`}
+            >
+              <div
+                className={`absolute inset-y-0 w-full max-w-2xl ${
+                  dir === "rtl"
+                    ? "right-0 bg-gradient-to-l from-[#092d50]/95 via-[#092d50]/75 to-transparent"
+                    : "left-0 bg-gradient-to-r from-[#092d50]/95 via-[#092d50]/75 to-transparent"
+                }`}
+              />
+              <div
+                dir={dir}
+                className={`relative z-10 w-full max-w-xl px-8 py-16 text-white xl:px-16 ${
+                  dir === "rtl" ? "text-right" : "text-left"
+                }`}
               >
-                {copy.hero.trackingCta}
-                <Package size={17} />
-              </a>
-            </div>
-            <div className="mt-10 flex flex-wrap items-center gap-7 text-sm text-[#65747b]">
-              {copy.hero.proof.map(item => (
-                <div key={item} className="flex items-center gap-2">
-                  <Check size={17} className="text-[#2b7b63]" />
-                  {item}
+                <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-white/20 bg-[#092d50]/55 px-3.5 py-2 text-xs font-semibold text-white/85">
+                  <span className="h-2 w-2 rounded-full bg-[#e0af4e]" />
+                  {copy.hero.eyebrow}
                 </div>
-              ))}
+                <h1 className="text-5xl font-bold leading-[1.13] tracking-tight sm:text-6xl">
+                  {copy.hero.title}
+                  <br />
+                  <span className="text-[#e0af4e]">
+                    {copy.hero.titleAccent}
+                  </span>
+                </h1>
+                <p className="mt-6 max-w-xl text-lg leading-8 text-white/85">
+                  {copy.hero.description}
+                </p>
+                <p className="mt-4 max-w-xl text-base font-semibold leading-7 text-white/95">
+                  {copy.hero.storyLine}
+                </p>
+                <div className="mt-8 flex flex-wrap gap-3">
+                  <a
+                    href="#offices"
+                    className="inline-flex min-h-12 items-center gap-2 rounded-full bg-[#e0af4e] px-5 py-3.5 text-base font-bold text-[#092d50] transition hover:bg-[#f0c76f]"
+                  >
+                    {copy.hero.servicesCta}
+                    <Arrow size={17} />
+                  </a>
+                  <a
+                    href="#tracking"
+                    className="inline-flex min-h-12 items-center gap-2 rounded-full border border-white/45 bg-[#092d50]/55 px-5 py-3.5 text-base font-bold text-white transition hover:border-white"
+                  >
+                    {copy.hero.trackingCta}
+                    <Package size={17} />
+                  </a>
+                </div>
+              </div>
             </div>
           </div>
-          <div
-            className="relative min-h-[420px] lg:min-h-[520px]"
-            aria-label={copy.hero.routeNote}
-          >
-            <div className="absolute inset-5 rounded-[2.25rem] bg-[#092d50] shadow-2xl shadow-[#092d50]/20" />
-            <div className="route-line absolute end-0 top-16 h-52 w-52 rounded-full border border-[#d9a441]/50" />
-            <div className="route-line absolute start-3 top-28 h-72 w-72 rounded-full border border-white/20" />
-            <div className="absolute inset-x-12 top-12 bottom-12 flex flex-col justify-between overflow-hidden rounded-[1.75rem] border border-white/15 bg-gradient-to-br from-[#153f61] via-[#0d3557] to-[#071f38] p-7 text-white">
-              <div className="flex items-center justify-between gap-3">
-                <span className="rounded-full bg-white/10 px-3 py-1.5 text-xs text-white/70">
-                  {copy.hero.routeLabel}
-                </span>
-                <Globe2 size={22} className="text-[#e0af4e]" />
+          <div className="bg-[#092d50] px-5 py-10 text-white lg:hidden">
+            <div className="mx-auto max-w-2xl">
+              <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3.5 py-2 text-xs font-semibold text-white/85">
+                <span className="h-2 w-2 rounded-full bg-[#e0af4e]" />
+                {copy.hero.eyebrow}
               </div>
-              <div>
-                <div className="mb-5 text-sm text-white/60">
-                  {copy.hero.routeCaption}
-                </div>
-                <div className="flex flex-col items-start justify-between gap-5 sm:flex-row sm:items-end">
-                  <div>
-                    <div className="text-xl font-bold tracking-tight sm:text-4xl">
-                      {copy.hero.routeOrigin}
-                    </div>
-                    <div className="mt-1 text-sm text-white/60">
-                      {copy.hero.routeMiddle}
-                    </div>
-                  </div>
-                  <div className="mb-2 w-full flex-1 sm:w-auto">
-                    <div className="relative h-px bg-white/25">
-                      <span className="absolute -top-1.5 end-0 h-3 w-3 rounded-full bg-[#d9a441] shadow-[0_0_0_5px_rgba(217,164,65,.2)]" />
-                      <span className="absolute -top-1.5 start-0 h-3 w-3 rounded-full bg-white/60" />
-                    </div>
-                  </div>
-                  <div className="text-end">
-                    <div className="text-2xl font-bold tracking-tight sm:text-4xl">
-                      {copy.hero.routeDestination}
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <div className="border-t border-white/10 pt-5 text-xs text-white/55">
-                {copy.hero.routeNote}
-              </div>
-            </div>
-            <div className="absolute -bottom-1 -start-1 flex items-center gap-3 rounded-2xl border border-[#e0e7e8] bg-white p-4 shadow-xl">
-              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#e8f3ee] text-[#2b7b63]">
-                <ShieldCheck size={22} />
-              </div>
-              <div>
-                <div className="text-xs text-[#7a878c]">
-                  {copy.hero.networkEyebrow}
-                </div>
-                <div className="mt-0.5 font-bold text-[#092d50]">
-                  {copy.hero.networkTitle}
-                </div>
-              </div>
-            </div>
-            <div className="absolute -end-1 top-24 hidden items-center gap-3 rounded-2xl border border-[#e0e7e8] bg-white p-3.5 shadow-xl sm:flex">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#fbf1d9] text-[#ba8223]">
-                <Plane size={20} />
-              </div>
-              <div>
-                <div className="text-[11px] text-[#7a878c]">
-                  {copy.hero.routeLabel}
-                </div>
-                <div className="font-bold text-[#092d50]">
-                  {copy.hero.routeOrigin}
-                </div>
+              <h1 className="text-4xl font-bold leading-[1.15] tracking-tight sm:text-5xl">
+                {copy.hero.title}
+                <br />
+                <span className="text-[#e0af4e]">{copy.hero.titleAccent}</span>
+              </h1>
+              <p className="mt-5 text-lg leading-8 text-white/85">
+                {copy.hero.description}
+              </p>
+              <p className="mt-4 text-base font-semibold leading-7 text-white/95">
+                {copy.hero.storyLine}
+              </p>
+              <div className="mt-7 flex flex-col gap-3 sm:flex-row">
+                <a
+                  href="#offices"
+                  className="inline-flex min-h-12 items-center justify-center gap-2 rounded-full bg-[#e0af4e] px-5 py-3.5 text-base font-bold text-[#092d50] transition hover:bg-[#f0c76f]"
+                >
+                  {copy.hero.servicesCta}
+                  <Arrow size={17} />
+                </a>
+                <a
+                  href="#tracking"
+                  className="inline-flex min-h-12 items-center justify-center gap-2 rounded-full border border-white/45 bg-white/10 px-5 py-3.5 text-base font-bold text-white transition hover:border-white"
+                >
+                  {copy.hero.trackingCta}
+                  <Package size={17} />
+                </a>
               </div>
             </div>
           </div>
