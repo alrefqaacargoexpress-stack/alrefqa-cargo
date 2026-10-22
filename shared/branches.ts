@@ -154,6 +154,8 @@ export type OfficeMember = {
   userId: number;
   name: string;
   email: string;
+  isLocalAccount?: boolean;
+  mustChangePassword?: boolean;
   role: AppRole | null;
   offices: OfficeId[] | null;
   homeOffice?: OfficeId | null;

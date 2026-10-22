@@ -76,6 +76,7 @@ export default function OfficeSettings() {
   });
   const updateProfile = trpc.branches.update.useMutation();
   const assignMember = trpc.branches.assignMember.useMutation();
+  const resetPassword = trpc.operations.resetPassword.useMutation();
   const utils = trpc.useUtils();
   const profiles = useMemo(() => {
     const source = profilesQuery.data ?? [];
@@ -139,6 +140,16 @@ export default function OfficeSettings() {
       return result;
     } catch {
       return null;
+    }
+  };
+  const resetMemberPassword = async (input: { userId: number; temporaryPassword: string }) => {
+    if (workspace.role !== "admin" || !workspace.online) return false;
+    try {
+      await resetPassword.mutateAsync(input);
+      await utils.branches.members.invalidate();
+      return true;
+    } catch {
+      return false;
     }
   };
   const roleCanSeeProfile =
@@ -229,6 +240,7 @@ export default function OfficeSettings() {
             online={workspace.online}
             pending={assignMember.isPending}
             onSave={saveMember}
+            onResetPassword={resetMemberPassword}
           />
         )}
         {workspace.role !== "admin" && (

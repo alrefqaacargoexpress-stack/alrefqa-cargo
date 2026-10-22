@@ -230,6 +230,8 @@ export function memberFromRow(row: any): OfficeMember {
     userId: row.userId,
     name: row.name ?? "",
     email: row.email ?? "",
+    isLocalAccount: row.loginMethod === "email" && Boolean(row.passwordHash),
+    mustChangePassword: Boolean(row.mustChangePassword),
     role,
     offices:
       row.offices === null || row.offices === undefined
@@ -251,6 +253,9 @@ export async function listMembers(db: any): Promise<OfficeMember[]> {
       rootRole: users.role,
       name: users.name,
       email: users.email,
+      loginMethod: users.loginMethod,
+      passwordHash: users.passwordHash,
+      mustChangePassword: users.mustChangePassword,
       memberRole: memberRoles.role,
       offices: memberRoles.offices,
       homeOffice: memberRoles.homeOffice,

@@ -7,6 +7,7 @@ import { branchSettingsCopyFor, officeName } from "@/lib/branchSettingsCopy";
 import {
   packingInputClass,
   packingPrimaryClass,
+  packingSecondaryClass,
 } from "@/components/packing/PackingPrimitives";
 
 const assignableRoles = [
@@ -98,6 +99,7 @@ type OfficeMembershipsProps = {
     homeOffice: OfficeId | null;
     expectedVersion: number;
   }) => Promise<OfficeMember | null>;
+  onResetPassword: (input: { userId: number; temporaryPassword: string }) => Promise<boolean>;
 };
 
 function draftFrom(member: OfficeMember): MemberDraft {
@@ -121,12 +123,14 @@ export default function OfficeMemberships({
   online,
   pending = false,
   onSave,
+  onResetPassword,
 }: OfficeMembershipsProps) {
   const { language } = useLanguage();
   const c = branchSettingsCopyFor(language);
   const [drafts, setDrafts] = useState<Record<number, MemberDraft>>({});
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
+  const [temporaryPasswords, setTemporaryPasswords] = useState<Record<number, string>>({});
 
   useEffect(() => {
     setDrafts(current => {
@@ -342,6 +346,42 @@ export default function OfficeMemberships({
                   >
                     {c.saveMember}
                   </button>
+                </div>
+              )}
+              {canEdit && !locked && member.isLocalAccount && (
+                <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3">
+                  <p className="text-sm font-bold text-amber-950">إعادة تعيين كلمة مرور الحساب</p>
+                  <p className="mt-1 text-xs leading-5 text-amber-900">ضع كلمة مرور مؤقتة من 8 أحرف على الأقل. سيُطلب من الموظف تغييرها عند أول دخول.</p>
+                  <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                    <input
+                      type="password"
+                      minLength={8}
+                      maxLength={128}
+                      value={temporaryPasswords[member.userId] ?? ""}
+                      onChange={event => setTemporaryPasswords(current => ({ ...current, [member.userId]: event.target.value }))}
+                      placeholder="كلمة مرور مؤقتة"
+                      className={packingInputClass}
+                      dir="ltr"
+                    />
+                    <button
+                      type="button"
+                      className={packingSecondaryClass}
+                      disabled={pending || !online || (temporaryPasswords[member.userId] ?? "").length < 8}
+                      onClick={async () => {
+                        setError("");
+                        setNotice("");
+                        const password = temporaryPasswords[member.userId] ?? "";
+                        if (!window.confirm(`سيتم إلغاء جلسات ${member.name || member.email} وتعيين كلمة مرور مؤقتة. متابعة؟`)) return;
+                        const ok = await onResetPassword({ userId: member.userId, temporaryPassword: password });
+                        if (ok) {
+                          setTemporaryPasswords(current => ({ ...current, [member.userId]: "" }));
+                          setNotice("تمت إعادة التعيين. سلّم كلمة المرور المؤقتة للموظف عبر وسيلة آمنة.");
+                        } else setError("تعذر إعادة تعيين كلمة المرور.");
+                      }}
+                    >
+                      إعادة التعيين
+                    </button>
+                  </div>
                 </div>
               )}
             </article>

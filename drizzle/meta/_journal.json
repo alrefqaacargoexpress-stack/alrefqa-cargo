@@ -50,6 +50,13 @@
       "when": 1792682124802,
       "tag": "0006_lying_tag",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "5",
+      "when": 1792684972781,
+      "tag": "0007_dashing_husk",
+      "breakpoints": true
     }
   ]
 }

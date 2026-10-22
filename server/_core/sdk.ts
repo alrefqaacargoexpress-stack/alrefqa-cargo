@@ -363,6 +363,7 @@ function buildCronUser(
     loginMethod: null,
     accountType: "employee",
     passwordHash: null,
+    mustChangePassword: false,
     role: "user",
     createdAt: now,
     updatedAt: now,

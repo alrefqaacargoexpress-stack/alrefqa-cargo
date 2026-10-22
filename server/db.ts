@@ -132,4 +132,10 @@ export async function deleteLocalSession(tokenHash: string) {
   await db.delete(localSessions).where(eq(localSessions.tokenHash, tokenHash));
 }
 
+export async function deleteLocalSessionsForUser(userId: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(localSessions).where(eq(localSessions.userId, userId));
+}
+
 // TODO: add feature queries here as your schema grows.

@@ -25,6 +25,7 @@ import { canViewFinance, canWrite, EMPTY_STATE } from "@shared/operations";
 import { officeSettingsSchema } from "@shared/office";
 import {
   memberRoles,
+  localSessions,
   recordKeys,
   records,
   syncReceipts,
@@ -235,7 +236,7 @@ export const appRouter = router({
           ...getSessionCookieOptions(ctx.req),
           maxAge: ONE_YEAR_MS,
         });
-        return { user: publicUser(user), accountType: user.accountType };
+        return { user: publicUser(user), accountType: user.accountType, mustChangePassword: Boolean(user.mustChangePassword) };
       }),
     signup: publicProcedure
       .input(
@@ -286,7 +287,22 @@ export const appRouter = router({
           ...getSessionCookieOptions(ctx.req),
           maxAge: ONE_YEAR_MS,
         });
-        return { user: publicUser(user), accountType: user.accountType };
+        return { user: publicUser(user), accountType: user.accountType, mustChangePassword: Boolean(user.mustChangePassword) };
+      }),
+    changePassword: protectedProcedure
+      .input(z.object({ newPassword: z.string().min(8).max(128) }).strict())
+      .mutation(async ({ ctx, input }) => {
+        if (ctx.user.loginMethod !== "email" || !ctx.user.passwordHash)
+          throw new TRPCError({ code: "BAD_REQUEST", message: "email_account_required" });
+        const db = await dbOrThrow();
+        await db
+          .update(users)
+          .set({
+            passwordHash: await hashPassword(input.newPassword),
+            mustChangePassword: false,
+          })
+          .where(eq(users.id, ctx.user.id));
+        return { success: true } as const;
       }),
     logout: publicProcedure.mutation(async ({ ctx }) => {
       const cookies = parseCookieHeader(ctx.req.headers.cookie ?? "");
@@ -586,6 +602,9 @@ export const appRouter = router({
           rootRole: users.role,
           name: users.name,
           email: users.email,
+          accountType: users.accountType,
+          loginMethod: users.loginMethod,
+          mustChangePassword: users.mustChangePassword,
           role: memberRoles.role,
         })
         .from(users)
@@ -594,6 +613,9 @@ export const appRouter = router({
         userId: row.userId,
         name: row.name ?? "",
         email: row.email ?? "",
+        accountType: row.accountType,
+        isLocalAccount: row.loginMethod === "email",
+        mustChangePassword: Boolean(row.mustChangePassword),
         role:
           row.role ??
           ((ENV.ownerOpenId && row.openId === ENV.ownerOpenId) ||
@@ -602,6 +624,58 @@ export const appRouter = router({
             : null),
       }));
     }),
+
+    resetPassword: protectedProcedure
+      .input(
+        z.object({
+          userId: z.number().int().positive(),
+          temporaryPassword: z.string().min(8).max(128),
+        }).strict()
+      )
+      .mutation(async ({ ctx, input }) => {
+        const actorRole = await effectiveRole(ctx.user);
+        if (actorRole !== "admin") throw forbidden();
+        const db = await dbOrThrow();
+        return db.transaction(async (tx: any) => {
+          const rows = await tx
+            .select({
+              id: users.id,
+              openId: users.openId,
+              name: users.name,
+              email: users.email,
+              role: users.role,
+              loginMethod: users.loginMethod,
+            })
+            .from(users)
+            .where(eq(users.id, input.userId))
+            .limit(1);
+          const target = rows[0];
+          if (!target) throw new TRPCError({ code: "NOT_FOUND" });
+          if (target.role === "admin" || (ENV.ownerOpenId && target.openId === ENV.ownerOpenId))
+            throw forbidden("The root admin password cannot be reset here");
+          if (target.loginMethod !== "email" || !target.email)
+            throw new TRPCError({ code: "BAD_REQUEST", message: "email_account_required" });
+          await tx
+            .update(users)
+            .set({ passwordHash: await hashPassword(input.temporaryPassword), mustChangePassword: true })
+            .where(eq(users.id, input.userId));
+          await tx
+            .delete(localSessions)
+            .where(eq(localSessions.userId, input.userId));
+          await appendAudit(tx, {
+            actor: actor(ctx.user, "admin"),
+            entity: "user_account",
+            recordId: String(input.userId),
+            action: "password_reset_by_admin",
+            before: { email: target.email },
+            after: { email: target.email, mustChangePassword: true },
+            beforeVersion: 0,
+            afterVersion: 1,
+            requestKey: `password-reset:${input.userId}:${Date.now()}`,
+          });
+          return { userId: target.id, name: target.name ?? "", email: target.email, mustChangePassword: true };
+        });
+      }),
 
     setRole: protectedProcedure
       .input(setRoleInputSchema)

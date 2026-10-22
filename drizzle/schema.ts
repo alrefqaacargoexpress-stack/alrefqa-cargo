@@ -3,6 +3,7 @@ import {
   json,
   mysqlEnum,
   mysqlTable,
+  boolean,
   text,
   timestamp,
   varchar,
@@ -20,6 +21,7 @@ export const users = mysqlTable("users", {
     .default("employee")
     .notNull(),
   passwordHash: varchar("passwordHash", { length: 255 }),
+  mustChangePassword: boolean("mustChangePassword").default(false).notNull(),
   role: mysqlEnum("role", ["user", "admin"]).default("user").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),

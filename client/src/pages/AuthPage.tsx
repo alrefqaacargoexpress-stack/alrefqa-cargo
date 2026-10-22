@@ -5,7 +5,7 @@ import { ArrowRight, BriefcaseBusiness, CheckCircle2, Home, LockKeyhole, UserRou
 import { useState } from "react";
 import { Link, useLocation } from "wouter";
 
-type Mode = "login" | "signup";
+type Mode = "login" | "signup" | "change";
 type AccountType = "customer" | "employee";
 
 const copy = {
@@ -34,6 +34,10 @@ const copy = {
     switchToLogin: "لديك حساب؟ سجّل الدخول",
     switchToSignup: "ليس لديك حساب؟ أنشئ حسابًا",
     localNote: "بيانات الدخول تُعالج داخل مؤسسة الرفكة ولا تُرسل إلى صفحة Manus.",
+    changePassword: "تغيير كلمة المرور",
+    changePasswordHint: "هذه كلمة مرور مؤقتة. اختر كلمة مرور جديدة قبل متابعة العمل.",
+    changeSubmit: "حفظ كلمة المرور الجديدة",
+    passwordChanged: "تم تغيير كلمة المرور بنجاح.",
   },
   en: {
     title: "Sign in to Al-Rafqaa Shipping",
@@ -60,6 +64,10 @@ const copy = {
     switchToLogin: "Already have an account? Sign in",
     switchToSignup: "Need an account? Create one",
     localNote: "Your credentials are handled inside Al-Rafqaa and are not sent to a Manus page.",
+    changePassword: "Change password",
+    changePasswordHint: "This is a temporary password. Choose a new password before continuing.",
+    changeSubmit: "Save new password",
+    passwordChanged: "Password changed successfully.",
   },
   zh: {
     title: "登录 Al-Rafqaa 运输",
@@ -86,6 +94,10 @@ const copy = {
     switchToLogin: "已有账户？登录",
     switchToSignup: "没有账户？创建账户",
     localNote: "登录信息在 Al-Rafqaa 网站内处理，不会发送到 Manus 页面。",
+    changePassword: "更改密码",
+    changePasswordHint: "这是临时密码。继续之前请选择新密码。",
+    changeSubmit: "保存新密码",
+    passwordChanged: "密码修改成功。",
   },
   tr: {
     title: "Al-Rafqaa Kargo hesabına giriş",
@@ -112,6 +124,10 @@ const copy = {
     switchToLogin: "Hesabınız var mı? Giriş yapın",
     switchToSignup: "Hesabınız yok mu? Oluşturun",
     localNote: "Giriş bilgileriniz Al-Rafqaa içinde işlenir ve bir Manus sayfasına gönderilmez.",
+    changePassword: "Şifreyi değiştir",
+    changePasswordHint: "Bu geçici bir şifredir. Devam etmeden önce yeni bir şifre seçin.",
+    changeSubmit: "Yeni şifreyi kaydet",
+    passwordChanged: "Şifre başarıyla değiştirildi.",
   },
 } as const;
 
@@ -125,13 +141,17 @@ export default function AuthPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
+  const [mustChangePassword, setMustChangePassword] = useState(false);
 
   const utils = trpc.useUtils();
   const loginMutation = trpc.auth.login.useMutation({
     onSuccess: async result => {
       utils.auth.me.setData(undefined, result.user);
       setNotice(null);
-      navigate(result.accountType === "employee" ? "/operations" : "/");
+      if (result.mustChangePassword) {
+        setMustChangePassword(true);
+        setMode("change");
+      } else navigate(result.accountType === "employee" ? "/operations" : "/");
     },
   });
   const signupMutation = trpc.auth.signup.useMutation({
@@ -144,8 +164,15 @@ export default function AuthPage() {
       if (result.accountType === "customer") navigate("/");
     },
   });
+  const changePasswordMutation = trpc.auth.changePassword.useMutation({
+    onSuccess: () => {
+      setMustChangePassword(false);
+      setNotice(c.passwordChanged);
+      navigate(accountType === "employee" ? "/operations" : "/");
+    },
+  });
 
-  const mutation = mode === "login" ? loginMutation : signupMutation;
+  const mutation = mode === "login" ? loginMutation : mode === "signup" ? signupMutation : changePasswordMutation;
   const errorCode = mutation.error?.data?.code;
   const errorMessage = mutation.error
     ? errorCode === "CONFLICT" && mode === "signup"
@@ -156,6 +183,10 @@ export default function AuthPage() {
   const submit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setNotice(null);
+    if (mode === "change") {
+      changePasswordMutation.mutate({ newPassword: password });
+      return;
+    }
     if (mode === "login") {
       loginMutation.mutate({ email, password, accountType });
       return;
@@ -195,16 +226,16 @@ export default function AuthPage() {
               <LanguageSwitcher />
             </div>
             <div className="mb-7">
-              <div className="mb-5 flex rounded-xl bg-[#f1f5f2] p-1">
+              {mode !== "change" && <div className="mb-5 flex rounded-xl bg-[#f1f5f2] p-1">
                 <button type="button" onClick={() => { setMode("login"); setNotice(null); }} className={`flex-1 rounded-lg px-3 py-2.5 text-sm font-bold transition ${mode === "login" ? "bg-white text-[#092d50] shadow-sm" : "text-[#71818b]"}`}>
                   {c.login}
                 </button>
                 <button type="button" onClick={() => { setMode("signup"); setNotice(null); }} className={`flex-1 rounded-lg px-3 py-2.5 text-sm font-bold transition ${mode === "signup" ? "bg-white text-[#092d50] shadow-sm" : "text-[#71818b]"}`}>
                   {c.signup}
                 </button>
-              </div>
-              <h2 className="text-2xl font-black">{mode === "login" ? c.login : c.signup}</h2>
-              <p className="mt-2 text-sm leading-6 text-[#71818b]">{c.subtitle}</p>
+              </div>}
+              <h2 className="text-2xl font-black">{mode === "change" ? c.changePassword : mode === "login" ? c.login : c.signup}</h2>
+              <p className="mt-2 text-sm leading-6 text-[#71818b]">{mode === "change" ? c.changePasswordHint : c.subtitle}</p>
             </div>
 
             <form onSubmit={submit} className="space-y-5">
@@ -221,31 +252,31 @@ export default function AuthPage() {
               <label className="block">
                 <span className="mb-2 flex items-center justify-between text-sm font-bold">
                   <span>{c.password}</span>
-                  {mode === "signup" && <span className="text-xs font-normal text-[#71818b]">{c.passwordHint}</span>}
+                  {(mode === "signup" || mode === "change") && <span className="text-xs font-normal text-[#71818b]">{c.passwordHint}</span>}
                 </span>
                 <input required type="password" minLength={8} maxLength={128} value={password} onChange={event => setPassword(event.target.value)} className="w-full rounded-xl border border-[#d5e0e4] bg-[#fbfcfa] px-4 py-3 outline-none transition focus:border-[#092d50] focus:ring-2 focus:ring-[#092d50]/10" autoComplete={mode === "login" ? "current-password" : "new-password"} dir="ltr" />
               </label>
 
-              <fieldset>
+              {mode !== "change" && <fieldset>
                 <legend className="mb-3 text-sm font-bold">{c.accountType}</legend>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <AccountChoice selected={accountType === "customer"} onClick={() => setAccountType("customer")} icon={<UserRound size={19} />} title={c.customer} description={c.customerHint} />
                   <AccountChoice selected={accountType === "employee"} onClick={() => setAccountType("employee")} icon={<BriefcaseBusiness size={19} />} title={c.employee} description={c.employeeHint} />
                 </div>
-              </fieldset>
+              </fieldset>}
 
               {errorMessage && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm leading-6 text-red-700">{errorMessage}</p>}
               {notice && <p className="flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm leading-6 text-emerald-800"><CheckCircle2 className="mt-0.5 shrink-0" size={17} />{notice}</p>}
 
               <button type="submit" disabled={mutation.isPending} className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#092d50] px-4 py-3.5 font-bold text-white shadow-lg shadow-[#092d50]/15 transition hover:bg-[#123f68] disabled:cursor-not-allowed disabled:opacity-60">
-                {mutation.isPending ? c.loading : mode === "login" ? c.submitLogin : c.submitSignup}
+                {mutation.isPending ? c.loading : mode === "change" ? c.changeSubmit : mode === "login" ? c.submitLogin : c.submitSignup}
                 {!mutation.isPending && <ArrowRight size={17} className={dir === "rtl" ? "rotate-180" : ""} />}
               </button>
             </form>
 
-            <button type="button" onClick={() => { setMode(mode === "login" ? "signup" : "login"); setNotice(null); }} className="mt-6 w-full text-center text-sm font-bold text-[#486a7f] hover:text-[#092d50]">
+            {!mustChangePassword && <button type="button" onClick={() => { setMode(mode === "login" ? "signup" : "login"); setNotice(null); }} className="mt-6 w-full text-center text-sm font-bold text-[#486a7f] hover:text-[#092d50]">
               {mode === "login" ? c.switchToSignup : c.switchToLogin}
-            </button>
+            </button>}
             <Link href="/" className="mt-4 flex items-center justify-center gap-2 text-sm text-[#71818b] hover:text-[#092d50]">
               <Home size={15} />{c.backHome}
             </Link>
