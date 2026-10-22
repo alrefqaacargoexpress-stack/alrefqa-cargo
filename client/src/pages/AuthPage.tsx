@@ -1,5 +1,6 @@
 import LanguageSwitcher from "@/components/LanguageSwitcher";
 import { useLanguage } from "@/contexts/LanguageContext";
+import { startManusLogin } from "@/const";
 import { trpc } from "@/lib/trpc";
 import { ArrowRight, BriefcaseBusiness, CheckCircle2, Home, LockKeyhole, UserRound } from "lucide-react";
 import { useState } from "react";
@@ -38,6 +39,8 @@ const copy = {
     changePasswordHint: "هذه كلمة مرور مؤقتة. اختر كلمة مرور جديدة قبل متابعة العمل.",
     changeSubmit: "حفظ كلمة المرور الجديدة",
     passwordChanged: "تم تغيير كلمة المرور بنجاح.",
+    legacyManager: "دخول المدير الحالي عبر Manus",
+    legacyManagerHint: "استخدم هذا الخيار فقط إذا كان حساب المدير أُنشئ سابقًا عبر Manus.",
   },
   en: {
     title: "Sign in to Al-Rafqaa Shipping",
@@ -68,6 +71,8 @@ const copy = {
     changePasswordHint: "This is a temporary password. Choose a new password before continuing.",
     changeSubmit: "Save new password",
     passwordChanged: "Password changed successfully.",
+    legacyManager: "Current manager sign-in via Manus",
+    legacyManagerHint: "Use this only if the manager account was created through Manus.",
   },
   zh: {
     title: "登录 Al-Rafqaa 运输",
@@ -98,6 +103,8 @@ const copy = {
     changePasswordHint: "这是临时密码。继续之前请选择新密码。",
     changeSubmit: "保存新密码",
     passwordChanged: "密码修改成功。",
+    legacyManager: "通过 Manus 登录现有管理员",
+    legacyManagerHint: "仅当管理员账户之前通过 Manus 创建时使用此选项。",
   },
   tr: {
     title: "Al-Rafqaa Kargo hesabına giriş",
@@ -128,6 +135,8 @@ const copy = {
     changePasswordHint: "Bu geçici bir şifredir. Devam etmeden önce yeni bir şifre seçin.",
     changeSubmit: "Yeni şifreyi kaydet",
     passwordChanged: "Şifre başarıyla değiştirildi.",
+    legacyManager: "Mevcut yönetici için Manus ile giriş",
+    legacyManagerHint: "Bu seçeneği yalnızca yönetici hesabı daha önce Manus ile oluşturulduysa kullanın.",
   },
 } as const;
 
@@ -277,6 +286,19 @@ export default function AuthPage() {
             {!mustChangePassword && <button type="button" onClick={() => { setMode(mode === "login" ? "signup" : "login"); setNotice(null); }} className="mt-6 w-full text-center text-sm font-bold text-[#486a7f] hover:text-[#092d50]">
               {mode === "login" ? c.switchToSignup : c.switchToLogin}
             </button>}
+            {mode === "login" && (
+              <div className="mt-5 rounded-xl border border-[#dce4e7] bg-[#f8faf9] p-4">
+                <p className="text-sm font-bold text-[#092d50]">{c.legacyManager}</p>
+                <p className="mt-1 text-xs leading-5 text-[#71818b]">{c.legacyManagerHint}</p>
+                <button
+                  type="button"
+                  onClick={() => startManusLogin()}
+                  className="mt-3 w-full rounded-xl border border-[#092d50] bg-white px-4 py-3 text-sm font-bold text-[#092d50] transition hover:bg-[#eef4f7]"
+                >
+                  {c.legacyManager}
+                </button>
+              </div>
+            )}
             <Link href="/" className="mt-4 flex items-center justify-center gap-2 text-sm text-[#71818b] hover:text-[#092d50]">
               <Home size={15} />{c.backHome}
             </Link>
