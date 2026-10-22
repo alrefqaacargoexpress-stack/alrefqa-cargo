@@ -78,6 +78,13 @@
       "when": 1792689250531,
       "tag": "0010_typical_scrambler",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "5",
+      "when": 1792709613148,
+      "tag": "0011_chemical_amphibian",
+      "breakpoints": true
     }
   ]
 }

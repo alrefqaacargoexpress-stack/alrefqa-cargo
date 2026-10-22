@@ -3,11 +3,15 @@ import { Link, useLocation, useSearch } from "wouter";
 import type { OfficeId } from "@shared/branches";
 import {
   financeCurrencies,
+  type FinanceCommand,
   summarizeCustomerDebts,
   summarizeOfficeFinance,
   type FinanceCurrency,
   type FinanceEntry,
+  canWriteFinance,
 } from "@shared/finance";
+import { sourceCurrency } from "@shared/packing";
+import type { Shipment } from "@shared/operations";
 import PackingLayout from "@/components/packing/PackingLayout";
 import FinanceExcelPanel from "@/components/finance/FinanceExcelPanel";
 import OfficeExpenseForm from "@/components/finance/OfficeExpenseForm";
@@ -20,10 +24,94 @@ import {
   type OfficeFinanceCopy,
 } from "@/lib/officeFinanceCopy";
 import {
+  PackingField,
   packingInputClass,
   packingPrimaryClass,
   packingSecondaryClass,
 } from "@/components/packing/PackingPrimitives";
+
+function uuid() {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto)
+    return crypto.randomUUID();
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+export function createOpeningBalanceCommand(input: {
+  officeId: OfficeId;
+  currency: FinanceCurrency;
+  direction: "debit" | "credit";
+  date: string;
+  amount: number;
+  note: string;
+}): FinanceCommand {
+  const commandId = uuid();
+  return {
+    id: commandId,
+    createdAt: new Date().toISOString(),
+    kind: "opening_balance",
+    payload: {
+      openingId: `opening-${uuid()}`,
+      officeId: input.officeId,
+      currency: input.currency,
+      direction: input.direction,
+      date: input.date,
+      amount: input.amount,
+      note: input.note.trim(),
+    },
+  };
+}
+
+export function createShipmentPriceCommand(input: {
+  shipmentId: string;
+  sourceOfficeId: OfficeId;
+  pricePerKg: number;
+  pricePerKgMRU?: number;
+  expectedVersion: number;
+}): FinanceCommand {
+  const commandId = uuid();
+  return {
+    id: commandId,
+    createdAt: new Date().toISOString(),
+    kind: "shipment_price",
+    payload: {
+      shipmentId: input.shipmentId,
+      sourceOfficeId: input.sourceOfficeId,
+      pricePerKg: input.pricePerKg,
+      ...(input.pricePerKgMRU === undefined
+        ? {}
+        : { pricePerKgMRU: input.pricePerKgMRU }),
+      expectedVersion: input.expectedVersion,
+    },
+  };
+}
+
+export function financeCashBalance(
+  entries: readonly FinanceEntry[],
+  officeId: OfficeId,
+  currency: FinanceCurrency
+) {
+  let cents = 0;
+  for (const entry of entries) {
+    if (entry.officeId !== officeId || entry.currency !== currency) continue;
+    const signed =
+      entry.kind === "opening_balance"
+        ? entry.direction === "debit"
+          ? -entry.amount
+          : entry.amount
+        : entry.kind === "collection" ||
+            entry.kind === "debt_payment" ||
+            entry.kind === "customer_credit"
+          ? entry.amount
+          : entry.kind === "customer_debit" ||
+              entry.kind === "daily_expense" ||
+              entry.kind === "monthly_expense" ||
+              entry.kind === "shipment_cost"
+            ? -entry.amount
+            : 0;
+    cents += Math.round(signed * 100);
+  }
+  return cents / 100;
+}
 
 const kindLabels = (
   c: OfficeFinanceCopy
@@ -38,6 +126,7 @@ const kindLabels = (
   collection: c.collection,
   customer_credit: c.customerCredit,
   customer_debit: c.customerDebit,
+  opening_balance: c.openingBalance,
 });
 
 function formatMoney(
@@ -142,7 +231,162 @@ export default function OfficeFinance() {
     finance.role === "admin" ||
     finance.role === "accountant" ||
     finance.role === "office_manager";
+  const canWrite = canWriteFinance({
+    role: finance.role,
+    offices: finance.offices,
+    homeOffice: finance.homeOffice,
+  });
   const shipmentSource = finance.base.state.shipments;
+  const snapshot = finance.store?.snapshot;
+  const shipmentReceivables =
+    snapshot?.shipmentReceivables ?? snapshot?.receivables ?? [];
+  const accountantHomeOnly =
+    canWrite && finance.role === "accountant" && allowedOffices.length === 1;
+  const [openingCurrency, setOpeningCurrency] =
+    useState<FinanceCurrency>("MRU");
+  const [openingDirection, setOpeningDirection] = useState<"debit" | "credit">(
+    "debit"
+  );
+  const [openingDate, setOpeningDate] = useState(
+    new Date().toISOString().slice(0, 10)
+  );
+  const [openingAmount, setOpeningAmount] = useState("");
+  const [openingNote, setOpeningNote] = useState("");
+  const [openingNotice, setOpeningNotice] = useState("");
+  const [openingError, setOpeningError] = useState("");
+  const [openingBusy, setOpeningBusy] = useState(false);
+  const openingOffice = accountantHomeOnly ? allowedOffices[0] : undefined;
+  const openingExists = Boolean(
+    openingOffice &&
+      (finance.entries.some(
+        entry =>
+          entry.kind === "opening_balance" &&
+          entry.officeId === openingOffice &&
+          entry.currency === openingCurrency
+      ) ||
+        finance.commands.some(
+          command =>
+            command.kind === "opening_balance" &&
+            command.payload.officeId === openingOffice &&
+            command.payload.currency === openingCurrency
+        ))
+  );
+  const priceableShipments = useMemo(
+    () =>
+      shipmentSource.filter(
+        shipment =>
+          !shipment.deleted &&
+          Boolean(shipment.packing) &&
+          accountantHomeOnly &&
+          shipment.packing?.source === openingOffice
+      ),
+    [accountantHomeOnly, openingOffice, shipmentSource]
+  );
+  const [priceShipmentId, setPriceShipmentId] = useState("");
+  const [pricePerKg, setPricePerKg] = useState("");
+  const [pricePerKgMRU, setPricePerKgMRU] = useState("");
+  const [priceNotice, setPriceNotice] = useState("");
+  const [priceError, setPriceError] = useState("");
+  const [priceBusy, setPriceBusy] = useState(false);
+  const priceShipment = priceableShipments.find(s => s.id === priceShipmentId);
+  const priceAlreadyPending = Boolean(
+    priceShipment &&
+      finance.commands.some(
+        command =>
+          command.kind === "shipment_price" &&
+          command.payload.shipmentId === priceShipment.id
+      )
+  );
+
+  useEffect(() => {
+    if (!priceableShipments.some(shipment => shipment.id === priceShipmentId))
+      setPriceShipmentId(priceableShipments[0]?.id ?? "");
+  }, [priceShipmentId, priceableShipments]);
+
+  const saveOpening = async () => {
+    setOpeningError("");
+    setOpeningNotice("");
+    const amount = Number(openingAmount);
+    if (!openingOffice || !accountantHomeOnly) return;
+    if (
+      openingExists ||
+      !openingDate ||
+      !openingNote.trim() ||
+      !openingAmount.trim() ||
+      !Number.isFinite(amount) ||
+      amount <= 0
+    ) {
+      setOpeningError(
+        openingExists ? c.openingAlreadyExists : c.openingRequired
+      );
+      return;
+    }
+    setOpeningBusy(true);
+    try {
+      if (
+        await finance.saveCommand(
+          createOpeningBalanceCommand({
+            officeId: openingOffice,
+            currency: openingCurrency,
+            direction: openingDirection,
+            date: openingDate,
+            amount,
+            note: openingNote,
+          })
+        )
+      ) {
+        setOpeningAmount("");
+        setOpeningNote("");
+        setOpeningNotice(c.openingSaved);
+      }
+    } finally {
+      setOpeningBusy(false);
+    }
+  };
+
+  const saveShipmentPrice = async () => {
+    setPriceError("");
+    setPriceNotice("");
+    const sourceOffice = priceShipment?.packing?.source as OfficeId | undefined;
+    const amount = Number(pricePerKg);
+    const mruAmount = pricePerKgMRU.trim() ? Number(pricePerKgMRU) : undefined;
+    if (
+      !priceShipment ||
+      !sourceOffice ||
+      !accountantHomeOnly ||
+      priceAlreadyPending ||
+      !pricePerKg.trim() ||
+      !Number.isFinite(amount) ||
+      amount < 0 ||
+      (mruAmount !== undefined &&
+        (!Number.isFinite(mruAmount) || mruAmount < 0))
+    ) {
+      setPriceError(
+        priceAlreadyPending ? c.priceAlreadyPending : c.priceRequired
+      );
+      return;
+    }
+    setPriceBusy(true);
+    try {
+      if (
+        await finance.saveCommand(
+          createShipmentPriceCommand({
+            shipmentId: priceShipment.id,
+            sourceOfficeId: sourceOffice,
+            pricePerKg: amount,
+            ...(mruAmount === undefined ? {} : { pricePerKgMRU: mruAmount }),
+            expectedVersion: priceShipment.version ?? 1,
+          })
+        )
+      ) {
+        setPricePerKg("");
+        setPricePerKgMRU("");
+        setPriceNotice(c.priceSaved);
+      }
+    } finally {
+      setPriceBusy(false);
+    }
+  };
 
   const sync = async () => {
     setSyncNotice("");
@@ -237,7 +481,7 @@ export default function OfficeFinance() {
                 >
                   {c.billing}
                 </Link>
-                {finance.commands.length > 0 && (
+                {finance.commands.length > 0 && canWrite && (
                   <button
                     className={packingPrimaryClass}
                     disabled={
@@ -329,6 +573,27 @@ export default function OfficeFinance() {
                         language
                       )}
                     />
+                    <Metric
+                      label={c.openingBalance}
+                      value={formatMoney(
+                        summary.openingBalance,
+                        summary.currency,
+                        language
+                      )}
+                    />
+                    <Metric
+                      label={c.cashBalance}
+                      value={formatMoney(
+                        financeCashBalance(
+                          visibleEntries,
+                          summary.officeId,
+                          summary.currency
+                        ),
+                        summary.currency,
+                        language
+                      )}
+                      tone="blue"
+                    />
                   </dl>
                 </article>
               ))}
@@ -343,22 +608,321 @@ export default function OfficeFinance() {
             </p>
           </section>
 
-          <FinanceExcelPanel
-            key={finance.base.userId ?? "local"}
-            workspace={finance}
-          />
+          <section className="rounded-2xl border border-[#dce4e7] bg-white p-5 shadow-sm">
+            <div className="border-b border-[#edf1f1] pb-4">
+              <h2 className="text-lg font-black text-[#092d50]">
+                {c.sourceReceivables}
+              </h2>
+              <p className="mt-1 text-sm text-[#718088]">
+                {c.sourceReceivablesHint}
+              </p>
+            </div>
+            <div className="mt-4 grid gap-4 lg:grid-cols-2">
+              {shipmentReceivables
+                .filter(
+                  row =>
+                    selectedOffice === "all" || row.officeId === selectedOffice
+                )
+                .map(row => (
+                  <article
+                    key={`${row.officeId}-${row.currency}`}
+                    className="rounded-xl bg-[#f7f9f8] p-4"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <strong>{officeName(language, row.officeId)}</strong>
+                      <span className="font-black" dir="ltr">
+                        {formatMoney(row.total, row.currency, language)}
+                      </span>
+                    </div>
+                    <div className="mt-3 space-y-2 text-sm">
+                      {row.shipments.map(shipment => (
+                        <div
+                          key={shipment.shipmentId}
+                          className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-white px-3 py-2"
+                        >
+                          <span>
+                            <b>{shipment.tracking}</b>
+                            <span className="ms-2 text-xs text-[#718088]">
+                              {shipment.shipmentId}
+                            </span>
+                          </span>
+                          <span className="font-mono font-bold" dir="ltr">
+                            {formatMoney(
+                              shipment.amount,
+                              row.currency,
+                              language
+                            )}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </article>
+                ))}
+            </div>
+            {!shipmentReceivables.some(
+              row => selectedOffice === "all" || row.officeId === selectedOffice
+            ) && (
+              <p className="mt-4 rounded-xl bg-slate-50 p-4 text-sm text-[#718088]">
+                {c.noSourceReceivables}
+              </p>
+            )}
+          </section>
 
-          <OfficeExpenseForm
-            key={finance.base.userId ?? "local"}
-            allowedOffices={allowedOffices}
-            initialOffice={
-              selectedOffice === "all" ? firstOffice : selectedOffice
-            }
-            shipments={shipmentSource}
-            canEdit={finance.canEdit}
-            online={finance.online}
-            saveCommand={finance.saveCommand}
-          />
+          {canWrite ? (
+            <>
+              {accountantHomeOnly && (
+                <>
+                  <section className="rounded-2xl border border-[#dce4e7] bg-white p-5 shadow-sm">
+                    <div className="border-b border-[#edf1f1] pb-4">
+                      <h2 className="text-lg font-black text-[#092d50]">
+                        {c.addOpeningBalance}
+                      </h2>
+                      <p className="mt-1 text-sm text-[#718088]">
+                        {c.openingOnceHint}
+                      </p>
+                    </div>
+                    <div className="mt-4 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                      <PackingField label={c.office} required>
+                        <select
+                          className={packingInputClass}
+                          value={openingOffice ?? ""}
+                          disabled
+                        >
+                          {openingOffice && (
+                            <option value={openingOffice}>
+                              {officeName(language, openingOffice)}
+                            </option>
+                          )}
+                        </select>
+                      </PackingField>
+                      <PackingField label={c.currency} required>
+                        <select
+                          className={packingInputClass}
+                          value={openingCurrency}
+                          disabled={openingBusy}
+                          onChange={event =>
+                            setOpeningCurrency(
+                              event.target.value as FinanceCurrency
+                            )
+                          }
+                        >
+                          {financeCurrencies.map(currency => (
+                            <option key={currency} value={currency}>
+                              {currency}
+                            </option>
+                          ))}
+                        </select>
+                      </PackingField>
+                      <PackingField label={c.openingDirection} required>
+                        <select
+                          className={packingInputClass}
+                          value={openingDirection}
+                          disabled={openingBusy || openingExists}
+                          onChange={event =>
+                            setOpeningDirection(
+                              event.target.value as "debit" | "credit"
+                            )
+                          }
+                        >
+                          <option value="debit">{c.debit}</option>
+                          <option value="credit">{c.credit}</option>
+                        </select>
+                      </PackingField>
+                      <PackingField label={c.date} required>
+                        <input
+                          className={packingInputClass}
+                          type="date"
+                          value={openingDate}
+                          disabled={openingBusy || openingExists}
+                          onChange={event => setOpeningDate(event.target.value)}
+                        />
+                      </PackingField>
+                      <PackingField label={c.amount} required>
+                        <input
+                          className={packingInputClass}
+                          type="number"
+                          min="0.01"
+                          step="0.01"
+                          value={openingAmount}
+                          disabled={openingBusy || openingExists}
+                          onChange={event =>
+                            setOpeningAmount(event.target.value)
+                          }
+                        />
+                      </PackingField>
+                      <PackingField label={c.note} required>
+                        <input
+                          className={packingInputClass}
+                          maxLength={500}
+                          value={openingNote}
+                          disabled={openingBusy || openingExists}
+                          onChange={event => setOpeningNote(event.target.value)}
+                        />
+                      </PackingField>
+                    </div>
+                    {openingExists && (
+                      <p className="mt-3 rounded-xl bg-amber-50 p-3 text-sm font-bold text-amber-900">
+                        {c.openingAlreadyExists}
+                      </p>
+                    )}
+                    {openingError && (
+                      <p
+                        role="alert"
+                        className="mt-3 rounded-xl bg-red-50 p-3 text-sm font-bold text-red-900"
+                      >
+                        {openingError}
+                      </p>
+                    )}
+                    {openingNotice && (
+                      <p
+                        role="status"
+                        className="mt-3 rounded-xl bg-emerald-50 p-3 text-sm font-bold text-emerald-900"
+                      >
+                        {openingNotice}
+                      </p>
+                    )}
+                    <button
+                      className={`${packingPrimaryClass} mt-4`}
+                      type="button"
+                      disabled={openingBusy || openingExists}
+                      onClick={() => void saveOpening()}
+                    >
+                      {openingBusy ? c.saving : c.saveOpening}
+                    </button>
+                  </section>
+
+                  <section className="rounded-2xl border border-[#dce4e7] bg-white p-5 shadow-sm">
+                    <div className="border-b border-[#edf1f1] pb-4">
+                      <h2 className="text-lg font-black text-[#092d50]">
+                        {c.setShipmentPrice}
+                      </h2>
+                      <p className="mt-1 text-sm text-[#718088]">
+                        {c.shipmentPriceHint}
+                      </p>
+                    </div>
+                    <div className="mt-4 grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+                      <PackingField label={c.shipment} required>
+                        <select
+                          className={packingInputClass}
+                          value={priceShipmentId}
+                          disabled={priceBusy || !priceableShipments.length}
+                          onChange={event =>
+                            setPriceShipmentId(event.target.value)
+                          }
+                        >
+                          {!priceableShipments.length && (
+                            <option value="">{c.noPriceableShipments}</option>
+                          )}
+                          {priceableShipments.map(shipment => (
+                            <option key={shipment.id} value={shipment.id}>
+                              {shipment.tracking} · {shipment.id}
+                            </option>
+                          ))}
+                        </select>
+                      </PackingField>
+                      <PackingField
+                        label={
+                          priceShipment?.packing?.source
+                            ? `${c.pricePerKg} (${sourceCurrency[priceShipment.packing.source]})`
+                            : c.pricePerKg
+                        }
+                        required
+                      >
+                        <input
+                          className={packingInputClass}
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={pricePerKg}
+                          disabled={
+                            priceBusy || priceAlreadyPending || !priceShipment
+                          }
+                          onChange={event => setPricePerKg(event.target.value)}
+                        />
+                      </PackingField>
+                      <PackingField label={c.pricePerKgMRU}>
+                        <input
+                          className={packingInputClass}
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={pricePerKgMRU}
+                          disabled={
+                            priceBusy || priceAlreadyPending || !priceShipment
+                          }
+                          onChange={event =>
+                            setPricePerKgMRU(event.target.value)
+                          }
+                        />
+                      </PackingField>
+                      <PackingField label={c.expectedVersion}>
+                        <input
+                          className={`${packingInputClass} bg-slate-50`}
+                          value={priceShipment?.version ?? 1}
+                          readOnly
+                        />
+                      </PackingField>
+                    </div>
+                    {priceAlreadyPending && (
+                      <p className="mt-3 rounded-xl bg-amber-50 p-3 text-sm font-bold text-amber-900">
+                        {c.priceAlreadyPending}
+                      </p>
+                    )}
+                    {priceError && (
+                      <p
+                        role="alert"
+                        className="mt-3 rounded-xl bg-red-50 p-3 text-sm font-bold text-red-900"
+                      >
+                        {priceError}
+                      </p>
+                    )}
+                    {priceNotice && (
+                      <p
+                        role="status"
+                        className="mt-3 rounded-xl bg-emerald-50 p-3 text-sm font-bold text-emerald-900"
+                      >
+                        {priceNotice}
+                      </p>
+                    )}
+                    <button
+                      className={`${packingPrimaryClass} mt-4`}
+                      type="button"
+                      disabled={
+                        priceBusy || priceAlreadyPending || !priceShipment
+                      }
+                      onClick={() => void saveShipmentPrice()}
+                    >
+                      {priceBusy ? c.saving : c.saveShipmentPrice}
+                    </button>
+                  </section>
+                </>
+              )}
+              <FinanceExcelPanel
+                key={finance.base.userId ?? "local"}
+                workspace={finance}
+              />
+              <OfficeExpenseForm
+                key={finance.base.userId ?? "local"}
+                allowedOffices={allowedOffices}
+                initialOffice={
+                  selectedOffice === "all" ? firstOffice : selectedOffice
+                }
+                shipments={shipmentSource}
+                canEdit={canWrite && finance.canEdit}
+                online={finance.online}
+                saveCommand={finance.saveCommand}
+                {...({
+                  role: finance.role,
+                  homeOffice: finance.homeOffice,
+                  newReadonlyPolicy: !accountantHomeOnly,
+                } as Record<string, unknown>)}
+              />
+            </>
+          ) : (
+            <p className="rounded-2xl border border-[#dce4e7] bg-white p-4 text-sm text-[#52636e] shadow-sm">
+              {c.readOnlyFinance}
+            </p>
+          )}
 
           <section className="rounded-2xl border border-[#dce4e7] bg-white p-5 shadow-sm">
             <div className="border-b border-[#edf1f1] pb-4">

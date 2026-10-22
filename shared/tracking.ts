@@ -32,6 +32,9 @@ export const staffStageTargets: TrackingStage[] = [
   "to_dakar",
   "to_nouakchott",
 ];
+export const warehouseStageTargets: TrackingStage[] = stageIds.filter(
+  stage => stage !== "preparing"
+);
 export const trackingNoteSchema = z
   .object({
     id: z.string().min(1).max(128),
@@ -126,6 +129,16 @@ export function assertTrackingCommand(
   command: TrackingCommand
 ) {
   if (shipment.deleted) throw new Error("shipment_deleted");
+  if (role === "staff" && command.type !== "stage")
+    throw new Error("tracking_forbidden");
+  if (
+    role === "staff" &&
+    command.type === "stage" &&
+    !shipment.journey &&
+    command.stage === "preparing" &&
+    shipment.status === "قيد التجهيز"
+  )
+    return;
   if (command.type === "cancel") {
     if (role !== "admin") throw new Error("tracking_forbidden");
     return;
@@ -139,7 +152,9 @@ export function assertTrackingCommand(
       !shipment.journey ||
       stageIds.indexOf(command.stage) !==
         stageIds.indexOf(shipment.journey.stage) + 1 ||
-      !staffStageTargets.includes(command.stage)
+      !(role === "staff" ? warehouseStageTargets : staffStageTargets).includes(
+        command.stage
+      )
     )
       throw new Error("tracking_forbidden");
   }

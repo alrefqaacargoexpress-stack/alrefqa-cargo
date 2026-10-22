@@ -8,6 +8,7 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { trpc } from "@/lib/trpc";
 import {
   canUseFinance,
+  canWriteFinance,
   calculateFinanceInvoice,
   emptyFinanceSnapshot,
   type FinanceCommand,
@@ -99,7 +100,11 @@ export function useFinanceWorkspace() {
     { clientUserId: base.userId ?? "not-logged-in" },
     {
       enabled: Boolean(
-        base.userId && permission && base.online && !base.localOnly
+        base.userId &&
+          base.accessReady &&
+          permission &&
+          base.online &&
+          !base.localOnly
       ),
       retry: false,
       refetchOnWindowFocus: false,
@@ -121,6 +126,18 @@ export function useFinanceWorkspace() {
     query.error?.data?.code === "UNAUTHORIZED";
   const officeAllowed = (office: string) =>
     base.offices === null || base.offices.includes(office as never);
+  const commandOffice = (command: FinanceCommand) => {
+    const office = financeCommandOffice(
+      command,
+      workspace?.snapshot.invoices ?? [],
+      workspace?.snapshot.homeOffice ?? null
+    );
+    if (office) return office;
+    if (command.kind === "shipment_price")
+      return command.payload.sourceOfficeId;
+    if (command.kind === "opening_balance") return command.payload.officeId;
+    return undefined;
+  };
   const explain = (e: unknown) =>
     e instanceof Error
       ? e.message === "finance_store_corrupt"
@@ -132,7 +149,12 @@ export function useFinanceWorkspace() {
             : w.failed
       : w.failed;
   useEffect(() => {
-    if (!base.userId) return;
+    if (!base.userId || !base.accessReady) {
+      workspaceOwner.current = null;
+      ref.current = null;
+      setWorkspace(null);
+      return;
+    }
     workspaceOwner.current = base.userId;
     try {
       const next = loadFinanceWorkspace(base.userId);
@@ -144,7 +166,7 @@ export function useFinanceWorkspace() {
       setWorkspace(null);
       setError(explain(e));
     }
-  }, [base.userId]);
+  }, [base.userId, base.accessReady]);
   useEffect(() => {
     if (!base.userId || !query.data || !ref.current || denied) return;
     let cancelled = false;
@@ -166,8 +188,16 @@ export function useFinanceWorkspace() {
       cancelled = true;
     };
   }, [base.userId, query.data, denied]);
+  const writePermission = canWriteFinance({
+    role: base.role,
+    offices: base.offices,
+    homeOffice:
+      query.data?.homeOffice ?? workspace?.snapshot.homeOffice ?? null,
+  });
   const canEdit =
+    writePermission &&
     permission &&
+    base.accessReady &&
     Boolean(base.userId) &&
     !base.error &&
     !error &&
@@ -226,17 +256,17 @@ export function useFinanceWorkspace() {
       ref.current.commands,
       selectedIds
     ).filter(command => {
-      const office = financeCommandOffice(
-        command,
-        workspace?.snapshot.invoices ?? [],
-        workspace?.snapshot.homeOffice ?? null
-      );
+      const office = commandOffice(command);
       return office ? officeAllowed(office) : false;
     });
     const batch = available.slice(0, 100);
     if (!batch.length) return null;
     const review = batch
       .map(command => {
+        if (command.kind === "opening_balance")
+          return `${command.payload.openingId}: ${command.payload.amount} ${command.payload.currency} · ${command.payload.officeId} · ${command.payload.note}`;
+        if (command.kind === "shipment_price")
+          return `${command.payload.shipmentId}: ${command.payload.pricePerKg} · ${command.payload.sourceOfficeId}`;
         if (command.kind === "expense")
           return `${command.payload.category}: ${command.payload.amount} ${command.payload.currency} · ${command.payload.officeId} · ${command.payload.description}`;
         if (command.kind === "settlement")
@@ -323,7 +353,10 @@ export function useFinanceWorkspace() {
   const snapshot = workspace?.snapshot ?? emptyFinanceSnapshot();
   const visible =
     permission &&
+    base.accessReady &&
     workspaceOwner.current === base.userId &&
+    Boolean(workspace) &&
+    (!base.online || (!query.isLoading && !query.error)) &&
     !denied &&
     !base.error;
   return {
@@ -341,17 +374,15 @@ export function useFinanceWorkspace() {
           i.officeId ? officeAllowed(i.officeId) : base.offices === null
         )
       : [],
-    commands: visible
-      ? (workspace?.commands ?? []).filter(command => {
-          const office = financeCommandOffice(
-            command,
-            snapshot.invoices,
-            snapshot.homeOffice
-          );
-          return Boolean(office && officeAllowed(office));
-        })
-      : [],
+    commands:
+      visible && canEdit
+        ? (workspace?.commands ?? []).filter(command => {
+            const office = commandOffice(command);
+            return Boolean(office && officeAllowed(office));
+          })
+        : [],
     error: error ?? (denied ? w.forbidden : null),
+    readOnlySnapshot: visible && !canEdit,
     notice,
     conflicts,
     canEdit,

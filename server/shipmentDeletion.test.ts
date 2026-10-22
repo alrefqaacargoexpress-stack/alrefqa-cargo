@@ -89,11 +89,11 @@ describe("Server shipment deletion rules", () => {
         )
       ).toThrow("shipment_deletion_forbidden");
   });
-  it("retains actual hidden finance while staff delete and restore a preparing shipment", () => {
+  it("retains actual finance while the general admin deletes and restores a preparing shipment", () => {
     const original = create();
-    const removed = deleteShipment(hideFinance(original, "staff"), "wrong");
+    const removed = deleteShipment(original, "wrong");
     const saved = prepareRecordForWrite(
-      "staff",
+      "admin",
       removed,
       original,
       "delete-shipment"
@@ -102,8 +102,8 @@ describe("Server shipment deletion rules", () => {
     expect(saved.packing?.pricePerKgMRU).toBe(120);
     expect(saved.amount).toBe(24);
     const restored = prepareRecordForWrite(
-      "staff",
-      restoreShipment(hideFinance(saved, "staff")),
+      "admin",
+      restoreShipment(saved),
       saved,
       "restore-shipment"
     ) as Shipment;
@@ -132,7 +132,7 @@ describe("Server shipment deletion rules", () => {
     price.packing.pricePerKgMRU = 900;
     expect(() =>
       prepareRecordForWrite("admin", price, removed, "restore-shipment")
-    ).toThrow("deleted_shipment_readonly");
+    ).toThrow("finance_command_required");
   });
   it("acknowledges deletion time on the server without mutating the draft", () => {
     const original = create();
@@ -259,6 +259,6 @@ describe("Server shipment deletion rules", () => {
     ).not.toThrow();
     expect(() =>
       prepareRecordForWrite("admin", local, null, "restore-shipment")
-    ).not.toThrow();
+    ).toThrow("finance_command_required");
   });
 });

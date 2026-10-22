@@ -69,6 +69,33 @@ export type OfficeFinanceCopy = {
   draftsExcluded: string;
   legacyBalanceHint: string;
   invoices: string;
+  openingBalance: string;
+  shipmentPrice: string;
+  shipmentPriceHint: string;
+  saveShipmentPrice: string;
+  readOnlyFinance: string;
+  cashBalance: string;
+  sourceReceivables: string;
+  sourceReceivablesHint: string;
+  noSourceReceivables: string;
+  addOpeningBalance: string;
+  openingOnceHint: string;
+  openingDirection: string;
+  debit: string;
+  credit: string;
+  note: string;
+  saveOpening: string;
+  openingSaved: string;
+  openingAlreadyExists: string;
+  openingRequired: string;
+  setShipmentPrice: string;
+  pricePerKg: string;
+  pricePerKgMRU: string;
+  expectedVersion: string;
+  priceSaved: string;
+  priceAlreadyPending: string;
+  priceRequired: string;
+  noPriceableShipments: string;
 };
 
 const ar: OfficeFinanceCopy = {
@@ -140,6 +167,37 @@ const ar: OfficeFinanceCopy = {
   legacyBalanceHint:
     "أرصدة الحسابات القديمة يدوية وبلا عملة محددة؛ لا تدخل هذا التجميع.",
   invoices: "الفواتير",
+  openingBalance: "الرصيد الافتتاحي (محاسبة)",
+  shipmentPrice: "سعر الشحن",
+  shipmentPriceHint:
+    "يحدده المحاسب في مكتب مصدر الشحنة، ولا يغير بضائع الشحنة.",
+  saveShipmentPrice: "حفظ السعر",
+  readOnlyFinance:
+    "هذه الصفحة للقراءة والإشراف؛ الكتابة للمحاسب المعين في مكتبه فقط.",
+  cashBalance: "الرصيد النقدي",
+  sourceReceivables: "مستحقات المصدر حسب الشحنة",
+  sourceReceivablesHint:
+    "مشتقة من لقطة الشحنات الرسمية؛ تعرض التتبع والمبلغ والعملة ولا تنشئ قيداً نقدياً تلقائياً.",
+  noSourceReceivables: "لا توجد مستحقات مصدر في هذا النطاق.",
+  addOpeningBalance: "إضافة رصيد افتتاحي",
+  openingOnceHint:
+    "يسجل المحاسب رصيداً افتتاحياً مرة واحدة لكل مكتب وعملة؛ لا يمكن إعادة تشغيله أو استبداله.",
+  openingDirection: "اتجاه الرصيد",
+  debit: "مدين",
+  credit: "دائن",
+  note: "الملاحظة",
+  saveOpening: "حفظ الرصيد الافتتاحي",
+  openingSaved: "حُفظ الرصيد الافتتاحي كمسودة محلية للمراجعة.",
+  openingAlreadyExists: "يوجد رصيد افتتاحي لهذه العملة؛ مُنع التكرار.",
+  openingRequired: "أدخل المكتب والعملة والاتجاه والتاريخ والمبلغ والملاحظة.",
+  setShipmentPrice: "تسعير شحنة من المصدر",
+  pricePerKg: "سعر الكيلو",
+  pricePerKgMRU: "سعر الكيلو بعملة MRU (اختياري)",
+  expectedVersion: "نسخة الشحنة المتوقعة",
+  priceSaved: "حُفظ سعر الشحنة كمسودة محلية للمراجعة.",
+  priceAlreadyPending: "يوجد تسعير معلق لهذه الشحنة؛ مُنع التكرار.",
+  priceRequired: "اختر شحنة وأدخل سعراً صالحاً غير سالب.",
+  noPriceableShipments: "لا توجد شحنات مصدر قابلة للتسعير.",
 };
 
 const en: OfficeFinanceCopy = {
@@ -215,6 +273,39 @@ const en: OfficeFinanceCopy = {
   legacyBalanceHint:
     "Legacy account balances are manual and currency-unspecified; they are not aggregated here.",
   invoices: "Invoices",
+  openingBalance: "Opening balance (accounting)",
+  shipmentPrice: "Shipment price",
+  shipmentPriceHint:
+    "Set by the accountant in the shipment source office; goods are not changed.",
+  saveShipmentPrice: "Save price",
+  readOnlyFinance:
+    "This page is read-only for oversight; only the assigned accountant can post in the home office.",
+  cashBalance: "Cash balance",
+  sourceReceivables: "Source receivables by shipment",
+  sourceReceivablesHint:
+    "Derived from the official shipment snapshot; tracking, amount, and currency are shown without creating cash entries.",
+  noSourceReceivables: "No source receivables in this scope.",
+  addOpeningBalance: "Add opening balance",
+  openingOnceHint:
+    "The accountant records one opening balance per office and currency; replay or replacement is blocked.",
+  openingDirection: "Balance direction",
+  debit: "Debit",
+  credit: "Credit",
+  note: "Note",
+  saveOpening: "Save opening balance",
+  openingSaved: "Opening balance saved as a local draft for review.",
+  openingAlreadyExists:
+    "An opening balance already exists for this currency; duplicate blocked.",
+  openingRequired: "Enter office, currency, direction, date, amount, and note.",
+  setShipmentPrice: "Price a source shipment",
+  pricePerKg: "Price per kg",
+  pricePerKgMRU: "Price per kg in MRU (optional)",
+  expectedVersion: "Expected shipment version",
+  priceSaved: "Shipment price saved as a local draft for review.",
+  priceAlreadyPending:
+    "A price draft already exists for this shipment; duplicate blocked.",
+  priceRequired: "Choose a shipment and enter a valid non-negative price.",
+  noPriceableShipments: "No source shipments are available for pricing.",
 };
 
 const zh: OfficeFinanceCopy = {
@@ -284,6 +375,34 @@ const zh: OfficeFinanceCopy = {
   draftsExcluded: "服务器接受前，本地草稿不计入余额。",
   legacyBalanceHint: "旧账户余额是手动且未指定币种；不在此处汇总。",
   invoices: "发票",
+  openingBalance: "期初余额（会计）",
+  shipmentPrice: "运输价格",
+  shipmentPriceHint: "由货件来源办公室的会计设置，不修改货物。",
+  saveShipmentPrice: "保存价格",
+  readOnlyFinance: "此页面仅供读取和监督；只有指定会计可在其办公室登记。",
+  cashBalance: "现金余额",
+  sourceReceivables: "按货件的来源地应收款",
+  sourceReceivablesHint:
+    "来自正式货件快照；显示追踪号、金额和币种，不会自动创建现金账目。",
+  noSourceReceivables: "此范围没有来源地应收款。",
+  addOpeningBalance: "添加期初余额",
+  openingOnceHint: "会计每个办公室和币种只登记一次期初余额；禁止重放或替换。",
+  openingDirection: "余额方向",
+  debit: "借方",
+  credit: "贷方",
+  note: "备注",
+  saveOpening: "保存期初余额",
+  openingSaved: "期初余额已保存为本地草稿以供审核。",
+  openingAlreadyExists: "该币种已有期初余额；已阻止重复。",
+  openingRequired: "请输入办公室、币种、方向、日期、金额和备注。",
+  setShipmentPrice: "设置来源货件价格",
+  pricePerKg: "每公斤价格",
+  pricePerKgMRU: "MRU 每公斤价格（可选）",
+  expectedVersion: "货件预期版本",
+  priceSaved: "货件价格已保存为本地草稿以供审核。",
+  priceAlreadyPending: "该货件已有待处理价格草稿；已阻止重复。",
+  priceRequired: "请选择货件并输入有效的非负价格。",
+  noPriceableShipments: "没有可定价的来源货件。",
 };
 
 const tr: OfficeFinanceCopy = {
@@ -359,6 +478,39 @@ const tr: OfficeFinanceCopy = {
   legacyBalanceHint:
     "Eski hesap bakiyeleri manuel ve para birimsizdir; burada toplanmaz.",
   invoices: "Faturalar",
+  openingBalance: "Açılış bakiyesi (muhasebe)",
+  shipmentPrice: "Gönderi fiyatı",
+  shipmentPriceHint:
+    "Gönderinin kaynak ofisindeki muhasebeci belirler; malları değiştirmez.",
+  saveShipmentPrice: "Fiyatı kaydet",
+  readOnlyFinance:
+    "Bu sayfa denetim için salt okunurdur; yalnızca atanmış muhasebeci kendi ofisinde kayıt yapabilir.",
+  cashBalance: "Nakit bakiyesi",
+  sourceReceivables: "Gönderiye göre kaynak alacakları",
+  sourceReceivablesHint:
+    "Resmi gönderi görüntüsünden türetilir; takip, tutar ve para birimi gösterilir, otomatik nakit kaydı oluşturulmaz.",
+  noSourceReceivables: "Bu kapsamda kaynak alacağı yok.",
+  addOpeningBalance: "Açılış bakiyesi ekle",
+  openingOnceHint:
+    "Muhasebeci ofis ve para birimi başına bir kez açılış bakiyesi kaydeder; tekrar ve değiştirme engellenir.",
+  openingDirection: "Bakiye yönü",
+  debit: "Borç",
+  credit: "Alacak",
+  note: "Not",
+  saveOpening: "Açılış bakiyesini kaydet",
+  openingSaved: "Açılış bakiyesi inceleme için yerel taslak olarak kaydedildi.",
+  openingAlreadyExists:
+    "Bu para birimi için açılış bakiyesi zaten var; tekrar engellendi.",
+  openingRequired: "Ofis, para birimi, yön, tarih, tutar ve not girin.",
+  setShipmentPrice: "Kaynak gönderisine fiyat ver",
+  pricePerKg: "Kg başına fiyat",
+  pricePerKgMRU: "MRU kg fiyatı (isteğe bağlı)",
+  expectedVersion: "Beklenen gönderi sürümü",
+  priceSaved: "Gönderi fiyatı inceleme için yerel taslak olarak kaydedildi.",
+  priceAlreadyPending:
+    "Bu gönderi için zaten bekleyen fiyat taslağı var; tekrar engellendi.",
+  priceRequired: "Bir gönderi seçin ve geçerli, negatif olmayan fiyat girin.",
+  noPriceableShipments: "Fiyatlandırılabilir kaynak gönderisi yok.",
 };
 
 export const officeFinanceCopy: Record<

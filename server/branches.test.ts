@@ -28,8 +28,10 @@ const user = {
 const scope: OfficeScope = {
   role: "staff",
   offices: ["nouakchott"],
+  homeOffice: "nouakchott",
   membershipVersion: 1,
 };
+const arrivalScope: OfficeScope = { ...scope, role: "supervisor" };
 function fixture() {
   const shipment = {
     ...createPackedShipment({
@@ -112,12 +114,12 @@ const request = (shipmentId: string) => ({
 });
 describe("Office backend protection and warehouse arrival", () => {
   beforeEach(() => vi.clearAllMocks());
-  it("lets the Nouakchott warehouse confirm actual inbound arrival without leaking financial prices", async () => {
+  it("lets the assigned arrival supervisor confirm inbound arrival without leaking financial prices", async () => {
     const f = fixture();
     const result = await confirmArrival(
       f.db,
       user,
-      scope,
+      arrivalScope,
       request(f.shipment.id)
     );
     expect(result.shipment.journey?.stage).toBe("arrived_office");
@@ -134,22 +136,36 @@ describe("Office backend protection and warehouse arrival", () => {
   });
   it("acknowledges an arrival retry without adding another audit event or exposing stored finance", async () => {
     const f = fixture();
-    await confirmArrival(f.db, user, scope, request(f.shipment.id));
+    await confirmArrival(f.db, user, arrivalScope, request(f.shipment.id));
     const before = f.writes();
     const replay = await confirmArrival(
       f.db,
       user,
-      scope,
+      arrivalScope,
       request(f.shipment.id)
     );
     expect(replay.shipment.packing?.pricePerKg).toBe(0);
     expect(f.writes()).toBe(before);
     expect(appendAudit).toHaveBeenCalledOnce();
   });
+  it("rejects a changed arrival payload using an already acknowledged request", async () => {
+    const f = fixture();
+    const original = request(f.shipment.id);
+    await confirmArrival(f.db, user, arrivalScope, original);
+    const before = f.writes();
+    await expect(
+      confirmArrival(f.db, user, arrivalScope, {
+        ...original,
+        reason: "Revised reason",
+      })
+    ).rejects.toThrow("arrival_request_reuse");
+    expect(f.writes()).toBe(before);
+  });
   it("denies arrival after warehouse office access is changed or for an accountant/viewer role", async () => {
     const f = fixture();
     for (const invalid of [
-      { ...scope, offices: ["china"] as const },
+      { ...arrivalScope, offices: ["china"] as const },
+      scope,
       { ...scope, role: "accountant" as const },
       { ...scope, role: "viewer" as const },
     ])
@@ -180,12 +196,17 @@ describe("Office backend protection and warehouse arrival", () => {
       reason: "Cancelled",
     };
     await expect(
-      confirmArrival(cancelled.db, user, scope, request(cancelled.shipment.id))
+      confirmArrival(
+        cancelled.db,
+        user,
+        arrivalScope,
+        request(cancelled.shipment.id)
+      )
     ).rejects.toMatchObject({ code: "FORBIDDEN" });
     const stale = fixture();
     stale.row.version = 2;
     await expect(
-      confirmArrival(stale.db, user, scope, request(stale.shipment.id))
+      confirmArrival(stale.db, user, arrivalScope, request(stale.shipment.id))
     ).rejects.toMatchObject({ code: "CONFLICT" });
     expect(first.writes() + cancelled.writes() + stale.writes()).toBe(0);
   });

@@ -24,6 +24,7 @@ const OfficeDashboard = lazy(() => import("./pages/OfficeDashboard"));
 const FinanceInvoices = lazy(() => import("./pages/FinanceInvoices"));
 const OfficeFinance = lazy(() => import("./pages/OfficeFinance"));
 const PublicTracking = lazy(() => import("./pages/PublicTracking"));
+const WarehouseStorage = lazy(() => import("./pages/WarehouseStorage"));
 function PageLoading() {
   const { language } = useLanguage();
   return (
@@ -43,9 +44,12 @@ function PageLoading() {
 function Router() {
   const me = trpc.auth.me.useQuery(undefined, { retry: false });
   const [location, navigate] = useLocation();
-  const needsSecurity = Boolean(me.data?.mustChangePassword || me.data?.emailEnrollmentOnly);
+  const needsSecurity = Boolean(
+    me.data?.mustChangePassword || me.data?.emailEnrollmentOnly
+  );
   useEffect(() => {
-    if (needsSecurity && location !== "/account/security") navigate("/account/security");
+    if (needsSecurity && location !== "/account/security")
+      navigate("/account/security");
   }, [needsSecurity, location, navigate]);
   if (needsSecurity && location !== "/account/security") return <PageLoading />;
   return (
@@ -63,6 +67,7 @@ function Router() {
       <Route path="/operations/tracking/:id" component={Tracking} />
       <Route path="/operations/tracking" component={Tracking} />
       <Route path="/operations/offices" component={OfficeDashboard} />
+      <Route path="/operations/warehouse" component={WarehouseStorage} />
       <Route path="/operations/settings" component={OfficeSettings} />
       <Route path="/operations/billing" component={FinanceInvoices} />
       <Route path="/operations/finance" component={OfficeFinance} />

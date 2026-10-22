@@ -142,6 +142,7 @@ export const officeMembershipSchema = z
     offices: z.array(officeIdSchema).max(4),
     role: z.enum(assignedRoles),
     homeOffice: officeIdSchema.nullable().optional(),
+    canUpdateTracking: z.boolean().optional(),
     expectedVersion: z.number().int().nonnegative(),
   })
   .strict()
@@ -151,13 +152,31 @@ export const officeMembershipSchema = z
   .refine(v => !v.homeOffice || v.offices.includes(v.homeOffice), {
     message: "home_office_not_allowed",
   })
-  .refine(v => v.role !== "office_manager" || (
-    v.offices.length === 1 &&
-    ["dubai", "china", "turkey"].includes(v.offices[0]) &&
-    (!v.homeOffice || v.homeOffice === v.offices[0])
-  ), {
-    message: "office_manager_single_source_office_required",
-  });
+  .refine(
+    v =>
+      !["staff", "accountant"].includes(v.role) ||
+      (v.offices.length === 1 &&
+        (!v.homeOffice || v.homeOffice === v.offices[0])),
+    { message: "employee_single_office_required" }
+  )
+  .refine(
+    v =>
+      !v.canUpdateTracking ||
+      (v.role === "staff" &&
+        v.offices.length === 1 &&
+        v.offices[0] !== "nouakchott"),
+    { message: "warehouse_tracking_source_only" }
+  )
+  .refine(
+    v =>
+      v.role !== "office_manager" ||
+      (v.offices.length === 1 &&
+        ["dubai", "china", "turkey"].includes(v.offices[0]) &&
+        (!v.homeOffice || v.homeOffice === v.offices[0])),
+    {
+      message: "office_manager_single_source_office_required",
+    }
+  );
 export type OfficeMember = {
   userId: number;
   name: string;
@@ -168,6 +187,7 @@ export type OfficeMember = {
   role: AppRole | null;
   offices: OfficeId[] | null;
   homeOffice?: OfficeId | null;
+  canUpdateTracking?: boolean;
   version: number;
 };
 export function defaultOfficeProfile(
@@ -234,11 +254,15 @@ export function canReadOfficeRecord(
   record: EntityRecord
 ) {
   if (!role) return false;
+  if (role === "staff" && entity !== "shipment") return false;
+  if (["staff", "accountant"].includes(role) && offices?.length !== 1)
+    return false;
   if (role === "office_manager") {
     const home = ownerOffice(entity, record);
     return Boolean(offices?.length === 1 && home && offices.includes(home));
   }
-  if (role === "admin" || offices === null) return true;
+  if (role === "admin") return true;
+  if (offices === null) return false;
   return offices.some(id => recordBelongsToOffice(entity, record, id));
 }
 export function canWriteOfficeRecord(
@@ -248,8 +272,18 @@ export function canWriteOfficeRecord(
   record: EntityRecord
 ) {
   if (!role) return false;
-  if (role === "office_manager") return canReadOfficeRecord(role, offices, entity, record);
-  if (role === "admin" || offices === null) return true;
+  if (
+    role === "staff" &&
+    (entity !== "shipment" ||
+      offices?.length !== 1 ||
+      offices[0] === "nouakchott")
+  )
+    return false;
+  if (role === "accountant" && offices?.length !== 1) return false;
+  if (role === "office_manager")
+    return canReadOfficeRecord(role, offices, entity, record);
+  if (role === "admin") return true;
+  if (offices === null) return false;
   const home = ownerOffice(entity, record);
   return home !== null && offices.includes(home);
 }

@@ -4,7 +4,7 @@ import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import {
   calculateFinanceInvoice,
-  type FinanceCommand,
+  type FinanceMutationCommand,
   type FinanceEntry,
   type FinanceExpenseInput,
   type FinanceSnapshot,
@@ -15,9 +15,19 @@ import {
   financeSnapshotSchema,
   newInvoiceInputSchema,
   employeeFinanceOffice,
+  canReadFinance,
+  canWriteFinance,
+  deriveShipmentReceivables,
+  openingBalanceInputSchema,
+  shipmentPriceInputSchema,
 } from "@shared/finance";
 import { isShipmentSent } from "@shared/finance";
-import { sourceCurrency, packingTotals, goodsTotals } from "@shared/packing";
+import {
+  sourceCurrency,
+  packingTotals,
+  goodsTotals,
+  canonicalPackingShipment,
+} from "@shared/packing";
 import type { AppRole, Invoice, Shipment } from "@shared/operations";
 import type { OfficeId } from "@shared/branches";
 import { canReadOfficeRecord } from "@shared/branches";
@@ -61,10 +71,15 @@ function actorName(user: FinanceActor) {
   return user.name?.trim() || `user-${user.id}`;
 }
 function assertFinance(scope: FinanceScope) {
-  if (scope.role !== "admin" && scope.role !== "accountant" && scope.role !== "office_manager")
+  if (!canReadFinance(scope.role)) throw new Error("finance_forbidden");
+  if (
+    scope.role === "office_manager" &&
+    (!scope.offices || scope.offices.length !== 1)
+  )
     throw new Error("finance_forbidden");
-  if (scope.role === "office_manager" && (!scope.offices || scope.offices.length !== 1))
-    throw new Error("finance_forbidden");
+}
+function assertFinanceWriter(scope: FinanceScope) {
+  if (!canWriteFinance(scope)) throw new Error("finance_forbidden");
 }
 function inScope(scope: FinanceScope, office: OfficeId) {
   return (
@@ -162,6 +177,9 @@ export async function financeSnapshot(
     const parsed = asEntry(row.data);
     if (inScope(scope, parsed.officeId)) entries.push(parsed);
   }
+  const shipments = (
+    await db.select().from(records).where(eq(records.entity, "shipment"))
+  ).map((row: any) => row.data as Shipment);
   const snapshot = {
     invoices,
     entries,
@@ -170,6 +188,14 @@ export async function financeSnapshot(
       (scope.offices?.length === 1 ? scope.offices[0] : null),
     offices: scope.offices,
     lastReadAt: isoNow(),
+    receivables: deriveShipmentReceivables(
+      shipments,
+      scope.offices === null ? null : scope.offices
+    ),
+    shipmentReceivables: deriveShipmentReceivables(
+      shipments,
+      scope.offices === null ? null : scope.offices
+    ),
   } satisfies FinanceSnapshot;
   return financeSnapshotSchema.parse(snapshot) as FinanceSnapshot;
 }
@@ -212,7 +238,7 @@ async function applyInvoice(
   tx: any,
   user: FinanceActor,
   scope: FinanceScope,
-  command: Extract<FinanceCommand, { kind: "invoice" }>
+  command: Extract<FinanceMutationCommand, { kind: "invoice" }>
 ) {
   const input = command.payload;
   if (!newInvoiceInputSchema.safeParse(input).success)
@@ -221,6 +247,8 @@ async function applyInvoice(
     scope,
     input.employeeOfficeId
   );
+  if (input.issuingOfficeId !== financialOfficeId)
+    throw new Error("issuing_office_mismatch");
   assertOffice(scope, financialOfficeId);
   const account = await accountFor(tx, input.customerId);
   if (
@@ -377,17 +405,17 @@ async function applyExpense(
   tx: any,
   user: FinanceActor,
   scope: FinanceScope,
-  command: Extract<FinanceCommand, { kind: "expense" }>
+  command: Extract<FinanceMutationCommand, { kind: "expense" }>
 ) {
   const input: FinanceExpenseInput = command.payload;
-  assertOffice(scope, input.officeId);
+  const financialOfficeId = employeeFinanceOffice(scope, input.officeId);
+  if (financialOfficeId !== input.officeId)
+    throw new Error("financial_office_mismatch");
   let shipment: Shipment | undefined;
   if (input.category === "shipment_cost") {
     const found = await shipmentFor(tx, input.shipmentId!);
     shipment = found.shipment;
-    const owner = (shipment.officeId ?? shipment.packing?.source) as
-      | OfficeId
-      | undefined;
+    const owner = shipment.packing?.source as OfficeId | undefined;
     if (!owner || owner !== input.officeId)
       throw new Error("shipment_office_mismatch");
     if (shipment.deleted) throw new Error("shipment_deleted");
@@ -413,15 +441,6 @@ async function applyExpense(
     }
   );
   await insertEntry(tx, row);
-  const derived = shipment
-    ? await maybePostShipmentRevenue(
-        tx,
-        shipment,
-        user,
-        input.officeId,
-        scope.role
-      )
-    : [];
   await appendAudit(tx, {
     actor: { id: user.id, name: actorName(user), role: scope.role! },
     entity: "finance_entry",
@@ -431,14 +450,14 @@ async function applyExpense(
     after: row,
     requestKey: `finance:${command.id}`,
   });
-  return { entries: [row, ...derived] };
+  return { entries: [row] };
 }
 
 async function applySettlement(
   tx: any,
   user: FinanceActor,
   scope: FinanceScope,
-  command: Extract<FinanceCommand, { kind: "settlement" }>
+  command: Extract<FinanceMutationCommand, { kind: "settlement" }>
 ) {
   const input = command.payload;
   const rows = await tx
@@ -522,7 +541,7 @@ async function applyCustomerMovement(
   tx: any,
   user: FinanceActor,
   scope: FinanceScope,
-  command: Extract<FinanceCommand, { kind: "customer_movement" }>
+  command: Extract<FinanceMutationCommand, { kind: "customer_movement" }>
 ) {
   const input = command.payload;
   // The requested office is only a claim until it is bound to the employee's
@@ -581,17 +600,128 @@ async function applyCustomerMovement(
   return { entries: [row] };
 }
 
+async function applyOpeningBalance(
+  tx: any,
+  user: FinanceActor,
+  scope: FinanceScope,
+  command: Extract<FinanceMutationCommand, { kind: "opening_balance" }>
+) {
+  assertFinanceWriter(scope);
+  const input = openingBalanceInputSchema.parse(command.payload);
+  const office = employeeFinanceOffice(scope, input.officeId);
+  if (office !== input.officeId) throw new Error("financial_office_mismatch");
+  const duplicate = await tx
+    .select()
+    .from(financeEntries)
+    .where(eq(financeEntries.id, input.openingId))
+    .limit(1)
+    .for("update");
+  if (duplicate[0]) throw new Error("opening_exists");
+  const prior = await tx
+    .select()
+    .from(financeEntries)
+    .where(
+      and(
+        eq(financeEntries.kind, "opening_balance" as any),
+        eq(financeEntries.officeId, input.officeId),
+        eq(financeEntries.currency, input.currency)
+      )
+    )
+    .limit(1)
+    .for("update");
+  if (prior[0]) throw new Error("opening_exists");
+  const row = entry(
+    "opening_balance",
+    input.openingId,
+    input.officeId,
+    input.currency,
+    input.amount,
+    input.note,
+    user,
+    { date: input.date, direction: input.direction }
+  );
+  await insertEntry(tx, row);
+  await appendAudit(tx, {
+    actor: { id: user.id, name: actorName(user), role: scope.role! },
+    entity: "finance_entry",
+    recordId: row.id,
+    action: "opening_balance",
+    before: null,
+    after: row,
+    requestKey: `finance:${command.id}`,
+  });
+  return { entries: [row] };
+}
+
+async function applyShipmentPrice(
+  tx: any,
+  user: FinanceActor,
+  scope: FinanceScope,
+  command: Extract<FinanceMutationCommand, { kind: "shipment_price" }>
+) {
+  assertFinanceWriter(scope);
+  const input = shipmentPriceInputSchema.parse(command.payload);
+  const found = await shipmentFor(tx, input.shipmentId);
+  const shipment = found.shipment;
+  if (shipment.deleted || !shipment.packing)
+    throw new Error("shipment_unavailable");
+  const sourceOffice = shipment.packing.source as OfficeId;
+  if (sourceOffice !== input.sourceOfficeId)
+    throw new Error("shipment_source_mismatch");
+  employeeFinanceOffice(scope, sourceOffice);
+  if ((found.row.version as number) !== input.expectedVersion)
+    throw new Error("version_conflict");
+  if (
+    shipment.status !== "قيد التجهيز" &&
+    ((shipment.packing.pricePerKg > 0 &&
+      input.pricePerKg !== shipment.packing.pricePerKg) ||
+      ((shipment.packing.pricePerKgMRU ?? 0) > 0 &&
+        input.pricePerKgMRU !== undefined &&
+        input.pricePerKgMRU !== shipment.packing.pricePerKgMRU))
+  )
+    throw new Error("shipment_not_open");
+  const nextPacking = {
+    ...shipment.packing,
+    pricePerKg: input.pricePerKg,
+    ...(input.pricePerKgMRU === undefined
+      ? {}
+      : { pricePerKgMRU: input.pricePerKgMRU }),
+    updatedAt: isoNow(),
+  };
+  const next = canonicalPackingShipment({ ...shipment, packing: nextPacking });
+  await tx
+    .update(records)
+    .set({ version: found.row.version + 1, data: next, updatedBy: user.id })
+    .where(eq(records.id, found.row.id));
+  await appendAudit(tx, {
+    actor: { id: user.id, name: actorName(user), role: scope.role! },
+    entity: "shipment",
+    recordId: shipment.id,
+    action: "shipment_price",
+    before: shipment,
+    after: next,
+    beforeVersion: found.row.version,
+    afterVersion: found.row.version + 1,
+    requestKey: `finance:${command.id}`,
+  });
+  return { entries: [] as FinanceEntry[] };
+}
+
 export async function applyFinanceCommand(
   tx: any,
   user: FinanceActor,
   scope: FinanceScope,
-  command: FinanceCommand
+  command: FinanceMutationCommand
 ) {
-  assertFinance(scope);
+  assertFinanceWriter(scope);
   if (command.kind === "invoice") return applyInvoice(tx, user, scope, command);
   if (command.kind === "expense") return applyExpense(tx, user, scope, command);
   if (command.kind === "customer_movement")
     return applyCustomerMovement(tx, user, scope, command);
+  if (command.kind === "opening_balance")
+    return applyOpeningBalance(tx, user, scope, command);
+  if (command.kind === "shipment_price")
+    return applyShipmentPrice(tx, user, scope, command);
   return applySettlement(tx, user, scope, command);
 }
 
@@ -599,18 +729,18 @@ export async function financeSync(
   db: any,
   user: FinanceSyncUser,
   scope: FinanceScope,
-  commands: FinanceCommand[]
+  commands: FinanceMutationCommand[]
 ): Promise<FinanceSyncResult>;
 export async function financeSync(
   db: any,
   user: FinanceSyncUser,
-  commands: FinanceCommand[]
+  commands: FinanceMutationCommand[]
 ): Promise<FinanceSyncResult>;
 export async function financeSync(
   db: any,
   user: FinanceSyncUser,
-  scopeOrCommands: FinanceScope | FinanceCommand[],
-  maybeCommands?: FinanceCommand[]
+  scopeOrCommands: FinanceScope | FinanceMutationCommand[],
+  maybeCommands?: FinanceMutationCommand[]
 ): Promise<FinanceSyncResult> {
   const fixedScope = Array.isArray(scopeOrCommands) ? null : scopeOrCommands;
   const commands = Array.isArray(scopeOrCommands)
@@ -626,7 +756,7 @@ export async function financeSync(
       // without rolling back an earlier acknowledged command.
       const saved = await db.transaction(async (tx: any) => {
         const scope = fixedScope ?? (await readOfficeScope(tx, user));
-        assertFinance(scope);
+        assertFinanceWriter(scope);
         const prior = await tx
           .select()
           .from(financeReceipts)

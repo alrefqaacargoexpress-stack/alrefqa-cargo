@@ -9,7 +9,7 @@ import {
   type FinanceInvoiceInput,
 } from "@shared/finance";
 import { financeCurrencies, type FinanceCurrency } from "@shared/finance";
-import { officeIds, officeNames, type OfficeId } from "@shared/branches";
+import { officeNames, type OfficeId } from "@shared/branches";
 import type { Account, Invoice, Shipment } from "@shared/operations";
 import { trpc } from "@/lib/trpc";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -18,6 +18,8 @@ import {
   invoicePaymentOptions,
   searchableInvoiceGoods,
   adjustmentTotal,
+  canWriteFinanceUi,
+  invoiceGoodsTotals,
 } from "@/lib/financeInvoiceCopy";
 import {
   PackingField,
@@ -70,6 +72,10 @@ export default function InvoiceFinancialForm({
   const c = invoiceCopyFor(language);
   const accounts = workspace.base.state.accounts;
   const shipments = workspace.base.state.shipments;
+  const homeOffice = workspace.homeOffice;
+  const canWrite =
+    canWriteFinanceUi(workspace.role, workspace.offices, homeOffice) &&
+    workspace.canEdit;
   const [accountQuery, setAccountQuery] = useState("");
   const [accountId, setAccountId] = useState("");
   const [paymentMode, setPaymentMode] =
@@ -86,12 +92,8 @@ export default function InvoiceFinancialForm({
     "increase" | "decrease"
   >("increase");
   const [adjustment, setAdjustment] = useState("");
-  const [issuingOffice, setIssuingOffice] = useState<OfficeId | "">(
-    initialIssuingOffice ?? ""
-  );
-  const [employeeOffice, setEmployeeOffice] = useState<OfficeId | "">(
-    workspace.homeOffice ?? ""
-  );
+  // The issuing/financial office is never user-selectable in this flow.
+  const issuingOffice = homeOffice ?? "";
   const [walletMethod, setWalletMethod] = useState("");
   const [reference, setReference] = useState("");
   const [saving, setSaving] = useState(false);
@@ -101,50 +103,67 @@ export default function InvoiceFinancialForm({
   useEffect(() => {
     if (!initialCustomerId) return;
     const account = accounts.find(item => item.id === initialCustomerId);
-    if (account) {
+    if (account && account.officeId === homeOffice) {
       setAccountId(account.id);
       setAccountQuery(account.name);
     } else {
       setAccountId("");
     }
-  }, [accounts, initialCustomerId]);
+  }, [accounts, initialCustomerId, homeOffice]);
 
   const wallet = trpc.office.public.useQuery(undefined, {
-    enabled: paymentMode === "wallet",
+    enabled: paymentMode === "wallet" && homeOffice === "nouakchott",
     retry: false,
     refetchOnWindowFocus: false,
   });
+  const walletMethods = (wallet.data?.methods ?? []).filter(
+    method => method.id !== "cash"
+  );
+  const paymentOptions = invoicePaymentOptions(c).filter(
+    ([value]) => value !== "wallet" || walletMethods.length > 0
+  );
   const filteredAccounts = useMemo(() => {
     const needle = accountQuery.trim().toLocaleLowerCase();
     return accounts
       .filter(
         account =>
-          !needle ||
-          `${account.name} ${account.phone}`
-            .toLocaleLowerCase()
-            .includes(needle)
+          account.officeId === homeOffice &&
+          (!needle ||
+            `${account.name} ${account.phone}`
+              .toLocaleLowerCase()
+              .includes(needle))
       )
       .slice(0, 12);
   }, [accounts, accountQuery]);
   const choices = useMemo(
     () =>
       searchableInvoiceGoods(shipments, goodsQuery, workspace.invoices).filter(
-        item => !shipmentId || item.shipmentId === shipmentId
+        item =>
+          (item.officeId ??
+            shipments.find(shipment => shipment.id === item.shipmentId)?.packing
+              ?.source) === homeOffice &&
+          (!shipmentId || item.shipmentId === shipmentId)
       ),
-    [shipments, goodsQuery, workspace.invoices, shipmentId]
+    [shipments, goodsQuery, workspace.invoices, shipmentId, homeOffice]
   );
   const selectedChoices = useMemo(
     () =>
       searchableInvoiceGoods(shipments, "", workspace.invoices).filter(
         item =>
-          selectedGoods.includes(item.goodsId) && item.shipmentId === shipmentId
+          selectedGoods.includes(item.goodsId) &&
+          item.shipmentId === shipmentId &&
+          (item.officeId ??
+            shipments.find(shipment => shipment.id === item.shipmentId)?.packing
+              ?.source) === homeOffice
       ),
-    [shipments, workspace.invoices, selectedGoods]
+    [shipments, workspace.invoices, selectedGoods, shipmentId, homeOffice]
   );
   const parsedManual = Number(manualAmount);
   const parsedAdjustment = Number(adjustment);
   const selectedShipment = shipments.find(
-    shipment => shipment.id === shipmentId
+    shipment =>
+      shipment.id === shipmentId &&
+      (shipment.officeId ?? shipment.packing?.source) === homeOffice
   );
   const calculation = useMemo(() => {
     if (
@@ -155,14 +174,8 @@ export default function InvoiceFinancialForm({
     const input: FinanceInvoiceInput = {
       invoiceId: "preview",
       customerId: accountId,
-      issuingOfficeId:
-        issuingOffice || (workspace.offices?.[0] ?? "nouakchott"),
-      ...(workspace.homeOffice || employeeOffice
-        ? {
-            employeeOfficeId: (workspace.homeOffice ||
-              employeeOffice) as OfficeId,
-          }
-        : {}),
+      issuingOfficeId: issuingOffice as OfficeId,
+      employeeOfficeId: homeOffice as OfficeId,
       chargeKind,
       paymentMode,
       currency,
@@ -178,7 +191,9 @@ export default function InvoiceFinancialForm({
             ? parsedAdjustment
             : 0,
       },
-      ...(paymentMode === "wallet" && walletMethod
+      ...(paymentMode === "wallet" &&
+      homeOffice === "nouakchott" &&
+      walletMethod
         ? {
             payment: {
               office: "nouakchott",
@@ -205,8 +220,7 @@ export default function InvoiceFinancialForm({
     shipmentId,
     selectedGoods,
     issuingOffice,
-    employeeOffice,
-    workspace.homeOffice,
+    homeOffice,
     workspace.offices,
     paymentMode,
     currency,
@@ -218,6 +232,7 @@ export default function InvoiceFinancialForm({
     reference,
     selectedShipment,
   ]);
+  const goodsTotals = invoiceGoodsTotals(selectedChoices);
   const total = calculation
     ? calculation.totalAmount
     : chargeKind === "general" && Number.isFinite(parsedManual)
@@ -227,7 +242,6 @@ export default function InvoiceFinancialForm({
           Math.max(0, Number.isFinite(parsedAdjustment) ? parsedAdjustment : 0)
         )
       : 0;
-  const permittedOffices = workspace.offices ?? officeIds;
 
   const toggleGoods = (goodsId: string) => {
     setSelectedGoods(current =>
@@ -241,8 +255,13 @@ export default function InvoiceFinancialForm({
     if (saving) return;
     setError("");
     setNotice("");
-    if (!workspace.canEdit) return setError(c.noPermission);
-    if (!accountId || (paymentMode === "on_account" && !accountId))
+    if (!canWrite) return setError(c.noPermission);
+    const selectedAccount = accounts.find(account => account.id === accountId);
+    if (
+      !selectedAccount ||
+      selectedAccount.officeId !== homeOffice ||
+      (paymentMode === "on_account" && !accountId)
+    )
       return setError(c.accountRequired);
     if (
       !isSharedCustomerAccount(
@@ -258,8 +277,6 @@ export default function InvoiceFinancialForm({
         }[language]
       );
     if (!issuingOffice) return setError(c.officeRequired);
-    if (!workspace.homeOffice && !employeeOffice)
-      return setError(c.officeRequired);
     if (
       chargeKind === "shipping" &&
       (!shipmentId || !selectedGoods.length || !goodsConfirmed)
@@ -274,13 +291,8 @@ export default function InvoiceFinancialForm({
     const input: FinanceInvoiceInput = {
       invoiceId: `inv-${id}`.slice(0, 64),
       customerId: accountId,
-      issuingOfficeId: issuingOffice,
-      ...(workspace.homeOffice || employeeOffice
-        ? {
-            employeeOfficeId: (workspace.homeOffice ||
-              employeeOffice) as OfficeId,
-          }
-        : {}),
+      issuingOfficeId: issuingOffice as OfficeId,
+      employeeOfficeId: homeOffice as OfficeId,
       chargeKind,
       paymentMode,
       currency,
@@ -426,7 +438,7 @@ export default function InvoiceFinancialForm({
               setPaymentMode(mode);
             }}
           >
-            {invoicePaymentOptions(c).map(([value, label]) => (
+            {paymentOptions.map(([value, label]) => (
               <option key={value} value={value}>
                 {label}
               </option>
@@ -498,7 +510,13 @@ export default function InvoiceFinancialForm({
               >
                 <option value="">{c.shipment}</option>
                 {shipments
-                  .filter(shipment => shipment.packing && !shipment.deleted)
+                  .filter(
+                    shipment =>
+                      shipment.packing &&
+                      !shipment.deleted &&
+                      (shipment.officeId ?? shipment.packing.source) ===
+                        homeOffice
+                  )
                   .map(shipment => (
                     <option key={shipment.id} value={shipment.id}>
                       {shipment.tracking} · {shipment.account}
@@ -552,7 +570,8 @@ export default function InvoiceFinancialForm({
               <div className="mb-2 flex items-center justify-between gap-2">
                 <b className="text-sm text-[#092d50]">{c.selectedGoods}</b>
                 <span className="text-xs text-[#718088]">
-                  {selectedChoices.length} {c.pieces}
+                  {goodsTotals.weight} {c.weight} · {goodsTotals.pieces}{" "}
+                  {c.pieces}
                 </span>
               </div>
               {selectedChoices.map(goods => (
@@ -619,10 +638,36 @@ export default function InvoiceFinancialForm({
           </div>
         </PackingField>
         <div className="rounded-2xl border border-[#dce4e7] bg-[#fbfcfb] p-4">
-          <span className="text-sm font-bold text-[#718088]">{c.total}</span>
-          <strong className="mt-1 block text-2xl text-[#092d50]">
-            {formatLocalNumber(total, language, 2)} {currency}
-          </strong>
+          <div className="grid gap-2 text-sm sm:grid-cols-3">
+            <span>
+              <b className="block text-xs text-[#718088]">{c.baseAmount}</b>
+              {formatLocalNumber(
+                calculation?.baseAmount ??
+                  (chargeKind === "general"
+                    ? Math.max(0, parsedManual || 0)
+                    : 0),
+                language,
+                2
+              )}{" "}
+              {currency}
+            </span>
+            <span>
+              <b className="block text-xs text-[#718088]">{c.adjustment}</b>
+              {adjustDirection === "increase" ? "+" : "−"}
+              {formatLocalNumber(
+                Number.isFinite(parsedAdjustment) ? parsedAdjustment : 0,
+                language,
+                2
+              )}{" "}
+              {currency}
+            </span>
+            <span>
+              <b className="block text-xs text-[#718088]">{c.total}</b>
+              <strong className="block text-xl text-[#092d50]">
+                {formatLocalNumber(total, language, 2)} {currency}
+              </strong>
+            </span>
+          </div>
           {chargeKind === "shipping" && !calculation && selectedShipment && (
             <p className="mt-2 flex gap-1 text-xs font-bold text-amber-800">
               <CircleAlert size={14} />
@@ -635,39 +680,17 @@ export default function InvoiceFinancialForm({
           required
           hint={initialIssuingOffice ? undefined : c.officeRequired}
         >
-          <select
-            className={inputClass}
-            value={issuingOffice}
-            onChange={event => setIssuingOffice(event.target.value as OfficeId)}
+          <div
+            className={`${inputClass} flex items-center justify-between`}
+            aria-readonly="true"
           >
-            <option value="">{c.officeRequired}</option>
-            {permittedOffices.map(office => (
-              <option key={office} value={office}>
-                {officeLabel(language, office)}
-              </option>
-            ))}
-          </select>
-        </PackingField>
-        <PackingField
-          label={workspace.homeOffice ? c.knownHomeOffice : c.employeeOffice}
-          required={!workspace.homeOffice}
-          hint={!workspace.homeOffice ? c.employeeOfficeHelp : undefined}
-        >
-          <select
-            className={inputClass}
-            value={workspace.homeOffice ?? employeeOffice}
-            onChange={event =>
-              setEmployeeOffice(event.target.value as OfficeId)
-            }
-            disabled={Boolean(workspace.homeOffice)}
-          >
-            <option value="">{c.officeRequired}</option>
-            {permittedOffices.map(office => (
-              <option key={office} value={office}>
-                {officeLabel(language, office)}
-              </option>
-            ))}
-          </select>
+            <span>
+              {issuingOffice
+                ? officeLabel(language, issuingOffice)
+                : c.officeRequired}
+            </span>
+            <span className="text-xs text-[#718088]">{c.officeReadOnly}</span>
+          </div>
         </PackingField>
         {paymentMode === "wallet" && (
           <>
@@ -678,7 +701,7 @@ export default function InvoiceFinancialForm({
                 onChange={event => setWalletMethod(event.target.value)}
               >
                 <option value="">{c.walletMethod}</option>
-                {(wallet.data?.methods ?? []).map(method => (
+                {walletMethods.map(method => (
                   <option key={method.id} value={method.id}>
                     {method.label}
                   </option>
@@ -717,7 +740,7 @@ export default function InvoiceFinancialForm({
           type="button"
           className={packingPrimaryClass}
           onClick={() => void save()}
-          disabled={saving || !workspace.canEdit}
+          disabled={saving || !canWrite}
         >
           <Plus size={16} />
           {saving ? c.saving : c.saveDraft}

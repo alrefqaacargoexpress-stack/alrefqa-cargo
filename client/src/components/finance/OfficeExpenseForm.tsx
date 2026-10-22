@@ -2,11 +2,13 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import type { FinanceCommand, FinanceCurrency } from "@shared/finance";
 import { financeCurrencies } from "@shared/finance";
 import type { OfficeId } from "@shared/branches";
+import type { AppRole } from "@shared/operations";
 import { ownerOffice } from "@shared/branches";
 import type { Shipment } from "@shared/operations";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { officeName } from "@/lib/branchSettingsCopy";
 import { officeFinanceCopyFor } from "@/lib/officeFinanceCopy";
+import { canWriteFinanceUi } from "@/lib/financeInvoiceCopy";
 import {
   PackingField,
   packingInputClass,
@@ -31,6 +33,8 @@ export type OfficeExpenseFormProps = {
   online: boolean;
   pending?: boolean;
   saveCommand: (command: FinanceCommand) => Promise<boolean>;
+  role?: AppRole | null;
+  homeOffice?: OfficeId | null;
 };
 
 export function createExpenseCommand(input: {
@@ -70,9 +74,21 @@ export default function OfficeExpenseForm({
   online,
   pending = false,
   saveCommand,
+  role,
+  homeOffice,
 }: OfficeExpenseFormProps) {
   const { language } = useLanguage();
   const c = officeFinanceCopyFor(language);
+  const officeForWrite =
+    homeOffice ?? initialOffice ?? allowedOffices[0] ?? null;
+  const singleOfficeScope =
+    allowedOffices.length === 1 &&
+    Boolean(officeForWrite) &&
+    allowedOffices[0] === officeForWrite;
+  const canWrite =
+    canEdit &&
+    singleOfficeScope &&
+    canWriteFinanceUi(role, allowedOffices, officeForWrite);
   const [category, setCategory] = useState<
     "daily_expense" | "monthly_expense" | "shipment_cost"
   >("daily_expense");
@@ -129,7 +145,7 @@ export default function OfficeExpenseForm({
       setError(c.shipmentRequired);
       return;
     }
-    if (!canEdit || pending || busy) return;
+    if (!canWrite || pending || busy) return;
     const command = createExpenseCommand({
       officeId,
       category,
@@ -157,7 +173,7 @@ export default function OfficeExpenseForm({
     }
   };
 
-  const disabled = !canEdit || pending || busy || !allowedOffices.length;
+  const disabled = !canWrite || pending || busy || !allowedOffices.length;
   return (
     <section className="rounded-2xl border border-[#dce4e7] bg-white p-5 shadow-sm">
       <div className="border-b border-[#edf1f1] pb-4">

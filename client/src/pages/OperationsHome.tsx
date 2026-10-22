@@ -11,6 +11,7 @@ import {
   ShieldCheck,
   Truck,
   Users,
+  Warehouse,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { AppRole } from "@shared/operations";
@@ -35,6 +36,7 @@ const copy = {
     excel: "Excel والاستيراد",
     more: "المزيد",
     noActions: "لا توجد اختصارات متاحة لهذا الدور.",
+    warehouse: "مخزن نواكشوط",
   },
   en: {
     title: "Operations hub",
@@ -51,6 +53,7 @@ const copy = {
     excel: "Excel and import",
     more: "More",
     noActions: "No shortcuts are available for this role.",
+    warehouse: "Nouakchott warehouse",
   },
   zh: {
     title: "运营中心",
@@ -67,6 +70,7 @@ const copy = {
     excel: "Excel 与导入",
     more: "更多",
     noActions: "此角色没有可用快捷入口。",
+    warehouse: "努瓦克肖特仓库",
   },
   tr: {
     title: "Operasyon merkezi",
@@ -83,6 +87,7 @@ const copy = {
     excel: "Excel ve içe aktarma",
     more: "Daha fazla",
     noActions: "Bu rol için kısayol yok.",
+    warehouse: "Nuakşot deposu",
   },
 } as const;
 
@@ -101,7 +106,7 @@ type ActionCopy = Record<
   | "tracking"
   | "settings",
   string
->;
+> & { warehouse?: string };
 
 export function legacyDestination(location: string) {
   const [withoutHash, hash = ""] = location.split("#");
@@ -127,9 +132,21 @@ export function legacyDestination(location: string) {
 
 export function operationActionsForRole(
   role: AppRole | null,
-  c: ActionCopy
+  c: ActionCopy,
+  offices?: string[] | null,
+  canUpdateTracking?: boolean
 ): Action[] {
   const actions: Action[] = [];
+  const nouakchottStaff =
+    role === "staff" && offices?.length === 1 && offices[0] === "nouakchott";
+  if (nouakchottStaff) {
+    actions.push({
+      href: "/operations/warehouse",
+      label: c.warehouse ?? "Warehouse",
+      icon: Warehouse,
+    });
+    return actions;
+  }
   if (["admin", "office_manager", "staff"].includes(role ?? "")) {
     actions.push(
       {
@@ -140,27 +157,32 @@ export function operationActionsForRole(
       { href: "/operations/shipments", label: c.shipments, icon: Truck }
     );
   }
-  if (role && role !== "viewer") {
+  if (
+    role &&
+    role !== "viewer" &&
+    (role !== "staff" || offices === undefined)
+  ) {
     actions.push({
       href: "/operations/customers",
       label: c.customers,
       icon: Users,
     });
   }
-  if (
-    role === "admin" ||
-    role === "office_manager" ||
-    role === "accountant"
-  ) {
+  if (role === "admin" || role === "office_manager" || role === "accountant") {
     actions.push(
       { href: "/operations/billing", label: c.invoice, icon: FilePlus2 },
       { href: "/operations/finance", label: c.offices, icon: Landmark }
     );
   }
   if (
-    ["admin", "office_manager", "tracking_staff", "supervisor", "viewer"].includes(
-      role ?? ""
-    )
+    [
+      "admin",
+      "office_manager",
+      "tracking_staff",
+      "supervisor",
+      "viewer",
+    ].includes(role ?? "") &&
+    canUpdateTracking !== false
   ) {
     actions.push({
       href: "/operations/tracking",
@@ -192,7 +214,12 @@ export default function OperationsHome() {
     if (destination) navigate(destination, { replace: true });
   }, [location, search, navigate]);
 
-  const actions = operationActionsForRole(workspace.role, c);
+  const actions = operationActionsForRole(
+    workspace.role,
+    c,
+    workspace.offices,
+    workspace.canUpdateTracking
+  );
 
   return (
     <PackingLayout
@@ -250,6 +277,43 @@ export default function OperationsHome() {
           </div>
         </details>
       </div>
+    </PackingLayout>
+  );
+}
+
+/** Route target for the Nouakchott storage-only staff workspace. */
+export function OperationsWarehouse() {
+  const { language } = useLanguage();
+  const workspace = useOperationsWorkspace();
+  const title = {
+    ar: "مخزن نواكشوط",
+    en: "Nouakchott warehouse",
+    zh: "努瓦克肖特仓库",
+    tr: "Nuakşot deposu",
+  }[language];
+  const description = {
+    ar: "التخزين فقط؛ لا إنشاء شحنات ولا تسجيل وصول أو تسليم.",
+    en: "Storage only; no shipment creation or arrival/delivery confirmation.",
+    zh: "仅限仓储；不能创建货运或确认到达、交付。",
+    tr: "Yalnızca depolama; gönderi oluşturma veya varış/teslim onayı yok.",
+  }[language];
+  return (
+    <PackingLayout
+      workspace={workspace}
+      title={title}
+      description={description}
+    >
+      <section className="rounded-3xl border border-[#dce4e7] bg-white p-6 shadow-sm">
+        <p className="text-sm text-[#52636e]">
+          {language === "ar"
+            ? "تُعرض السجلات الحالية للقراءة فقط. يظهر رابط التتبع فقط عند منح canUpdateTracking."
+            : language === "en"
+              ? "Current records are read-only. Tracking appears only when canUpdateTracking is granted."
+              : language === "zh"
+                ? "当前记录为只读。只有授予 canUpdateTracking 时才显示追踪。"
+                : "Mevcut kayıtlar salt okunurdur. Takip yalnızca canUpdateTracking verilirse görünür."}
+        </p>
+      </section>
     </PackingLayout>
   );
 }

@@ -48,6 +48,7 @@ export type OfficeScope = {
   offices: OfficeId[] | null;
   homeOffice: OfficeId | null;
   membershipVersion: number;
+  canUpdateTracking?: boolean;
 };
 export const officeProfileUpdateSchema = officeProfileSchema.safeExtend({
   expectedVersion: z.number().int().nonnegative(),
@@ -96,24 +97,36 @@ export async function readOfficeScope(
       offices: null,
       homeOffice: null,
       membershipVersion: membership?.version ?? 0,
+      canUpdateTracking: true,
     };
   const offices = membership?.offices;
-  if (role === "office_manager") {
-    const valid = Array.isArray(offices) && offices.length === 1 &&
-      ["dubai", "turkey", "china"].includes(offices[0]) &&
+  if (role === "office_manager" || role === "staff" || role === "accountant") {
+    const valid =
+      Array.isArray(offices) &&
+      offices.length === 1 &&
+      officeIds.includes(offices[0]) &&
+      (role !== "office_manager" || offices[0] !== "nouakchott") &&
       (!membership?.homeOffice || membership.homeOffice === offices[0]);
     return {
-      role: valid ? role : null,
+      role,
       offices: valid ? [offices[0] as OfficeId] : [],
-      homeOffice: valid ? offices[0] as OfficeId : null,
+      homeOffice: valid ? (offices[0] as OfficeId) : null,
       membershipVersion: membership?.version ?? 0,
+      canUpdateTracking:
+        role === "office_manager" ||
+        Boolean(
+          valid &&
+            role === "staff" &&
+            offices[0] !== "nouakchott" &&
+            membership?.canUpdateTracking
+        ),
     };
   }
   return {
     role,
     offices:
       offices === null || offices === undefined
-        ? null
+        ? []
         : Array.isArray(offices)
           ? (offices as OfficeId[])
           : [],
@@ -125,6 +138,7 @@ export async function readOfficeScope(
           ? (offices[0] as OfficeId)
           : null,
     membershipVersion: membership?.version ?? 0,
+    canUpdateTracking: role === "tracking_staff" || role === "supervisor",
   };
 }
 
@@ -132,11 +146,7 @@ export function officeIsAssigned(
   scope: OfficeScope,
   officeId: OfficeId
 ): boolean {
-  return (
-    scope.role === "admin" ||
-    scope.offices === null ||
-    Boolean(scope.offices?.includes(officeId))
-  );
+  return scope.role === "admin" || Boolean(scope.offices?.includes(officeId));
 }
 export function recordVisibleInOffice(
   scope: OfficeScope,
@@ -145,8 +155,10 @@ export function recordVisibleInOffice(
   record: EntityRecord
 ): boolean {
   if (!scope.role) return false;
+  if (scope.role === "staff" && entity !== "shipment") return false;
   if (!officeIsAssigned(scope, officeId)) return false;
-  if (scope.role === "office_manager") return ownerOffice(entity, record) === officeId;
+  if (scope.role === "office_manager")
+    return ownerOffice(entity, record) === officeId;
   if (entity === "shipment") {
     const shipment = record as Shipment;
     const offices = new Set<OfficeId>();
@@ -174,7 +186,8 @@ export function recordVisible(
   record: EntityRecord
 ): boolean {
   if (!scope.role) return false;
-  if (scope.role === "admin" || scope.offices === null) return true;
+  if (scope.role === "admin") return true;
+  if (scope.offices === null) return false;
   return officeIds.some(
     id =>
       scope.offices?.includes(id) &&
@@ -187,7 +200,13 @@ export function recordWritable(
   record: EntityRecord
 ): boolean {
   if (!scope.role) return false;
-  if (scope.role === "admin" || scope.offices === null) return true;
+  if (scope.role === "admin") return true;
+  if (scope.offices === null) return false;
+  if (
+    scope.role === "staff" &&
+    (entity !== "shipment" || scope.homeOffice === "nouakchott")
+  )
+    return false;
   const home =
     record.officeId ??
     (entity === "shipment" ? (record as Shipment).packing?.source : undefined);
@@ -199,7 +218,11 @@ export function hideForOfficeScope<T extends EntityRecord>(
   role: AppRole | null,
   offices: OfficeId[] | null
 ): T {
-  if ((role === "accountant" || role === "office_manager") && offices !== null && "tracking" in record) {
+  if (
+    (role === "accountant" || role === "office_manager") &&
+    offices !== null &&
+    "tracking" in record
+  ) {
     return protectOfficeShipmentFinance(record as Shipment, role, offices) as T;
   }
   return hideFinance(record, role);
@@ -254,6 +277,7 @@ export function memberFromRow(row: any): OfficeMember {
       row.homeOffice && officeIds.includes(row.homeOffice as OfficeId)
         ? (row.homeOffice as OfficeId)
         : null,
+    canUpdateTracking: Boolean(row.canUpdateTracking),
     version: row.version ?? 0,
   };
 }
@@ -273,6 +297,7 @@ export async function listMembers(db: any): Promise<OfficeMember[]> {
       memberRole: memberRoles.role,
       offices: memberRoles.offices,
       homeOffice: memberRoles.homeOffice,
+      canUpdateTracking: memberRoles.canUpdateTracking,
       version: memberRoles.version,
     })
     .from(users)
@@ -427,12 +452,7 @@ export async function confirmArrival(
   scope: OfficeScope,
   input: z.infer<typeof confirmArrivalSchema>
 ) {
-  if (
-    !scope.role ||
-    (scope.role !== "admin" &&
-      scope.role !== "supervisor" &&
-      scope.role !== "staff")
-  )
+  if (!scope.role || (scope.role !== "admin" && scope.role !== "supervisor"))
     throw branchForbidden("Warehouse arrival is restricted");
   if (
     scope.role !== "admin" &&
@@ -441,6 +461,9 @@ export async function confirmArrival(
   )
     throw branchForbidden("Nouakchott assignment required");
   return db.transaction(async (tx: any) => {
+    const payloadHash = createHash("sha256")
+      .update(JSON.stringify(input))
+      .digest("hex");
     const receiptKey = `arrival:${createHash("sha256")
       .update(input.requestId ?? `${input.shipmentId}:${input.expectedVersion}`)
       .digest("hex")}`;
@@ -457,12 +480,15 @@ export async function confirmArrival(
       .for("update");
     if (prior[0]) {
       const replay = prior[0].result as any;
+      if (replay.payloadHash !== payloadHash)
+        throw new Error("arrival_request_reuse");
       if (replay?.shipment?.id !== input.shipmentId)
         throw new Error("arrival_receipt_mismatch");
       if (!recordVisible(scope, "shipment", replay.shipment))
         throw branchForbidden();
       return {
-        ...replay,
+        requestId: replay.requestId,
+        version: replay.version,
         shipment: hideForOfficeScope(
           replay.shipment,
           scope.role,
@@ -504,7 +530,11 @@ export async function confirmArrival(
       };
       await tx
         .insert(syncReceipts)
-        .values({ userId: user.id, changeId: receiptKey, result });
+        .values({
+          userId: user.id,
+          changeId: receiptKey,
+          result: { ...result, payloadHash },
+        });
       return {
         ...result,
         shipment: hideForOfficeScope(
@@ -569,7 +599,11 @@ export async function confirmArrival(
     };
     await tx
       .insert(syncReceipts)
-      .values({ userId: user.id, changeId: receiptKey, result });
+      .values({
+        userId: user.id,
+        changeId: receiptKey,
+        result: { ...result, payloadHash },
+      });
     return {
       ...result,
       shipment: hideForOfficeScope(result.shipment, scope.role, scope.offices),

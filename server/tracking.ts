@@ -106,6 +106,23 @@ export function applyTrackingCommand(
     return { shipment: next, action: "tracking_plan" };
   }
 
+  if (
+    !currentJourney &&
+    actor.role === "staff" &&
+    parsed.type === "stage" &&
+    parsed.stage === "preparing"
+  ) {
+    next.journey = {
+      stage: "preparing",
+      branch: inferredBranch(current),
+      startedAt: now,
+      expectedDays: 9,
+      updatedAt: now,
+      notes: [noteFor({ type: "note", text: parsed.reason }, actor, now)],
+    };
+    journeySchema.parse(next.journey);
+    return { shipment: next, action: "tracking_stage" };
+  }
   if (!currentJourney) throw new Error("tracking_plan_required");
   if (parsed.type === "stage") {
     if (parsed.stage !== "preparing") requireSendable(current);

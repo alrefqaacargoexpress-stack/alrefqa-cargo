@@ -48,12 +48,32 @@ export default function PackingLayout({
       label: <ShieldAlert size={15} />,
       text: c.operations,
     },
-    {
-      href: "/operations/shipments",
-      label: <Package size={15} />,
-      text: c.shipments,
-    },
-    { href: "/operations/customers", label: null, text: c.customers },
+    ...(!workspace.warehouseOnly
+      ? [
+          {
+            href: "/operations/shipments",
+            label: <Package size={15} />,
+            text: c.shipments,
+          },
+        ]
+      : []),
+    ...(workspace.warehouseOnly
+      ? [
+          {
+            href: "/operations/warehouse",
+            label: <Package size={15} />,
+            text: {
+              ar: "مخزن نواكشوط",
+              en: "Nouakchott warehouse",
+              zh: "努瓦克肖特仓库",
+              tr: "Nuakşot deposu",
+            }[language],
+          },
+        ]
+      : []),
+    ...(!workspace.warehouseOnly
+      ? [{ href: "/operations/customers", label: null, text: c.customers }]
+      : []),
     ...(workspace.role === "admin" ||
     workspace.role === "accountant" ||
     workspace.role === "office_manager"
@@ -70,16 +90,20 @@ export default function PackingLayout({
           },
         ]
       : []),
-    {
-      href: "/operations/tracking",
-      label: null,
-      text: {
-        ar: "تتبع الشحنات",
-        en: "Shipment tracking",
-        zh: "货运追踪",
-        tr: "Gönderi takibi",
-      }[language],
-    },
+    ...(workspace.canUpdateTracking
+      ? [
+          {
+            href: "/operations/tracking",
+            label: null,
+            text: {
+              ar: "تتبع الشحنات",
+              en: "Shipment tracking",
+              zh: "货运追踪",
+              tr: "Gönderi takibi",
+            }[language],
+          },
+        ]
+      : []),
     {
       href: "/account/security",
       label: <ShieldAlert size={15} />,
@@ -358,7 +382,10 @@ export default function PackingLayout({
                 }
               </summary>
               <div className="mt-3 flex flex-wrap gap-2">
-                <Link href="/operations/advanced" className={packingSecondaryClass}>
+                <Link
+                  href="/operations/advanced"
+                  className={packingSecondaryClass}
+                >
                   {
                     {
                       ar: "الأدوات المتقدمة",
@@ -368,15 +395,24 @@ export default function PackingLayout({
                     }[language]
                   }
                 </Link>
-                <Link href="/operations/advanced?tab=accounts" className={packingSecondaryClass}>
+                <Link
+                  href="/operations/advanced?tab=accounts"
+                  className={packingSecondaryClass}
+                >
                   Excel
                 </Link>
-                <Link href="/operations/reports" className={packingSecondaryClass}>
+                <Link
+                  href="/operations/reports"
+                  className={packingSecondaryClass}
+                >
                   {c.reports}
                 </Link>
                 {(workspace.role === "admin" ||
                   workspace.role === "office_manager") && (
-                  <Link href="/operations/settings" className={packingSecondaryClass}>
+                  <Link
+                    href="/operations/settings"
+                    className={packingSecondaryClass}
+                  >
                     {
                       {
                         ar: "إعدادات المكاتب",
@@ -390,7 +426,10 @@ export default function PackingLayout({
                 {(workspace.role === "admin" ||
                   workspace.role === "accountant" ||
                   workspace.role === "office_manager") && (
-                  <Link href="/operations/finance" className={packingSecondaryClass}>
+                  <Link
+                    href="/operations/finance"
+                    className={packingSecondaryClass}
+                  >
                     {
                       {
                         ar: "حسابات المكاتب",

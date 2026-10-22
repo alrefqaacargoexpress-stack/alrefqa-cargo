@@ -3,7 +3,8 @@ import {
   invoicePaymentChoices,
   searchableInvoiceGoods as sharedSearchableInvoiceGoods,
 } from "@shared/finance";
-import type { Invoice, Shipment } from "@shared/operations";
+import type { Invoice, Shipment, AppRole } from "@shared/operations";
+import type { OfficeId } from "@shared/branches";
 
 export type FinanceLanguage = "ar" | "en" | "zh" | "tr";
 export type InvoicePaymentOption =
@@ -87,17 +88,23 @@ export type FinanceInvoiceCopy = {
   invalidTotal: string;
   selectedGoodsRequired: string;
   paymentReference: string;
+  baseAmount: string;
+  issueMethod: string;
+  settlementMethod: string;
+  weightTotal: string;
+  piecesTotal: string;
+  officeReadOnly: string;
 };
 
 const base: FinanceInvoiceCopy = {
   title: "",
   description: "",
-    newInvoice: "",
-    stageCustomer: "",
-    stageDetails: "",
-    stagePayment: "",
-    newCustomer: "",
-    openCustomer: "",
+  newInvoice: "",
+  stageCustomer: "",
+  stageDetails: "",
+  stagePayment: "",
+  newCustomer: "",
+  openCustomer: "",
   customer: "",
   searchCustomer: "",
   accountRequired: "",
@@ -164,6 +171,12 @@ const base: FinanceInvoiceCopy = {
   invalidTotal: "",
   selectedGoodsRequired: "",
   paymentReference: "",
+  baseAmount: "",
+  issueMethod: "",
+  settlementMethod: "",
+  weightTotal: "",
+  piecesTotal: "",
+  officeReadOnly: "",
 };
 
 export const financeInvoiceCopy: Record<FinanceLanguage, FinanceInvoiceCopy> = {
@@ -245,6 +258,12 @@ export const financeInvoiceCopy: Record<FinanceLanguage, FinanceInvoiceCopy> = {
     invalidTotal: "لا يمكن أن يكون الإجمالي سالبًا",
     selectedGoodsRequired: "أكد اختيار بضاعة واحدة على الأقل",
     paymentReference: "مرجع",
+    baseAmount: "المبلغ الأساسي",
+    issueMethod: "وسيلة الإصدار",
+    settlementMethod: "وسيلة السداد",
+    weightTotal: "إجمالي الوزن",
+    piecesTotal: "إجمالي القطع",
+    officeReadOnly: "ثابت حسب مكتبك الأساسي",
   },
   en: {
     ...base,
@@ -325,6 +344,12 @@ export const financeInvoiceCopy: Record<FinanceLanguage, FinanceInvoiceCopy> = {
     invalidTotal: "Total cannot be negative",
     selectedGoodsRequired: "Confirm at least one goods item",
     paymentReference: "Reference",
+    baseAmount: "Base amount",
+    issueMethod: "Issue method",
+    settlementMethod: "Settlement method",
+    weightTotal: "Total weight",
+    piecesTotal: "Total pieces",
+    officeReadOnly: "Fixed to your home office",
   },
   zh: {
     ...base,
@@ -402,6 +427,12 @@ export const financeInvoiceCopy: Record<FinanceLanguage, FinanceInvoiceCopy> = {
     invalidTotal: "总额不能为负",
     selectedGoodsRequired: "请确认至少一件商品",
     paymentReference: "参考",
+    baseAmount: "基础金额",
+    issueMethod: "开具方式",
+    settlementMethod: "付款方式",
+    weightTotal: "总重量",
+    piecesTotal: "总件数",
+    officeReadOnly: "固定为您的主办公室",
   },
   tr: {
     ...base,
@@ -483,12 +514,44 @@ export const financeInvoiceCopy: Record<FinanceLanguage, FinanceInvoiceCopy> = {
     invalidTotal: "Toplam negatif olamaz",
     selectedGoodsRequired: "En az bir ürün onaylayın",
     paymentReference: "Referans",
+    baseAmount: "Temel tutar",
+    issueMethod: "Düzenleme yöntemi",
+    settlementMethod: "Tahsilat yöntemi",
+    weightTotal: "Toplam ağırlık",
+    piecesTotal: "Toplam adet",
+    officeReadOnly: "Ana ofisinize sabit",
   },
 };
 
 export function invoiceCopyFor(language: Language): FinanceInvoiceCopy {
   return (
     financeInvoiceCopy[language as FinanceLanguage] ?? financeInvoiceCopy.en
+  );
+}
+
+/** UI-only guard: finance writes belong to a single-office accountant. */
+export function canWriteFinanceUi(
+  role: AppRole | null | undefined,
+  offices: readonly OfficeId[] | null,
+  homeOffice: OfficeId | null | undefined
+) {
+  return (
+    role === "accountant" &&
+    offices?.length === 1 &&
+    Boolean(homeOffice) &&
+    offices[0] === homeOffice
+  );
+}
+
+export function invoiceGoodsTotals(
+  goods: readonly { weight: number; pieces: number }[]
+) {
+  return goods.reduce(
+    (totals, item) => ({
+      weight: Math.round((totals.weight + item.weight) * 1000) / 1000,
+      pieces: totals.pieces + item.pieces,
+    }),
+    { weight: 0, pieces: 0 }
   );
 }
 

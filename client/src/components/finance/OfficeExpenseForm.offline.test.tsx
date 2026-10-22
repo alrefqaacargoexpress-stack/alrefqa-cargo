@@ -22,6 +22,8 @@ describe("Expense drafts without a connection", () => {
           initialOffice="nouakchott"
           shipments={[]}
           canEdit={true}
+          role="accountant"
+          homeOffice="nouakchott"
           online={false}
           saveCommand={async () => true}
         />
@@ -36,7 +38,9 @@ describe("Expense drafts without a connection", () => {
       <OfficeExpenseForm
         allowedOffices={["nouakchott"]}
         shipments={[]}
-        canEdit={false}
+        canEdit={true}
+        role="office_manager"
+        homeOffice="nouakchott"
         online={true}
         saveCommand={async () => true}
       />

@@ -128,9 +128,11 @@ describe("Office profiles and explicit record scope", () => {
     expect(original.journey).toBeUndefined();
     expect(original.officeId).toBeUndefined();
   });
-  it("keeps legacy and administrator access but confines explicit warehouse/accountant assignments", () => {
+  it("keeps administrator access and denies unassigned or foreign warehouse/accountant access", () => {
     const original = shipment();
-    expect(canReadOfficeRecord("staff", null, "shipment", original)).toBe(true);
+    expect(canReadOfficeRecord("staff", null, "shipment", original)).toBe(
+      false
+    );
     expect(canReadOfficeRecord("admin", [], "shipment", original)).toBe(true);
     expect(canReadOfficeRecord("staff", ["china"], "shipment", original)).toBe(
       false

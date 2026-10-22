@@ -1,0 +1,2 @@
+ALTER TABLE `finance_entries` MODIFY COLUMN `kind` enum('opening_balance','daily_expense','monthly_expense','shipment_cost','shipment_revenue','invoice_revenue','customer_debt','debt_payment','collection','customer_credit','customer_debit') NOT NULL;--> statement-breakpoint
+ALTER TABLE `member_roles` ADD `canUpdateTracking` boolean DEFAULT false NOT NULL;

@@ -81,11 +81,18 @@ export function useTrackingWorkspace(
     undefined
   );
   const candidate = useMemo(() => readLastTrackingProfile(), [me.data?.id]);
-  const offlineIdentity = !activeId && offlineOpen ? candidate : null;
-  const userId = activeId ?? offlineIdentity?.userId ?? null;
-  const role = serverRole ?? offlineIdentity?.role ?? null;
+  // A remembered profile is not authorization to unlock another user's cargo.
+  const userId = activeId;
+  const role = serverRole;
   const offline = !activeId;
   const authorized = Boolean(userId && role);
+  const canUpdateWarehouseStage = Boolean(
+    role === "staff" &&
+      activeId &&
+      access.data?.canUpdateTracking &&
+      access.data.offices?.length === 1 &&
+      access.data.homeOffice !== "nouakchott"
+  );
   const listEnabled = Boolean(activeId && role);
   const listQuery = api.tracking.list.useQuery(
     { search: search.trim() || undefined },
@@ -220,14 +227,18 @@ export function useTrackingWorkspace(
       : null;
   const queue = useCallback(
     async (shipmentId: string, command: TrackingCommand) => {
+      if (
+        role === "staff" &&
+        (!canUpdateWarehouseStage || command.type !== "stage")
+      ) {
+        setNotice("tracking_forbidden");
+        return false;
+      }
       if (!userId || !role || !canTrackingDetails(role) || role === "viewer") {
         setNotice("tracking_forbidden");
         return false;
       }
-      if (
-        command.type === "plan" &&
-        !canSuperviseTracking(role)
-      ) {
+      if (command.type === "plan" && !canSuperviseTracking(role)) {
         setNotice("tracking_forbidden");
         return false;
       }
@@ -279,7 +290,7 @@ export function useTrackingWorkspace(
         return false;
       }
     },
-    [cache, detail, role, selectedId, userId]
+    [cache, detail, role, selectedId, userId, canUpdateWarehouseStage]
   );
   const share = useCallback(async () => {
     if (
@@ -329,9 +340,13 @@ export function useTrackingWorkspace(
     online,
     offline,
     authorized,
-    offlineCandidate: candidate,
+    canUpdateWarehouseStage,
+    offlineCandidate:
+      activeId && candidate?.userId === activeId ? candidate : null,
     offlineOpen,
-    openOffline: () => setOfflineOpen(true),
+    openOffline: () => {
+      if (activeId) setOfflineOpen(true);
+    },
     summaries,
     total: listQuery.data?.total ?? summaries.length,
     truncated: Boolean(listQuery.data?.truncated),

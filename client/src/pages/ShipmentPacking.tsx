@@ -106,6 +106,8 @@ export default function ShipmentPacking() {
   const totals = packingTotals(packed.packing);
   const mruTotals = packingTotalsMRU(packed.packing);
   const canEdit = workspace.canEditShipments && packed.status === "قيد التجهيز";
+  const canMarkDelivered =
+    workspace.role !== "staff" && workspace.canEditShipments;
   const errorText = (value: unknown) => {
     const code = value instanceof Error ? value.message : "";
     if (code === "carton_empty" || code === "carton_closed")
@@ -218,7 +220,7 @@ export default function ShipmentPacking() {
     }
   };
   const delivered = async () => {
-    if (!workspace.canEditShipments || packed.status !== "في الطريق")
+    if (!canMarkDelivered || packed.status !== "في الطريق")
       return setError(c.canNotEdit);
     if (!window.confirm(c.confirmDelivered)) return;
     try {
@@ -493,9 +495,9 @@ export default function ShipmentPacking() {
             {c.sendShipment}
           </button>
         )}
-        {packed.status === "في الطريق" && (
+        {packed.status === "في الطريق" && canMarkDelivered && (
           <button
-            disabled={!workspace.canEditShipments || saving}
+            disabled={!canMarkDelivered || saving}
             onClick={() => void delivered()}
             className={`${packingPrimaryClass} gap-2`}
           >
@@ -503,6 +505,22 @@ export default function ShipmentPacking() {
             {c.markDelivered}
           </button>
         )}
+        {packed.status === "في الطريق" &&
+          workspace.role === "staff" &&
+          workspace.canUpdateTracking && (
+            <Link
+              href="/operations/tracking"
+              className={`${packingSecondaryClass} gap-2`}
+            >
+              {language === "ar"
+                ? "التتبع"
+                : language === "en"
+                  ? "Tracking"
+                  : language === "zh"
+                    ? "追踪"
+                    : "Takip"}
+            </Link>
+          )}
         {packed.status === "مسلّمة" && (
           <span className="inline-flex items-center gap-2 rounded-xl bg-emerald-50 px-4 py-2 text-sm font-bold text-emerald-800">
             <Lock size={15} />

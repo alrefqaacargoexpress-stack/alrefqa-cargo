@@ -35,6 +35,32 @@ const expense: FinanceCommand = {
     shipmentId: "s-one",
   },
 };
+const opening: FinanceCommand = {
+  id: "opening-command",
+  kind: "opening_balance",
+  createdAt: now,
+  payload: {
+    openingId: "opening-one",
+    officeId: "nouakchott",
+    currency: "MRU",
+    direction: "debit",
+    date: "2026-10-21",
+    amount: 125,
+    note: "Cash count at opening",
+  },
+};
+const shipmentPrice: FinanceCommand = {
+  id: "shipment-price-command",
+  kind: "shipment_price",
+  createdAt: now,
+  payload: {
+    shipmentId: "s-one",
+    sourceOfficeId: "china",
+    pricePerKg: 0,
+    pricePerKgMRU: 100,
+    expectedVersion: 3,
+  },
+};
 const buffer = (wb: XLSX.WorkBook) =>
   XLSX.write(wb, { type: "array", bookType: "xlsx" }) as ArrayBuffer;
 describe("Financial Excel import and export", () => {
@@ -134,5 +160,42 @@ describe("Financial Excel import and export", () => {
     expect(result.accounts[0].id).toBe(account.id);
     expect(result.accounts[0].phone).toBe(account.phone);
     expect(result.accounts[0].balance).toBe(account.balance);
+  });
+
+  it("roundtrips opening and shipment price drafts as validated discriminated commands", () => {
+    const result = parseFinanceBuffer(
+      buffer(
+        buildFinanceWorkbook(emptyFinanceSnapshot(), [opening, shipmentPrice])
+      ),
+      { openingIds: [], shipmentPriceShipmentIds: [] }
+    );
+    expect(result.commands.map(command => command.kind)).toEqual([
+      "opening_balance",
+      "shipment_price",
+    ]);
+    expect(result.commands[0]).toMatchObject({
+      kind: "opening_balance",
+      payload: opening.payload,
+    });
+    expect(result.commands[1]).toMatchObject({
+      kind: "shipment_price",
+      payload: shipmentPrice.payload,
+    });
+    expect(result.readOnlySheets).toContain("القيود المسجلة");
+    expect(result.readOnlySheets).toContain("الفواتير المسجلة");
+  });
+
+  it("does not import a posted opening entry or price draft twice", () => {
+    const result = parseFinanceBuffer(
+      buffer(
+        buildFinanceWorkbook(emptyFinanceSnapshot(), [opening, shipmentPrice])
+      ),
+      { openingIds: ["opening-one"], shipmentPriceShipmentIds: ["s-one"] }
+    );
+    expect(result.commands).toHaveLength(0);
+    expect(result.rejected.map(row => row.reason)).toEqual([
+      "duplicate_record",
+      "duplicate_record",
+    ]);
   });
 });

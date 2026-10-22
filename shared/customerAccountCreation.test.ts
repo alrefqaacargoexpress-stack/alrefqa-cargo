@@ -47,8 +47,8 @@ describe("new customer account creation", () => {
     const updated = prepareCustomerAccount(
       { ...account, name: "الاسم المصحح", officeId: "dubai" },
       existing,
-      "admin",
-      null
+      "accountant",
+      ["nouakchott"]
     );
     expect(updated.balance).toBe(850);
     expect(updated.shipments).toBe(3);
@@ -60,15 +60,19 @@ describe("new customer account creation", () => {
       prepareCustomerAccount(
         { ...account, officeId: undefined },
         null,
-        "admin",
-        null
+        "accountant",
+        ["nouakchott"]
       )
     ).toThrow("account_fields_required");
     expect(() =>
-      prepareCustomerAccount({ ...account, phone: "" }, null, "admin", null)
+      prepareCustomerAccount({ ...account, phone: "" }, null, "accountant", [
+        "nouakchott",
+      ])
     ).toThrow("account_fields_required");
     expect(() =>
-      prepareCustomerAccount({ ...account, balance: 10 }, null, "admin", null)
+      prepareCustomerAccount({ ...account, balance: 10 }, null, "accountant", [
+        "nouakchott",
+      ])
     ).toThrow("opening_balance_requires_review");
   });
 });

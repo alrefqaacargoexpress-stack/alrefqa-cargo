@@ -79,6 +79,8 @@ export const memberRoles = mysqlTable(
     offices: json("offices"),
     /** Optional finance home office; null preserves legacy unrestricted membership. */
     homeOffice: varchar("homeOffice", { length: 32 }),
+    /** Explicit opt-in for source-warehouse stage updates; never grants financial access. */
+    canUpdateTracking: boolean("canUpdateTracking").notNull().default(false),
     /** Optimistic-concurrency version for admin membership edits. */
     version: int("version").notNull().default(0),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
@@ -209,6 +211,7 @@ export const auditHeads = mysqlTable("audit_heads", {
 });
 
 export const financeEntryKinds = [
+  "opening_balance",
   "daily_expense",
   "monthly_expense",
   "shipment_cost",

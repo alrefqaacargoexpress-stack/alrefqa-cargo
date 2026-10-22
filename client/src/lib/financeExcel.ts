@@ -54,6 +54,22 @@ const movementHeaders = [
   "مرجع التحصيل",
 ];
 const goodsHeaders = ["رقم الفاتورة", "رقم البند"];
+const openingHeaders = [
+  "رقم الرصيد الافتتاحي",
+  "المكتب",
+  "العملة",
+  "الاتجاه",
+  "التاريخ",
+  "المبلغ",
+  "الملاحظة",
+];
+const shipmentPriceHeaders = [
+  "الشحنة",
+  "مكتب المصدر",
+  "سعر الكيلو",
+  "سعر الكيلو MRU",
+  "النسخة المتوقعة",
+];
 function addSheet(
   workbook: XLSX.WorkBook,
   name: string,
@@ -79,7 +95,9 @@ export function buildFinanceWorkbook(
   const invoiceRows: unknown[][] = [],
     expenseRows: unknown[][] = [],
     goodsRows: unknown[][] = [],
-    movementRows: unknown[][] = [];
+    movementRows: unknown[][] = [],
+    openingRows: unknown[][] = [],
+    shipmentPriceRows: unknown[][] = [];
   for (const c of commands) {
     if (c.kind === "invoice") {
       const p = c.payload;
@@ -114,6 +132,28 @@ export function buildFinanceWorkbook(
         p.shipmentId ?? "",
       ]);
     }
+    if (c.kind === "opening_balance") {
+      const p = c.payload;
+      openingRows.push([
+        p.openingId,
+        p.officeId,
+        p.currency,
+        p.direction,
+        p.date,
+        p.amount,
+        p.note,
+      ]);
+    }
+    if (c.kind === "shipment_price") {
+      const p = c.payload;
+      shipmentPriceRows.push([
+        p.shipmentId,
+        p.sourceOfficeId,
+        p.pricePerKg,
+        p.pricePerKgMRU ?? "",
+        p.expectedVersion,
+      ]);
+    }
   }
   for (const command of commands) {
     if (command.kind !== "customer_movement") continue;
@@ -137,6 +177,8 @@ export function buildFinanceWorkbook(
   addSheet(wb, "مسودات الفواتير", invoiceHeaders, invoiceRows);
   addSheet(wb, "مسودات المصروفات", expenseHeaders, expenseRows);
   addSheet(wb, "بنود المسودات", goodsHeaders, goodsRows);
+  addSheet(wb, "مسودات الأرصدة الافتتاحية", openingHeaders, openingRows);
+  addSheet(wb, "مسودات أسعار الشحنات", shipmentPriceHeaders, shipmentPriceRows);
   addSheet(
     wb,
     "الفواتير المسجلة",
@@ -289,6 +331,8 @@ export function parseFinanceBuffer(
     movementIds?: string[];
     accountIds?: string[];
     shipmentIds?: string[];
+    openingIds?: string[];
+    shipmentPriceShipmentIds?: string[];
   } = {}
 ): FinanceImportResult {
   if (buffer.byteLength > 5 * 1024 * 1024) throw new Error("file_too_large");
@@ -309,13 +353,17 @@ export function parseFinanceBuffer(
           "مسودات المصروفات",
           "مسودات حركات العملاء",
           "بنود المسودات",
+          "مسودات الأرصدة الافتتاحية",
+          "مسودات أسعار الشحنات",
           "الحسابات",
         ].includes(n)
     ),
   };
   const seenInvoices = new Set(existing.invoiceIds ?? []),
     seenExpenses = new Set(existing.expenseIds ?? []),
-    seenMovements = new Set(existing.movementIds ?? []);
+    seenMovements = new Set(existing.movementIds ?? []),
+    seenOpenings = new Set(existing.openingIds ?? []),
+    seenShipmentPrices = new Set(existing.shipmentPriceShipmentIds ?? []);
   const lines = new Map<string, string[]>();
   const invalidGoodsInvoices = new Set<string>();
   function grid(name: string, headers: string[]): unknown[][] {
@@ -508,12 +556,110 @@ export function parseFinanceBuffer(
   accept("مسودات الفواتير", invoiceHeaders, "invoice");
   accept("مسودات المصروفات", expenseHeaders, "expense");
   accept("مسودات حركات العملاء", movementHeaders, "customer_movement");
+  const acceptOpening = () => {
+    for (const [index, row] of grid(
+      "مسودات الأرصدة الافتتاحية",
+      openingHeaders
+    ).entries()) {
+      if (row.every(v => String(v ?? "").trim() === "")) continue;
+      result.total++;
+      const s = (i: number) => String(row[i] ?? "").trim();
+      if (formulas("مسودات الأرصدة الافتتاحية", index + 2)) {
+        result.rejected.push({
+          sheet: "مسودات الأرصدة الافتتاحية",
+          row: index + 2,
+          reason: "formulas_not_allowed",
+        });
+        continue;
+      }
+      const parsed = financeCommandSchema.safeParse({
+        id: crypto.randomUUID(),
+        createdAt: new Date().toISOString(),
+        kind: "opening_balance",
+        payload: {
+          openingId: s(0),
+          officeId: s(1),
+          currency: s(2),
+          direction: s(3),
+          date: s(4),
+          amount: numeric(row[5]),
+          note: s(6),
+        },
+      });
+      const id = s(0);
+      const reason = !parsed.success
+        ? (parsed.error.issues[0]?.message ?? "invalid_row")
+        : seenOpenings.has(id)
+          ? "duplicate_record"
+          : "";
+      if (reason)
+        result.rejected.push({
+          sheet: "مسودات الأرصدة الافتتاحية",
+          row: index + 2,
+          reason,
+        });
+      else if (parsed.success) {
+        seenOpenings.add(id);
+        result.commands.push(parsed.data);
+      }
+    }
+  };
+  const acceptShipmentPrice = () => {
+    for (const [index, row] of grid(
+      "مسودات أسعار الشحنات",
+      shipmentPriceHeaders
+    ).entries()) {
+      if (row.every(v => String(v ?? "").trim() === "")) continue;
+      result.total++;
+      const s = (i: number) => String(row[i] ?? "").trim();
+      if (formulas("مسودات أسعار الشحنات", index + 2)) {
+        result.rejected.push({
+          sheet: "مسودات أسعار الشحنات",
+          row: index + 2,
+          reason: "formulas_not_allowed",
+        });
+        continue;
+      }
+      const parsed = financeCommandSchema.safeParse({
+        id: crypto.randomUUID(),
+        createdAt: new Date().toISOString(),
+        kind: "shipment_price",
+        payload: {
+          shipmentId: s(0),
+          sourceOfficeId: s(1),
+          pricePerKg: numeric(row[2]),
+          ...(s(3) ? { pricePerKgMRU: numeric(row[3]) } : {}),
+          expectedVersion: Number(row[4]),
+        },
+      });
+      const id = s(0);
+      const reason = !parsed.success
+        ? (parsed.error.issues[0]?.message ?? "invalid_row")
+        : seenShipmentPrices.has(id)
+          ? "duplicate_record"
+          : "";
+      if (reason)
+        result.rejected.push({
+          sheet: "مسودات أسعار الشحنات",
+          row: index + 2,
+          reason,
+        });
+      else if (parsed.success) {
+        seenShipmentPrices.add(id);
+        result.commands.push(parsed.data);
+      }
+    }
+  };
+  acceptOpening();
+  acceptShipmentPrice();
   if (
     !wb.SheetNames.some(n =>
       [
         "مسودات الفواتير",
         "مسودات المصروفات",
         "مسودات حركات العملاء",
+        "مسودات الأرصدة الافتتاحية",
+        "مسودات أسعار الشحنات",
         "الحسابات",
       ].includes(n)
     )

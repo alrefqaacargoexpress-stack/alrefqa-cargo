@@ -248,6 +248,16 @@ export default function OfficeDashboard() {
                 {c.settingsLink}
               </Link>
             )}
+            {workspace.role === "staff" &&
+              workspace.offices?.length === 1 &&
+              workspace.offices[0] === "nouakchott" && (
+                <Link
+                  href="/operations/warehouse"
+                  className="rounded-xl border border-[#cbd9de] px-3 py-2 font-bold text-[#2e6280]"
+                >
+                  تخزين نواكشوط
+                </Link>
+              )}
           </div>
         </div>
 

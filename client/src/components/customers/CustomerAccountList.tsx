@@ -8,20 +8,12 @@ import { searchableCustomerAccounts } from "@shared/customerAccounts";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { customerAccountCopyFor } from "@/lib/customerAccountCopy";
 import { packingSecondaryClass } from "@/components/packing/PackingPrimitives";
+import { buildAccountsWorkbook } from "@/lib/excel";
 
 function exportAccounts(accounts: Account[]) {
-  const rows = accounts.map(account => ({
-    ID: account.id,
-    Name: account.name,
-    Phone: account.phone,
-    City: account.city,
-    Office: account.officeId ?? "",
-    Scope: account.scope ?? "local",
-    Updated: account.updatedAt,
-  }));
-  const sheet = XLSX.utils.json_to_sheet(rows);
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, sheet, "Customer accounts");
+  // Export only the already scoped/visible records; the shared builder keeps
+  // balance, shipments and officeId as text-safe, formula-free cells.
+  const workbook = buildAccountsWorkbook(accounts);
   XLSX.writeFile(
     workbook,
     `customer-accounts-${new Date().toISOString().slice(0, 10)}.xlsx`
@@ -109,7 +101,9 @@ export default function CustomerAccountList({
                 {scopeLabel(account.scope)}
               </span>
               <span className="mt-1 block">
-                {account.officeId ? officeNames[language][account.officeId] : "—"}
+                {account.officeId
+                  ? officeNames[language][account.officeId]
+                  : "—"}
               </span>
               <span className="mt-1 block font-mono">{account.id}</span>
             </span>

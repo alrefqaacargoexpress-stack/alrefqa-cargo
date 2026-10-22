@@ -197,10 +197,9 @@ export default function PackingHub() {
         ...(selectedOffice
           ? { officeId: selectedOffice }
           : { officeId: source }),
-        pricePerKg: workspace.showFinance ? numericRate : 0,
-        ...(workspace.showFinance && numericMru !== undefined
-          ? { pricePerKgMRU: numericMru }
-          : {}),
+        // Generic shipment creation never writes finance fields. Finance commands
+        // are reviewed and posted from the accountant finance workspace only.
+        pricePerKg: 0,
       });
       const saved = await workspace.saveShipment(
         shipment,
@@ -228,6 +227,44 @@ export default function PackingHub() {
       setSaving(false);
     }
   };
+
+  if (workspace.warehouseOnly) {
+    return (
+      <PackingLayout
+        workspace={workspace}
+        title={
+          language === "ar"
+            ? "مخزن نواكشوط"
+            : language === "en"
+              ? "Nouakchott warehouse"
+              : language === "zh"
+                ? "努瓦克肖特仓库"
+                : "Nuakşot deposu"
+        }
+        description={
+          language === "ar"
+            ? "التخزين فقط؛ لا تُنشأ شحنات ولا تُسجّل حالات الوصول أو التسليم من هنا."
+            : language === "en"
+              ? "Storage only; shipments and arrival or delivery statuses are not created here."
+              : language === "zh"
+                ? "仅限仓储；此处不能创建货运或登记到达、交付状态。"
+                : "Yalnızca depolama; burada gönderi, varış veya teslim durumu oluşturulmaz."
+        }
+      >
+        <section className="rounded-3xl border border-[#dce4e7] bg-white p-6 shadow-sm">
+          <p className="text-sm text-[#52636e]">
+            {language === "ar"
+              ? "تُعرض بيانات الشحنات الحالية للقراءة فقط. تحديث التتبع يظهر فقط عند منح نطاق canUpdateTracking."
+              : language === "en"
+                ? "Current shipment data is read-only. Tracking updates appear only when the canUpdateTracking scope is granted."
+                : language === "zh"
+                  ? "当前货运数据为只读。只有授予 canUpdateTracking 范围时才显示追踪更新。"
+                  : "Mevcut gönderi verileri salt okunurdur. Takip güncellemeleri yalnızca canUpdateTracking kapsamı verilirse görünür."}
+          </p>
+        </section>
+      </PackingLayout>
+    );
+  }
 
   return (
     <PackingLayout
@@ -401,7 +438,7 @@ export default function PackingHub() {
         <NewShipmentForm
           c={c}
           canEdit={workspace.canEditShipments}
-          showFinance={workspace.showFinance}
+          showFinance={false}
           tracking={tracking}
           setTracking={setTracking}
           source={source}
@@ -499,38 +536,7 @@ function NewShipmentForm({
             ))}
           </select>
         </PackingField>
-        <PackingField
-          label={`${c.pricePerKg} (${sourceCurrency[source]})`}
-          hint={showFinance ? c.priceHelp : c.rateRestricted}
-        >
-          <input
-            aria-label={c.pricePerKg}
-            type="number"
-            min="0"
-            max="999999999"
-            step="0.01"
-            inputMode="decimal"
-            className={packingInputClass}
-            value={pricePerKg}
-            readOnly={!showFinance}
-            disabled={!showFinance || !canEdit || saving}
-            onChange={event => setPricePerKg(event.target.value)}
-          />
-        </PackingField>
-        <PackingField label={c.pricePerKgMRU} hint={c.mruPriceHelp}>
-          <input
-            aria-label={c.pricePerKgMRU}
-            type="number"
-            min="0"
-            max="999999999"
-            step="0.01"
-            inputMode="decimal"
-            className={packingInputClass}
-            value={pricePerKgMRU}
-            disabled={!showFinance || !canEdit || saving}
-            onChange={event => setPricePerKgMRU(event.target.value)}
-          />
-        </PackingField>
+        {/* Generic shipment rates are finance-command fields, not packing fields. */}
       </div>
       {!canEdit && (
         <p className="mt-4 rounded-xl bg-slate-50 px-3 py-2 text-sm text-[#718088]">

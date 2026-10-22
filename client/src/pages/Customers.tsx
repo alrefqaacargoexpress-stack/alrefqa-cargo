@@ -44,8 +44,8 @@ export default function Customers() {
   const office =
     officeIds.includes(requestedOffice as OfficeId) &&
     permittedOffices.includes(requestedOffice as OfficeId)
-    ? (requestedOffice as OfficeId)
-    : null;
+      ? (requestedOffice as OfficeId)
+      : null;
   const contextSearch = useMemo(() => {
     const params = new URLSearchParams(search);
     params.delete("account");
@@ -59,10 +59,17 @@ export default function Customers() {
   useEffect(() => {
     if (!account) return;
     const suffix = contextSearch ? `?${contextSearch}` : "";
-    navigate(`/operations/customers/${encodeURIComponent(account.id)}${suffix}`, {
-      replace: true,
-    });
+    navigate(
+      `/operations/customers/${encodeURIComponent(account.id)}${suffix}`,
+      {
+        replace: true,
+      }
+    );
   }, [account, contextSearch, navigate]);
+  const unassignedAccountWriteBlocked =
+    base.role === "accountant" &&
+    base.offices !== null &&
+    base.offices.length === 0;
   const visibleAccounts = useMemo(
     () =>
       office
@@ -73,6 +80,28 @@ export default function Customers() {
   return (
     <PackingLayout title={c.title} description={c.description} workspace={base}>
       <div className="space-y-5">
+        {unassignedAccountWriteBlocked && (
+          <p className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+            {language === "ar"
+              ? "لا يوجد مكتب معيّن؛ أوقفنا الكتابة. عيّن المكتب قبل المتابعة."
+              : language === "en"
+                ? "No office is assigned; writing is paused. Assign an office before continuing."
+                : language === "zh"
+                  ? "未分配办公室，写入已暂停。请先分配办公室。"
+                  : "Ofis atanmadı; yazma durduruldu. Devam etmeden önce ofis atayın."}
+          </p>
+        )}
+        {base.role && !base.canEditAccounts && (
+          <p className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-[#52636e]">
+            {language === "ar"
+              ? "هذه القائمة للقراءة فقط؛ إنشاء وتعديل حساب العميل للمحاسب المعيّن بمكتب واحد."
+              : language === "en"
+                ? "This list is read-only; customer account writes belong to a one-office accountant."
+                : language === "zh"
+                  ? "此列表为只读；客户账户写入仅限分配一个办公室的会计。"
+                  : "Bu liste salt okunurdur; müşteri hesabı yazımı tek ofise atanmış muhasebeciye aittir."}
+          </p>
+        )}
         <CustomerAccountForm
           key={`${base.userId ?? "local"}:${office ?? ""}`}
           base={base}

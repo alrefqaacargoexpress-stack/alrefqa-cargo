@@ -15,9 +15,7 @@ export function canDeleteShipment(
   role: AppRole | null,
   shipment: Shipment
 ): boolean {
-  return (
-    role === "admin" || (role === "staff" && shipment.status === "قيد التجهيز")
-  );
+  return role === "admin";
 }
 export function deleteShipment<T extends Shipment>(
   shipment: T,

@@ -4,6 +4,7 @@ import { ENV } from "./_core/env";
 import { canonicalPackingShipment, packingSchema } from "@shared/packing";
 import { journeySchema } from "@shared/tracking";
 import { stageShipmentStatus } from "@shared/tracking";
+import { destinationStorageSchema } from "@shared/warehouse";
 import { invoicePaymentSchema } from "@shared/office";
 import {
   assertShipmentAction,
@@ -76,6 +77,7 @@ export const shipmentDataSchema = z
     amount: nonNegative,
     packing: packingSchema.optional(),
     journey: journeySchema.optional(),
+    destinationStorage: destinationStorageSchema.optional(),
     deleted: shipmentDeletionSchema.optional(),
     ...optionalMeta,
   })
@@ -111,7 +113,14 @@ export const syncInputSchema = z
 export const setRoleInputSchema = z
   .object({
     userId: safeNonNegative,
-    role: z.enum(["admin", "staff", "accountant", "viewer", "tracking_staff", "supervisor"]),
+    role: z.enum([
+      "admin",
+      "staff",
+      "accountant",
+      "viewer",
+      "tracking_staff",
+      "supervisor",
+    ]),
   })
   .strict();
 
@@ -205,7 +214,8 @@ function preserveStaffFinance(
   next: EntityRecord,
   current: EntityRecord | null
 ): EntityRecord {
-  if (role !== "staff") return next;
+  // Generic shipment editors never author money. Packing totals are derived below.
+  if (!("tracking" in next)) return next;
   if (current && "balance" in next && "balance" in current)
     return { ...next, balance: current.balance };
   if (current && "amount" in next && "amount" in current) {
@@ -238,37 +248,102 @@ export function prepareRecordForWrite(
 ): EntityRecord {
   // Financial invoices are immutable facts owned by the finance API. Generic
   // operations sync must never create, edit, or erase them.
-  if ("issuedAt" in next && ("finance" in next || next.status === "دين"))
+  if ("issuedAt" in next) throw new Error("finance_command_required");
+  if (current && "issuedAt" in current)
     throw new Error("finance_command_required");
-  if (current && "issuedAt" in current && ("finance" in current || current.status === "دين"))
+  if (
+    "balance" in next &&
+    next.balance !== (current && "balance" in current ? current.balance : 0)
+  )
     throw new Error("finance_command_required");
+  if ("tracking" in next) {
+    const old = current && "tracking" in current ? current : null;
+    if (
+      next.destinationStorage !== undefined &&
+      JSON.stringify(next.destinationStorage) !==
+        JSON.stringify(old?.destinationStorage ?? [])
+    )
+      throw new Error("warehouse_command_required");
+    if (old?.destinationStorage && next.destinationStorage === undefined)
+      next = {
+        ...next,
+        destinationStorage: structuredClone(old.destinationStorage),
+      };
+    if (
+      next.packing &&
+      role !== "staff" &&
+      (next.packing.pricePerKg !== (old?.packing?.pricePerKg ?? 0) ||
+        next.packing.pricePerKgMRU !== old?.packing?.pricePerKgMRU)
+    )
+      throw new Error("finance_command_required");
+    if (
+      !old &&
+      (next.amount !== 0 ||
+        (next.packing?.pricePerKg ?? 0) !== 0 ||
+        (next.packing?.pricePerKgMRU ?? 0) !== 0)
+    )
+      throw new Error("financial_write_forbidden");
+    if (role === "staff") {
+      if (!next.packing) throw new Error("warehouse_packing_required");
+      if (!old && next.status !== "قيد التجهيز")
+        throw new Error("warehouse_create_preparing_required");
+      if (
+        old &&
+        ["tracking", "account", "route", "service", "eta"].some(
+          key => (next as any)[key] !== (old as any)[key]
+        )
+      )
+        throw new Error("warehouse_fields_forbidden");
+      if (
+        old &&
+        next.status !== old.status &&
+        !(
+          old.status === "قيد التجهيز" &&
+          next.status === "في الطريق" &&
+          !old.journey
+        )
+      )
+        throw new Error("tracking_command_required");
+      if (
+        old &&
+        next.status !== old.status &&
+        next.status === "في الطريق" &&
+        (!next.packing.cartons.some(carton =>
+          carton.goods.some(goods => !goods.deleted)
+        ) ||
+          next.packing.cartons.some(
+            carton =>
+              !carton.closed && carton.goods.some(goods => !goods.deleted)
+          ))
+      )
+        throw new Error("close_carton_first");
+    }
+  }
   let result = structuredClone(preserveStaffFinance(role, next, current));
   // Old clients omit officeId; omission must not clear a stored assignment.
   if (current?.officeId && !result.officeId)
     result = { ...result, officeId: current.officeId } as EntityRecord;
-  if (
-    current &&
-    "issuedAt" in current &&
-    "issuedAt" in result &&
-    "payment" in current &&
-    current.payment &&
-    !("payment" in result)
-  )
-    result = { ...result, payment: structuredClone(current.payment) };
   if ("tracking" in result) {
     const oldShipment = current && "tracking" in current ? current : null;
     if (oldShipment?.journey) {
       // Older clients omit fields they do not understand; preserve the journey rather than
       // allowing a sync payload to erase actor-authored notes or metadata.
-      if (!result.journey) result = { ...result, journey: structuredClone(oldShipment.journey) };
-      else if (JSON.stringify(result.journey) !== JSON.stringify(oldShipment.journey))
+      if (!result.journey)
+        result = { ...result, journey: structuredClone(oldShipment.journey) };
+      else if (
+        JSON.stringify(result.journey) !== JSON.stringify(oldShipment.journey)
+      )
         throw new Error("tracking_command_required");
       const stageStatus = stageShipmentStatus(oldShipment.journey.stage);
       const deliveredCorrection =
         result.status === "مسلّمة" &&
         oldShipment.journey.stage === "arrived_office" &&
-        (role === "admin" || role === "staff" || role === "office_manager");
-      if (result.status !== oldShipment.status && !deliveredCorrection && result.status !== stageStatus)
+        (role === "admin" || role === "office_manager");
+      if (
+        result.status !== oldShipment.status &&
+        !deliveredCorrection &&
+        result.status !== stageStatus
+      )
         throw new Error("tracking_command_required");
     } else if (result.journey) {
       // Initial tracking plans are server commands, never a generic public record create.
@@ -403,18 +478,43 @@ export function assertOfficeRecordWrite(
   offices: OfficeId[] | null,
   entity: Entity,
   record: EntityRecord,
-  current: EntityRecord | null,
+  current: EntityRecord | null
 ): void {
   if (!role) throw new Error("forbidden");
+  if (entity === "shipment" && "tracking" in record && record.packing) {
+    const source = record.packing.source;
+    if (
+      (!current && record.officeId && record.officeId !== source) ||
+      (role !== "admin" &&
+        (!offices || offices.length !== 1 || offices[0] !== source))
+    )
+      throw new Error("shipment_source_office_mismatch");
+  }
+  if (
+    (role === "staff" || role === "accountant") &&
+    (!offices || offices.length !== 1)
+  )
+    throw new Error("employee_single_office_required");
+  if (
+    role === "staff" &&
+    (entity !== "shipment" || offices?.[0] === "nouakchott")
+  )
+    throw new Error("warehouse_scope_forbidden");
   if (role === "office_manager" && (!offices || offices.length !== 1))
     throw new Error("office_scope_forbidden");
-  if (role === "admin" || offices === null) return;
-  if (role === "office_manager" && current && !canWriteOfficeRecord(role, offices, entity, current))
+  if (role === "admin") return;
+  if (offices === null) throw new Error("office_scope_forbidden");
+  if (
+    role === "office_manager" &&
+    current &&
+    !canWriteOfficeRecord(role, offices, entity, current)
+  )
     throw new Error("office_scope_forbidden");
-  if (current?.officeId && record.officeId && current.officeId !== record.officeId)
+  if (current && ownerOffice(entity, current) !== ownerOffice(entity, record))
     throw new Error("office_change_forbidden");
   const home = ownerOffice(entity, record);
-  if (!home || !offices.includes(home)) throw new Error("office_scope_forbidden");
+  if (!home || !offices.includes(home))
+    throw new Error("office_scope_forbidden");
   if (!canWriteOfficeRecord(role, offices, entity, record))
     throw new Error("office_scope_forbidden");
 }
@@ -423,7 +523,7 @@ export function canReadScopedRecord(
   role: AppRole | null,
   offices: OfficeId[] | null,
   entity: Entity,
-  record: EntityRecord,
+  record: EntityRecord
 ): boolean {
   return canReadOfficeRecord(role, offices, entity, record);
 }

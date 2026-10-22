@@ -4,6 +4,7 @@ import { packingSchema } from "./packing";
 import { journeySchema } from "./tracking";
 import { invoicePaymentSchema } from "./office";
 import { financialInvoiceSchema } from "./finance";
+import { destinationStorageSchema } from "./warehouse";
 import {
   shipmentDeletionSchema,
   shipmentActionSchema,
@@ -47,6 +48,7 @@ export const localShipmentSchema = z
     amount: money,
     packing: packingSchema.optional(),
     journey: journeySchema.optional(),
+    destinationStorage: destinationStorageSchema.optional(),
     deleted: shipmentDeletionSchema.optional(),
     ...meta,
   })

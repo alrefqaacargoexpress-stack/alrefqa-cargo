@@ -24,7 +24,7 @@ const user = {
 };
 const scope = {
   role: "accountant" as const,
-  offices: ["dubai", "nouakchott"] as const,
+  offices: ["nouakchott"] as const,
   homeOffice: "nouakchott" as const,
 };
 const copiedScope = () => ({ ...scope, offices: [...scope.offices] });
@@ -128,7 +128,7 @@ function seed(db: any) {
     shipments: 0,
     balance: 0,
     updatedAt: now,
-    officeId: "dubai",
+    officeId: "nouakchott",
   };
   const shipment = {
     id: "s1",
@@ -136,7 +136,15 @@ function seed(db: any) {
     account: "شحنة مجمعة",
     route: "Dubai",
     service: "جوي",
-    status: "قيد التجهيز",
+    status: "وصلت للمكتب",
+    journey: {
+      stage: "arrived_office",
+      branch: "nouakchott",
+      startedAt: now,
+      updatedAt: now,
+      expectedDays: 9,
+      notes: [],
+    },
     eta: "none",
     amount: 0,
     officeId: "dubai",
@@ -176,7 +184,7 @@ function invoice(id = "invoice-command"): FinanceCommand {
     payload: {
       invoiceId: `inv-${id}`,
       customerId: "c1",
-      issuingOfficeId: "dubai",
+      issuingOfficeId: "nouakchott",
       employeeOfficeId: "nouakchott",
       chargeKind: "shipping",
       paymentMode: "on_account",
@@ -212,7 +220,7 @@ describe("Financial command transactions (isolated memory database)", () => {
     expect(result.applied).toHaveLength(1);
     const bill = result.applied[0].invoice!;
     expect(bill.officeId).toBe("nouakchott");
-    expect(bill.finance?.issuingOfficeId).toBe("dubai");
+    expect(bill.finance?.issuingOfficeId).toBe("nouakchott");
     expect(bill.finance?.actorId).toBe(user.id);
     expect(bill.finance?.goods[0].name).toBe("Different brand");
     expect(bill.status).toBe("دين");
@@ -505,4 +513,171 @@ it("rejects shipping_fee for a new invoice before writing financial facts", asyn
   expect(db.rows.get(financeEntries)).toHaveLength(0);
   expect(db.rows.get(financeReceipts)).toHaveLength(0);
   expect(db.events).toHaveLength(0);
+});
+
+it("posts an opening balance once, replays the receipt, and rolls back audit failure", async () => {
+  const db = database();
+  seed(db);
+  const command: FinanceCommand = {
+    id: "opening-command",
+    kind: "opening_balance",
+    createdAt: now,
+    payload: {
+      openingId: "opening-one",
+      officeId: "nouakchott",
+      currency: "MRU",
+      direction: "credit",
+      date: "2026-10-22",
+      amount: 100,
+      note: "Opening cash",
+    },
+  };
+  const first = await financeSync(
+    db,
+    user,
+    { role: "accountant", offices: ["nouakchott"], homeOffice: "nouakchott" },
+    [command]
+  );
+  expect(first.conflicts).toEqual([]);
+  expect(db.rows.get(financeEntries)).toHaveLength(1);
+  expect(db.rows.get(financeReceipts)).toHaveLength(1);
+  expect(
+    (
+      await financeSync(
+        db,
+        user,
+        {
+          role: "accountant",
+          offices: ["nouakchott"],
+          homeOffice: "nouakchott",
+        },
+        [command]
+      )
+    ).applied
+  ).toHaveLength(1);
+  expect(db.rows.get(financeEntries)).toHaveLength(1);
+
+  const failureDb = database();
+  seed(failureDb);
+  const failed = { ...structuredClone(command), id: "opening-fails" };
+  if (failed.kind === "opening_balance") failed.payload.note = "FAIL-AUDIT";
+  const rollback = await financeSync(
+    failureDb,
+    user,
+    { role: "accountant", offices: ["nouakchott"], homeOffice: "nouakchott" },
+    [failed]
+  );
+  expect(rollback.conflicts[0].code).toBe("simulated_audit_failure");
+  expect(failureDb.rows.get(financeEntries)).toHaveLength(0);
+  expect(failureDb.rows.get(financeReceipts)).toHaveLength(0);
+  expect(db.rows.get(financeEntries)).toHaveLength(1);
+  expect(db.rows.get(financeReceipts)).toHaveLength(1);
+});
+
+it("sets zero shipment prices only from the source accountant and rejects a foreign office", async () => {
+  const db = database();
+  seed(db);
+  db.rows.get(records)[1].data.status = "قيد التجهيز";
+  db.rows.get(records)[1].data.journey.stage = "preparing";
+  const command: FinanceCommand = {
+    id: "price-command",
+    kind: "shipment_price",
+    createdAt: now,
+    payload: {
+      shipmentId: "s1",
+      sourceOfficeId: "dubai",
+      pricePerKg: 0,
+      pricePerKgMRU: 0,
+      expectedVersion: 1,
+    },
+  };
+  const applied = await financeSync(
+    db,
+    user,
+    { role: "accountant", offices: ["dubai"], homeOffice: "dubai" },
+    [command]
+  );
+  expect(applied.conflicts).toEqual([]);
+  expect(
+    db.rows.get(records).find((row: any) => row.recordId === "s1").data.packing
+  ).toMatchObject({ pricePerKg: 0, pricePerKgMRU: 0 });
+  const foreign = await financeSync(
+    db,
+    user,
+    { role: "accountant", offices: ["nouakchott"], homeOffice: "nouakchott" },
+    [{ ...command, id: "price-foreign" }]
+  );
+  expect(foreign.conflicts[0].code).toBe("financial_office_mismatch");
+});
+
+it("rejects all financial commands and replay for managers or accountants without one office", async () => {
+  for (const invalid of [
+    { role: "admin", offices: null, homeOffice: null },
+    {
+      role: "office_manager",
+      offices: ["nouakchott"],
+      homeOffice: "nouakchott",
+    },
+    {
+      role: "accountant",
+      offices: ["nouakchott", "dubai"],
+      homeOffice: "nouakchott",
+    },
+    { role: "accountant", offices: null, homeOffice: null },
+  ]) {
+    const db = database();
+    seed(db);
+    const result = await financeSync(db, user, invalid as any, [
+      invoice(),
+      expense("denied"),
+      movement("denied"),
+    ]);
+    expect(result.applied).toEqual([]);
+    expect(
+      result.conflicts.every(conflict => conflict.code === "finance_forbidden")
+    ).toBe(true);
+    expect(db.rows.get(financeEntries)).toEqual([]);
+    expect(db.rows.get(financeReceipts)).toEqual([]);
+    expect(db.events).toEqual([]);
+  }
+});
+
+it("prices an unpriced sent shipment once and keeps the authorized established rate locked", async () => {
+  const db = database();
+  seed(db);
+  const stored = db.rows.get(records)[1].data;
+  stored.packing.pricePerKg = 0;
+  stored.packing.pricePerKgMRU = 0;
+  stored.amount = 0;
+  stored.packing.cartons[0].closed = true;
+  const command: FinanceCommand = {
+    id: "price-initial-sent",
+    kind: "shipment_price",
+    createdAt: now,
+    payload: {
+      shipmentId: "s1",
+      sourceOfficeId: "dubai",
+      pricePerKg: 10,
+      expectedVersion: 1,
+    },
+  };
+  const sourceScope = {
+    role: "accountant" as const,
+    offices: ["dubai" as const],
+    homeOffice: "dubai" as const,
+  };
+  expect(
+    (await financeSync(db, user, sourceScope, [command])).conflicts
+  ).toEqual([]);
+  expect(db.rows.get(records)[1].data.amount).toBe(22);
+  if (command.kind !== "shipment_price") throw new Error("Invalid fixture");
+  const changed = {
+    ...command,
+    id: "price-revised-sent",
+    payload: { ...command.payload, expectedVersion: 2, pricePerKg: 11 },
+  };
+  const blocked = await financeSync(db, user, sourceScope, [changed]);
+  expect(blocked.conflicts[0].code).toBe("shipment_not_open");
+  expect(db.rows.get(records)[1].data.packing.pricePerKg).toBe(10);
+  expect(db.rows.get(records)[1].version).toBe(2);
 });

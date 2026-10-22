@@ -3,6 +3,7 @@ import type { PackingSession } from "./packing";
 import type { ShipmentJourney } from "./tracking";
 import type { InvoicePayment } from "./office";
 import type { FinancialInvoiceDetails } from "./finance";
+import type { DestinationStorageItem } from "./warehouse";
 export const APP_ROLES = [
   "admin",
   "office_manager",
@@ -43,6 +44,7 @@ export type Shipment = {
   amount: number;
   packing?: PackingSession;
   journey?: ShipmentJourney;
+  destinationStorage?: DestinationStorageItem[];
   deleted?: { at: string; reason: string };
   officeId?: OfficeId;
   scope?: DataScope;
@@ -93,12 +95,10 @@ export const EMPTY_STATE: LocalState = {
   lastSyncedAt: null,
 };
 export function canWrite(role: AppRole | null, entity: Entity): boolean {
-  return (
-    role === "admin" ||
-    role === "office_manager" ||
-    (role === "staff" && entity !== "invoice") ||
-    (role === "accountant" && entity !== "shipment")
-  );
+  // All invoices and monetary facts use the dedicated accountant command API.
+  if (entity === "invoice") return false;
+  if (entity === "account") return role === "accountant";
+  return role === "admin" || role === "office_manager" || role === "staff";
 }
 export function canViewFinance(role: AppRole | null): boolean {
   return role === "admin" || role === "accountant" || role === "office_manager";

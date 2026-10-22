@@ -9,7 +9,8 @@ import { useFinanceWorkspace } from "@/hooks/useFinanceWorkspace";
 import PackingLayout from "@/components/packing/PackingLayout";
 import FinanceExcelPanel from "@/components/finance/FinanceExcelPanel";
 import InvoiceFinancialForm from "@/components/finance/InvoiceFinancialForm";
-import { invoiceCopyFor } from "@/lib/financeInvoiceCopy";
+import { canWriteFinanceUi, invoiceCopyFor } from "@/lib/financeInvoiceCopy";
+import { trpc } from "@/lib/trpc";
 import {
   formatLocalNumber,
   packingPrimaryClass,
@@ -39,11 +40,42 @@ function InvoiceTable({
 }) {
   const [settling, setSettling] = useState<string | null>(null);
   const [amounts, setAmounts] = useState<Record<string, string>>({});
+  const [settlementModes, setSettlementModes] = useState<
+    Record<string, "cash" | "wallet">
+  >({});
+  const [settlementWallets, setSettlementWallets] = useState<
+    Record<string, string>
+  >({});
+  const [settlementRefs, setSettlementRefs] = useState<Record<string, string>>(
+    {}
+  );
   const [message, setMessage] = useState("");
+  const canWrite =
+    canWriteFinanceUi(
+      workspace.role,
+      workspace.offices,
+      workspace.homeOffice
+    ) && workspace.canEdit;
+  const wallet = trpc.office.public.useQuery(undefined, {
+    enabled: workspace.homeOffice === "nouakchott",
+    retry: false,
+    refetchOnWindowFocus: false,
+  });
+  const walletMethods = (wallet.data?.methods ?? []).filter(method => true);
+  const configuredWallets = walletMethods.filter(
+    method => method.id !== "cash"
+  );
+  const cashMethod = walletMethods.find(method => method.id === "cash");
   const invoices = workspace.invoices;
   const recordSettlement = async (invoice: Invoice) => {
     const amount = Number(amounts[invoice.id]);
-    if (!Number.isFinite(amount) || amount <= 0 || !invoice.finance) return;
+    if (
+      !canWrite ||
+      !Number.isFinite(amount) ||
+      amount <= 0 ||
+      !invoice.finance
+    )
+      return;
     if (
       amount >
       (Math.round(invoice.amount * 100) -
@@ -63,12 +95,33 @@ function InvoiceTable({
         invoiceId: invoice.id,
         expectedVersion: invoice.version ?? 1,
         amount,
-        payment: {
-          office: "nouakchott",
-          methodId: "cash",
-          methodLabel: c.cash,
-        },
-        description: "cash",
+        ...(settlementModes[invoice.id] === "wallet" &&
+        settlementWallets[invoice.id] &&
+        workspace.homeOffice === "nouakchott"
+          ? {
+              payment: {
+                office: "nouakchott" as const,
+                methodId: settlementWallets[invoice.id],
+                methodLabel:
+                  configuredWallets.find(
+                    method => method.id === settlementWallets[invoice.id]
+                  )?.label ?? settlementWallets[invoice.id],
+                ...(settlementRefs[invoice.id]?.trim()
+                  ? { reference: settlementRefs[invoice.id].trim() }
+                  : {}),
+              },
+            }
+          : workspace.homeOffice === "nouakchott" && cashMethod
+            ? {
+                payment: {
+                  office: "nouakchott" as const,
+                  methodId: cashMethod.id,
+                  methodLabel: cashMethod.label,
+                },
+              }
+            : {}),
+        description:
+          settlementModes[invoice.id] === "wallet" ? "wallet" : "cash",
       },
     };
     try {
@@ -99,7 +152,8 @@ function InvoiceTable({
               <th className="p-3">{c.office}</th>
               <th className="p-3">{c.currency}</th>
               <th className="p-3">{c.total}</th>
-              <th className="p-3">{c.payment}</th>
+              <th className="p-3">{c.issueMethod}</th>
+              <th className="p-3">{c.settlementMethod}</th>
               <th className="p-3">{c.actor}</th>
               <th className="p-3">{c.partialSettlement}</th>
             </tr>
@@ -116,13 +170,14 @@ function InvoiceTable({
                   )
                 : 0;
               const readonly = !finance;
+              const settlementMode = settlementModes[invoice.id] ?? "cash";
               return (
                 <tr
                   key={invoice.id}
-                  className={
-                    `${readonly ? "bg-[#fbfcfb] text-[#718088]" : "text-[#23445d]"} ${selectedInvoiceId === invoice.id ? "ring-2 ring-inset ring-[#d9a441]" : ""}`
+                  className={`${readonly ? "bg-[#fbfcfb] text-[#718088]" : "text-[#23445d]"} ${selectedInvoiceId === invoice.id ? "ring-2 ring-inset ring-[#d9a441]" : ""}`}
+                  aria-current={
+                    selectedInvoiceId === invoice.id ? "true" : undefined
                   }
-                  aria-current={selectedInvoiceId === invoice.id ? "true" : undefined}
                 >
                   <td className="p-3 font-mono text-xs">
                     {invoice.id}
@@ -168,8 +223,26 @@ function InvoiceTable({
                   </td>
                   <td className="p-3">
                     {finance
-                      ? `${formatLocalNumber(finance.paidAmount, language, 2)} / ${formatLocalNumber(remaining, language, 2)}`
+                      ? finance.paymentMode === "wallet"
+                        ? c.wallet
+                        : finance.paymentMode === "on_account"
+                          ? c.onAccount
+                          : c.cash
                       : (invoice.payment?.methodLabel ?? "—")}
+                  </td>
+                  <td className="p-3">
+                    {invoice.payment?.methodLabel ?? "—"}
+                    {invoice.payment?.reference && (
+                      <span className="block text-xs text-[#718088]">
+                        {c.paymentReference}: {invoice.payment.reference}
+                      </span>
+                    )}
+                    {finance && (
+                      <span className="block text-xs text-[#718088]">
+                        {formatLocalNumber(finance.paidAmount, language, 2)} /{" "}
+                        {formatLocalNumber(remaining, language, 2)}
+                      </span>
+                    )}
                   </td>
                   <td className="p-3">
                     {finance?.actorName ?? "—"}
@@ -183,7 +256,7 @@ function InvoiceTable({
                     {!readonly &&
                     remaining > 0 &&
                     invoice.status !== "مدفوعة" ? (
-                      <div className="flex items-center gap-1">
+                      <div className="flex flex-wrap items-center gap-1">
                         <input
                           className={`${inputClass} w-24`}
                           type="number"
@@ -199,11 +272,63 @@ function InvoiceTable({
                           }
                           placeholder={c.amount}
                         />
+                        <select
+                          className={`${inputClass} w-28`}
+                          value={settlementMode}
+                          onChange={event =>
+                            setSettlementModes(current => ({
+                              ...current,
+                              [invoice.id]: event.target.value as
+                                | "cash"
+                                | "wallet",
+                            }))
+                          }
+                        >
+                          <option value="cash">{c.cash}</option>
+                          {configuredWallets.length > 0 && (
+                            <option value="wallet">{c.wallet}</option>
+                          )}
+                        </select>
+                        {settlementMode === "wallet" && (
+                          <>
+                            <select
+                              className={`${inputClass} w-32`}
+                              value={settlementWallets[invoice.id] ?? ""}
+                              onChange={event =>
+                                setSettlementWallets(current => ({
+                                  ...current,
+                                  [invoice.id]: event.target.value,
+                                }))
+                              }
+                            >
+                              <option value="">{c.walletMethod}</option>
+                              {configuredWallets.map(method => (
+                                <option key={method.id} value={method.id}>
+                                  {method.label}
+                                </option>
+                              ))}
+                            </select>
+                            <input
+                              className={`${inputClass} w-32`}
+                              value={settlementRefs[invoice.id] ?? ""}
+                              onChange={event =>
+                                setSettlementRefs(current => ({
+                                  ...current,
+                                  [invoice.id]: event.target.value,
+                                }))
+                              }
+                              placeholder={c.reference}
+                            />
+                          </>
+                        )}
                         <button
                           className={packingSecondaryClass}
                           disabled={
                             settling === invoice.id ||
-                            !workspace.canEdit ||
+                            !canWrite ||
+                            (settlementMode === "wallet" &&
+                              (!settlementWallets[invoice.id] ||
+                                workspace.homeOffice !== "nouakchott")) ||
                             workspace.commands.some(
                               x =>
                                 x.kind === "settlement" &&
@@ -271,7 +396,9 @@ function DraftRows({
               <button
                 type="button"
                 className={`${packingSecondaryClass} mt-2 min-h-9 px-2 py-1 text-xs`}
-                disabled={!workspace.online || workspace.busy || !workspace.canEdit}
+                disabled={
+                  !workspace.online || workspace.busy || !workspace.canEdit
+                }
                 onClick={() => void syncCommands([command.id])}
               >
                 <RefreshCw size={13} /> {c.syncPending}
@@ -289,16 +416,14 @@ export default function FinanceInvoices() {
   const c = invoiceCopyFor(language);
   const workspace = useFinanceWorkspace();
   const search = useSearch();
-  const queryOffice = new URLSearchParams(search).get(
-    "office"
-  ) as OfficeId | null;
   const queryParams = new URLSearchParams(search);
   const queryCustomer = queryParams.get("customer");
   const queryInvoice = queryParams.get("invoice");
-  const initialCustomerId = queryCustomer &&
+  const initialCustomerId =
+    queryCustomer &&
     workspace.base.state.accounts.some(account => account.id === queryCustomer)
-    ? queryCustomer
-    : undefined;
+      ? queryCustomer
+      : undefined;
   const selectedInvoice = queryInvoice
     ? workspace.invoices.find(invoice => invoice.id === queryInvoice)
     : undefined;
@@ -310,15 +435,16 @@ export default function FinanceInvoices() {
       )
     : undefined;
   const selectiveSync = (workspace as SelectiveFinanceWorkspace).syncCommands;
-  const issuingOffice =
-    queryOffice &&
-    (workspace.offices === null || workspace.offices.includes(queryOffice))
-      ? queryOffice
-      : undefined;
   const canSee =
     workspace.role === "admin" ||
     workspace.role === "accountant" ||
     workspace.role === "office_manager";
+  const canWrite =
+    canWriteFinanceUi(
+      workspace.role,
+      workspace.offices,
+      workspace.homeOffice
+    ) && workspace.canEdit;
   const shell = workspace.base;
   const officeRows = useMemo(
     () =>
@@ -356,17 +482,20 @@ export default function FinanceInvoices() {
       description={c.description}
     >
       <div dir={dir} className="space-y-5">
-        <InvoiceFinancialForm
-          key={`${workspace.base.userId ?? "local"}:${initialCustomerId ?? ""}`}
-          workspace={workspace}
-          initialIssuingOffice={issuingOffice}
-          initialCustomerId={initialCustomerId}
-        />
+        {canWrite && (
+          <InvoiceFinancialForm
+            key={`${workspace.base.userId ?? "local"}:${initialCustomerId ?? ""}`}
+            workspace={workspace}
+            initialCustomerId={initialCustomerId}
+          />
+        )}
         <DraftRows workspace={workspace} c={c} />
-        <FinanceExcelPanel
-          key={workspace.base.userId ?? "local"}
-          workspace={workspace}
-        />
+        {canWrite && (
+          <FinanceExcelPanel
+            key={workspace.base.userId ?? "local"}
+            workspace={workspace}
+          />
+        )}
         <section className="space-y-3">
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div>
@@ -382,11 +511,10 @@ export default function FinanceInvoices() {
                 !selectedCommand ||
                 !workspace.online ||
                 workspace.busy ||
-                !workspace.canEdit
+                !canWrite
               }
               onClick={() =>
-                selectedCommand &&
-                void selectiveSync?.([selectedCommand.id])
+                selectedCommand && void selectiveSync?.([selectedCommand.id])
               }
             >
               <RefreshCw size={15} />
@@ -394,8 +522,13 @@ export default function FinanceInvoices() {
             </button>
           </div>
           {selectedInvoice && (
-            <div className="rounded-2xl border border-[#d9a441] bg-[#fffaf0] p-3 text-sm text-[#5d4610]" role="status">
-              <b>{c.invoiceId}: </b>{selectedInvoice.id} · {selectedInvoice.account} · {selectedInvoice.amount} {selectedInvoice.finance?.currency ?? ""}
+            <div
+              className="rounded-2xl border border-[#d9a441] bg-[#fffaf0] p-3 text-sm text-[#5d4610]"
+              role="status"
+            >
+              <b>{c.invoiceId}: </b>
+              {selectedInvoice.id} · {selectedInvoice.account} ·{" "}
+              {selectedInvoice.amount} {selectedInvoice.finance?.currency ?? ""}
             </div>
           )}
           <InvoiceTable

@@ -10,6 +10,7 @@ import {
 import { loadWorkspace, saveWorkspace, stageChange } from "@/lib/offlineStore";
 import { downloadFinanceArchive } from "@/lib/financeStore";
 import { canWriteOfficeRecord } from "@shared/branches";
+import { canWriteFinance } from "@shared/finance";
 import {
   packingPrimaryClass,
   packingSecondaryClass,
@@ -45,6 +46,8 @@ const copy = {
     expense: "مصروف",
     settlement: "سداد دين",
     movement: "حركة حساب العميل",
+    openingBalance: "رصيد افتتاحي",
+    shipmentPrice: "سعر شحنة",
     reason: "بيانات الصف غير صالحة أو معرفه مكرر؛ لن يُستبدل سجل موجود.",
   },
   en: {
@@ -78,6 +81,8 @@ const copy = {
     expense: "Expense",
     settlement: "Debt payment",
     movement: "Customer account movement",
+    openingBalance: "Opening balance",
+    shipmentPrice: "Shipment price",
     reason:
       "Invalid row data or duplicate identifier; existing records will not be replaced.",
   },
@@ -109,6 +114,8 @@ const copy = {
     expense: "支出",
     settlement: "偿还欠款",
     movement: "客户账户流水",
+    openingBalance: "期初余额",
+    shipmentPrice: "货件价格",
     reason: "数据无效或标识重复，不会替换现有记录。",
   },
   tr: {
@@ -141,6 +148,8 @@ const copy = {
     expense: "Gider",
     settlement: "Borç ödemesi",
     movement: "Müşteri hesap hareketi",
+    openingBalance: "Açılış bakiyesi",
+    shipmentPrice: "Gönderi fiyatı",
     reason: "Geçersiz veri veya yinelenen kimlik; mevcut kayıt değiştirilmez.",
   },
 };
@@ -154,6 +163,11 @@ export default function FinanceExcelPanel({
   const [preview, setPreview] = useState<FinanceImportResult | null>(null);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const canWrite = canWriteFinance({
+    role: f.role,
+    offices: f.offices,
+    homeOffice: f.homeOffice,
+  });
   const read = async (file?: File) => {
     if (!file) return;
     setMessage("");
@@ -180,6 +194,12 @@ export default function FinanceExcelPanel({
           ],
           accountIds: f.base.state.accounts.map(a => a.id),
           shipmentIds: f.base.state.shipments.map(s => s.id),
+          openingIds: f.entries
+            .filter(e => e.kind === "opening_balance")
+            .map(e => e.id),
+          shipmentPriceShipmentIds: f.commands
+            .filter(x => x.kind === "shipment_price")
+            .map(x => x.payload.shipmentId),
         })
       );
     } catch {
@@ -187,7 +207,7 @@ export default function FinanceExcelPanel({
     }
   };
   const accept = async () => {
-    if (!preview || !f.canEdit || !f.base.userId || busy) return;
+    if (!preview || !canWrite || !f.base.userId || busy) return;
     setBusy(true);
     setMessage("");
     try {
@@ -245,6 +265,11 @@ export default function FinanceExcelPanel({
                 homeOffice: f.homeOffice,
                 offices: f.offices,
                 lastReadAt: f.store?.snapshot.lastReadAt ?? null,
+                receivables: f.store?.snapshot.receivables ?? [],
+                shipmentReceivables:
+                  f.store?.snapshot.shipmentReceivables ??
+                  f.store?.snapshot.receivables ??
+                  [],
               },
               f.commands,
               f.base.state.accounts
@@ -306,7 +331,11 @@ export default function FinanceExcelPanel({
                     ? `${c.expense}: ${x.payload.amount} ${x.payload.currency} · ${x.payload.officeId}`
                     : x.kind === "customer_movement"
                       ? `${c.movement}: ${x.payload.customerId} · ${x.payload.amount} ${x.payload.currency} · ${x.payload.officeId}`
-                      : c.settlement}
+                      : x.kind === "opening_balance"
+                        ? `${c.openingBalance}: ${x.payload.officeId} · ${x.payload.amount} ${x.payload.currency} · ${x.payload.direction}`
+                        : x.kind === "shipment_price"
+                          ? `${c.shipmentPrice}: ${x.payload.shipmentId} · ${x.payload.pricePerKg}`
+                          : c.settlement}
               </p>
             ))}
             {preview.rejected.map((r, i) => (
@@ -321,7 +350,7 @@ export default function FinanceExcelPanel({
               className={packingPrimaryClass}
               disabled={
                 busy ||
-                !f.canEdit ||
+                !canWrite ||
                 !(preview.accounts.length + preview.commands.length)
               }
               onClick={() => void accept()}
@@ -360,13 +389,17 @@ export default function FinanceExcelPanel({
                       ? `${c.expense}: ${x.payload.category} · ${x.payload.amount} ${x.payload.currency} · ${x.payload.officeId}`
                       : x.kind === "customer_movement"
                         ? `${c.movement}: ${x.payload.customerId} · ${x.payload.amount} ${x.payload.currency} · ${x.payload.officeId}`
-                        : `${c.settlement}: ${x.payload.invoiceId} · ${x.payload.amount}`}
+                        : x.kind === "opening_balance"
+                          ? `${c.openingBalance}: ${x.payload.officeId} · ${x.payload.amount} ${x.payload.currency}`
+                          : x.kind === "shipment_price"
+                            ? `${c.shipmentPrice}: ${x.payload.shipmentId} · ${x.payload.pricePerKg}`
+                            : `${c.settlement}: ${x.payload.invoiceId} · ${x.payload.amount}`}
                 </p>
               ))}
             </div>
             <button
               className={`${packingPrimaryClass} mt-3`}
-              disabled={!f.online || f.busy || !f.canEdit}
+              disabled={!f.online || f.busy || !canWrite}
               onClick={() => void f.sync()}
             >
               {c.sync}

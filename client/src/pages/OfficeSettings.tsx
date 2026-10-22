@@ -143,6 +143,7 @@ export default function OfficeSettings() {
     role: AssignableRole;
     offices: OfficeId[];
     homeOffice: OfficeId | null;
+    canUpdateTracking: boolean;
     expectedVersion: number;
   }): Promise<OfficeMember | null> => {
     if (workspace.role !== "admin" || !workspace.online) return null;
@@ -154,7 +155,10 @@ export default function OfficeSettings() {
       return null;
     }
   };
-  const resetMemberPassword = async (input: { userId: number; temporaryPassword: string }) => {
+  const resetMemberPassword = async (input: {
+    userId: number;
+    temporaryPassword: string;
+  }) => {
     if (workspace.role !== "admin" || !workspace.online) return false;
     try {
       await resetPassword.mutateAsync(input);

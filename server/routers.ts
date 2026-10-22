@@ -1,6 +1,7 @@
 import { hideForOfficeScope } from "./branches";
 import { and, eq, gt, sql } from "drizzle-orm";
 import { z } from "zod";
+import { createHash } from "node:crypto";
 import { TRPCError } from "@trpc/server";
 import { COOKIE_NAME } from "@shared/const";
 import { ONE_YEAR_MS } from "@shared/const";
@@ -35,9 +36,22 @@ import {
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { ENV } from "./_core/env";
-import { publicProcedure, protectedProcedure, authenticatedProcedure, router } from "./_core/trpc";
-import { configureGeneralManagerEmail, changeAccountPassword, resetAccountPassword } from "./accountSecurity";
-import { initialManagerSetupInfo, completeInitialManagerSetup, INITIAL_SETUP_CODE_PATTERN } from "./initialManagerSetup";
+import {
+  publicProcedure,
+  protectedProcedure,
+  authenticatedProcedure,
+  router,
+} from "./_core/trpc";
+import {
+  configureGeneralManagerEmail,
+  changeAccountPassword,
+  resetAccountPassword,
+} from "./accountSecurity";
+import {
+  initialManagerSetupInfo,
+  completeInitialManagerSetup,
+  INITIAL_SETUP_CODE_PATTERN,
+} from "./initialManagerSetup";
 import { getDb } from "./db";
 import * as dbQueries from "./db";
 import {
@@ -97,12 +111,10 @@ import {
   readProfile,
   updateProfile,
 } from "./branches";
-import {
-  financeSync,
-  financeSnapshot,
-  maybePostShipmentRevenue,
-} from "./finance";
+import { financeSync, financeSnapshot } from "./finance";
 import { financeSyncInputSchema } from "@shared/finance";
+import { warehouseCommandSchema } from "@shared/warehouse";
+import { readWarehouseSnapshot, commitWarehouseStorage } from "./warehouse";
 import {
   lookupPublicTracking,
   publicTrackingLimiter,
@@ -239,7 +251,11 @@ export const appRouter = router({
           ...getSessionCookieOptions(ctx.req),
           maxAge: ONE_YEAR_MS,
         });
-        return { user: publicUser(user), accountType: user.accountType, mustChangePassword: Boolean(user.mustChangePassword) };
+        return {
+          user: publicUser(user),
+          accountType: user.accountType,
+          mustChangePassword: Boolean(user.mustChangePassword),
+        };
       }),
     signup: publicProcedure
       .input(
@@ -276,7 +292,10 @@ export const appRouter = router({
           });
         } catch (error) {
           if (isDuplicateEmailError(error))
-            throw new TRPCError({ code: "CONFLICT", message: "email_registered" });
+            throw new TRPCError({
+              code: "CONFLICT",
+              message: "email_registered",
+            });
           throw error;
         }
         const user = await dbQueries.getUserByOpenId(openId);
@@ -296,22 +315,43 @@ export const appRouter = router({
           ...getSessionCookieOptions(ctx.req),
           maxAge: ONE_YEAR_MS,
         });
-        return { user: publicUser(user), accountType: user.accountType, mustChangePassword: Boolean(user.mustChangePassword) };
+        return {
+          user: publicUser(user),
+          accountType: user.accountType,
+          mustChangePassword: Boolean(user.mustChangePassword),
+        };
       }),
     initialSetupInfo: publicProcedure
-      .input(z.object({ token: z.string().regex(INITIAL_SETUP_CODE_PATTERN) }).strict())
+      .input(
+        z
+          .object({ token: z.string().regex(INITIAL_SETUP_CODE_PATTERN) })
+          .strict()
+      )
       .mutation(({ input }) => initialManagerSetupInfo(input.token)),
     completeInitialSetup: publicProcedure
-      .input(z.object({ token: z.string().regex(INITIAL_SETUP_CODE_PATTERN), password: z.string().min(8).max(128) }).strict())
+      .input(
+        z
+          .object({
+            token: z.string().regex(INITIAL_SETUP_CODE_PATTERN),
+            password: z.string().min(8).max(128),
+          })
+          .strict()
+      )
       .mutation(({ ctx, input }) => completeInitialManagerSetup(ctx, input)),
     configureEmail: authenticatedProcedure
       .input(z.object({ password: z.string().min(8).max(128) }).strict())
-      .mutation(({ ctx, input }) => configureGeneralManagerEmail(ctx, input.password)),
+      .mutation(({ ctx, input }) =>
+        configureGeneralManagerEmail(ctx, input.password)
+      ),
     changePassword: authenticatedProcedure
-      .input(z.object({
-        newPassword: z.string().min(8).max(128),
-        currentPassword: z.string().min(8).max(128).optional(),
-      }).strict())
+      .input(
+        z
+          .object({
+            newPassword: z.string().min(8).max(128),
+            currentPassword: z.string().min(8).max(128).optional(),
+          })
+          .strict()
+      )
       .mutation(({ ctx, input }) => changeAccountPassword(ctx, input)),
     logout: publicProcedure.mutation(async ({ ctx }) => {
       const cookies = parseCookieHeader(ctx.req.headers.cookie ?? "");
@@ -321,7 +361,10 @@ export const appRouter = router({
       }
       const cookieOptions = getSessionCookieOptions(ctx.req);
       ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
-      ctx.res.clearCookie(LOCAL_SESSION_COOKIE, { ...cookieOptions, maxAge: -1 });
+      ctx.res.clearCookie(LOCAL_SESSION_COOKIE, {
+        ...cookieOptions,
+        maxAge: -1,
+      });
       return { success: true } as const;
     }),
   }),
@@ -342,7 +385,13 @@ export const appRouter = router({
       .mutation(async ({ ctx, input }) => {
         const db = await dbOrThrow();
         const scope = await readOfficeScope(db, ctx.user);
-        if (scope.role !== "admin" && !(scope.role === "office_manager" && officeIsAssigned(scope, input.officeId)))
+        if (
+          scope.role !== "admin" &&
+          !(
+            scope.role === "office_manager" &&
+            officeIsAssigned(scope, input.officeId)
+          )
+        )
           throw branchForbidden("Office profile access is restricted");
         return updateProfile(db, ctx.user, input, scope.role);
       }),
@@ -405,7 +454,9 @@ export const appRouter = router({
           )
             throw branchForbidden("The root admin cannot be changed");
           if (target[0].accountType !== "employee")
-            throw branchForbidden("Only employee accounts may receive office roles");
+            throw branchForbidden(
+              "Only employee accounts may receive office roles"
+            );
           const oldRows = await tx
             .select()
             .from(memberRoles)
@@ -418,8 +469,11 @@ export const appRouter = router({
               code: "CONFLICT",
               message: "member_version_conflict",
             });
-          const homeOffice = input.role === "office_manager" ? input.offices[0] :
-            input.homeOffice !== undefined
+          const homeOffice = ["office_manager", "staff", "accountant"].includes(
+            input.role
+          )
+            ? input.offices[0]
+            : input.homeOffice !== undefined
               ? input.homeOffice
               : (old?.homeOffice ?? null);
           if (
@@ -430,11 +484,21 @@ export const appRouter = router({
               code: "BAD_REQUEST",
               message: "home_office_outside_scope",
             });
-          if (input.role === "accountant" && input.offices.length > 1 && !homeOffice)
+          if (
+            input.role === "accountant" &&
+            input.offices.length > 1 &&
+            !homeOffice
+          )
             throw new TRPCError({
               code: "BAD_REQUEST",
               message: "employee_office_required",
             });
+          const canUpdateTracking = Boolean(
+            input.role === "staff" &&
+              input.offices.length === 1 &&
+              input.offices[0] !== "nouakchott" &&
+              (input.canUpdateTracking ?? old?.canUpdateTracking ?? false)
+          );
           const nextVersion = (old?.version ?? 0) + 1;
           if (!old)
             await tx.insert(memberRoles).values({
@@ -442,6 +506,7 @@ export const appRouter = router({
               role: input.role,
               offices: input.offices,
               homeOffice,
+              canUpdateTracking,
               version: nextVersion,
             });
           else
@@ -451,6 +516,7 @@ export const appRouter = router({
                 role: input.role,
                 offices: input.offices,
                 homeOffice,
+                canUpdateTracking,
                 version: nextVersion,
               })
               .where(eq(memberRoles.userId, input.userId));
@@ -464,6 +530,7 @@ export const appRouter = router({
                   role: old.role,
                   offices: old.offices,
                   homeOffice: old.homeOffice ?? null,
+                  canUpdateTracking: Boolean(old.canUpdateTracking),
                   version: old.version,
                 }
               : null,
@@ -471,6 +538,7 @@ export const appRouter = router({
               role: input.role,
               offices: input.offices,
               homeOffice,
+              canUpdateTracking,
               version: nextVersion,
             },
             beforeVersion: old?.version ?? 0,
@@ -484,6 +552,7 @@ export const appRouter = router({
             role: input.role,
             offices: input.offices,
             homeOffice,
+            canUpdateTracking,
             version: nextVersion,
           };
         });
@@ -508,6 +577,16 @@ export const appRouter = router({
           input
         );
       }),
+  }),
+  warehouse: router({
+    snapshot: protectedProcedure.query(async ({ ctx }) =>
+      readWarehouseSnapshot(await dbOrThrow(), ctx.user)
+    ),
+    commit: protectedProcedure
+      .input(warehouseCommandSchema)
+      .mutation(async ({ ctx, input }) =>
+        commitWarehouseStorage(await dbOrThrow(), ctx.user, input)
+      ),
   }),
   finance: router({
     snapshot: protectedProcedure
@@ -550,6 +629,8 @@ export const appRouter = router({
         userId: ctx.user.id,
         offices: scope.offices,
         homeOffice: scope.homeOffice,
+        canUpdateTracking: Boolean(scope.canUpdateTracking),
+        membershipVersion: scope.membershipVersion,
       };
     }),
 
@@ -641,11 +722,17 @@ export const appRouter = router({
     }),
 
     resetPassword: protectedProcedure
-      .input(z.object({
-        userId: z.number().int().positive(),
-        temporaryPassword: z.string().min(8).max(128),
-      }).strict())
-      .mutation(({ ctx, input }) => resetAccountPassword(ctx, input.userId, input.temporaryPassword)),
+      .input(
+        z
+          .object({
+            userId: z.number().int().positive(),
+            temporaryPassword: z.string().min(8).max(128),
+          })
+          .strict()
+      )
+      .mutation(({ ctx, input }) =>
+        resetAccountPassword(ctx, input.userId, input.temporaryPassword)
+      ),
 
     setRole: protectedProcedure
       .input(setRoleInputSchema)
@@ -678,6 +765,13 @@ export const appRouter = router({
         const scope = await readOfficeScope(db, ctx.user);
         const output: SyncResult = { applied: [], conflicts: [] };
         await db.transaction(async tx => {
+          const scope = await readOfficeScope(tx, ctx.user);
+          const role = scope.role;
+          if (
+            !role ||
+            ["viewer", "tracking_staff", "supervisor"].includes(role)
+          )
+            throw forbidden();
           const office =
             role === "admin" ||
             (role === "accountant" &&
@@ -686,6 +780,9 @@ export const appRouter = router({
               : null;
           for (const rawChange of input.changes) {
             const change = parseChange(rawChange);
+            const payloadHash = createHash("sha256")
+              .update(JSON.stringify(change))
+              .digest("hex");
             const scopeCurrentRows = await tx
               .select()
               .from(records)
@@ -720,6 +817,19 @@ export const appRouter = router({
               .for("update");
             if (existingReceipt[0]) {
               const replay = existingReceipt[0].result as unknown as SyncResult;
+              const storedHash = (
+                existingReceipt[0].result as { payloadHash?: string }
+              ).payloadHash;
+              if (storedHash !== payloadHash) {
+                output.conflicts.push({
+                  changeId: change.id,
+                  reason: storedHash
+                    ? "replay_payload_mismatch"
+                    : "legacy_receipt_requires_review",
+                  current: null,
+                });
+                continue;
+              }
               if (
                 (replay.applied ?? []).some(
                   item =>
@@ -935,7 +1045,11 @@ export const appRouter = router({
                 };
                 await tx
                   .insert(syncReceipts)
-                  .values({ userId: ctx.user.id, changeId: change.id, result });
+                  .values({
+                    userId: ctx.user.id,
+                    changeId: change.id,
+                    result: { ...result, payloadHash },
+                  });
                 output.conflicts.push(...result.conflicts);
                 continue;
               }
@@ -1096,14 +1210,6 @@ export const appRouter = router({
                 };
               }
             }
-            if (result.conflicts.length === 0 && financeShipment)
-              await maybePostShipmentRevenue(
-                tx,
-                financeShipment,
-                ctx.user,
-                undefined,
-                scope.role
-              );
             await tx
               .insert(syncReceipts)
               .values({ userId: ctx.user.id, changeId: change.id, result });
@@ -1213,12 +1319,29 @@ export const appRouter = router({
           throw forbidden("Tracking command is not available to viewers");
         const request = parseTrackingRequest(input);
         if (role === "office_manager" && request.command.type === "transfer")
-          throw forbidden("Only the general manager may transfer shipments for this role");
+          throw forbidden(
+            "Only the general manager may transfer shipments for this role"
+          );
         const db = await dbOrThrow();
         const scope = await readOfficeScope(db, ctx.user);
         try {
           return await db.transaction(async tx => {
+            const scope = await readOfficeScope(tx, ctx.user);
+            const role = scope.role;
+            if (!role || !canTrackingDetails(role))
+              throw new Error("tracking_forbidden");
+            if (
+              role === "staff" &&
+              (!scope.canUpdateTracking ||
+                scope.offices?.length !== 1 ||
+                scope.homeOffice === "nouakchott" ||
+                request.command.type !== "stage")
+            )
+              throw new Error("tracking_forbidden");
             const receiptKey = trackingReceiptKey(request.requestId);
+            const payloadHash = createHash("sha256")
+              .update(JSON.stringify(request))
+              .digest("hex");
             const scopeRows = await tx
               .select()
               .from(records)
@@ -1252,6 +1375,11 @@ export const appRouter = router({
               .limit(1)
               .for("update");
             if (existing[0]) {
+              if (
+                (existing[0].result as { payloadHash?: string }).payloadHash !==
+                payloadHash
+              )
+                throw new Error("tracking_request_reuse");
               const old = existing[0].result as {
                 requestId: string;
                 shipment: Shipment;
@@ -1323,13 +1451,6 @@ export const appRouter = router({
                 updatedBy: ctx.user.id,
               })
               .where(eq(records.id, row.id));
-            await maybePostShipmentRevenue(
-              tx,
-              mutation.shipment,
-              ctx.user,
-              undefined,
-              role
-            );
             await appendAudit(tx, {
               actor: actor(ctx.user, role),
               entity: "shipment",
@@ -1348,7 +1469,11 @@ export const appRouter = router({
             };
             await tx
               .insert(syncReceipts)
-              .values({ userId: ctx.user.id, changeId: receiptKey, result });
+              .values({
+                userId: ctx.user.id,
+                changeId: receiptKey,
+                result: { ...result, payloadHash },
+              });
             return {
               requestId: result.requestId,
               shipment: hideForOfficeScope(
@@ -1406,7 +1531,11 @@ export const appRouter = router({
       )
       .query(async ({ ctx, input }) => {
         const role = await effectiveRole(ctx.user);
-        if (role !== "admin" && role !== "supervisor" && role !== "office_manager")
+        if (
+          role !== "admin" &&
+          role !== "supervisor" &&
+          role !== "office_manager"
+        )
           throw forbidden("Audit access is restricted");
         const db = await dbOrThrow();
         if (role !== "admin") {
@@ -1450,7 +1579,11 @@ export const appRouter = router({
       )
       .query(async ({ ctx, input }) => {
         const role = await effectiveRole(ctx.user);
-        if (role !== "admin" && role !== "supervisor" && role !== "office_manager")
+        if (
+          role !== "admin" &&
+          role !== "supervisor" &&
+          role !== "office_manager"
+        )
           throw forbidden("Audit access is restricted");
         const db = await dbOrThrow();
         if (role !== "admin") {

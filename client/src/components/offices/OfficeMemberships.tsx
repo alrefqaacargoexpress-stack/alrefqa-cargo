@@ -24,6 +24,7 @@ type MemberDraft = {
   role: AssignableRole;
   offices: OfficeId[];
   homeOffice: OfficeId | null;
+  canUpdateTracking: boolean;
   dirty: boolean;
   version: number;
 };
@@ -93,6 +94,32 @@ const homeOfficeCopy = {
   },
 } as const;
 
+const singleOfficeRole = (role: string) =>
+  ["office_manager", "staff", "accountant"].includes(role);
+const permissionCopy = {
+  ar: {
+    label: "تحديد أين وصلت الشحنة",
+    hint: "يسمح لمستودع المصدر بتحديث المرحلة التالية فقط، دون حسابات أو تغيير المكتب. نواكشوط للتخزين والرف فقط.",
+    required: "حدد مكتبًا واحدًا للمستودع أو المحاسب أو مدير المكتب.",
+  },
+  en: {
+    label: "Update shipment location",
+    hint: "Source warehouse staff may update the next stage only, with no finance or office transfers. Nouakchott staff manage storage and shelves only.",
+    required:
+      "Assign one office to a warehouse worker, accountant or office manager.",
+  },
+  zh: {
+    label: "更新货物到达阶段",
+    hint: "始发仓库仅可更新下一阶段，无财务或转移权限。努瓦克肖特员工仅管理仓库和货架。",
+    required: "为仓库员工、会计或办公室经理指定一个办公室。",
+  },
+  tr: {
+    label: "Gönderinin konumunu güncelle",
+    hint: "Çıkış deposu yalnızca sonraki aşamayı günceller; finans veya ofis transferi yapamaz. Nuakşot çalışanı sadece depo ve rafı yönetir.",
+    required: "Depo çalışanı, muhasebeci veya müdür için tek ofis atayın.",
+  },
+} as const;
+
 type OfficeMembershipsProps = {
   members: OfficeMember[];
   canEdit: boolean;
@@ -103,9 +130,13 @@ type OfficeMembershipsProps = {
     role: AssignableRole;
     offices: OfficeId[];
     homeOffice: OfficeId | null;
+    canUpdateTracking: boolean;
     expectedVersion: number;
   }) => Promise<OfficeMember | null>;
-  onResetPassword: (input: { userId: number; temporaryPassword: string }) => Promise<boolean>;
+  onResetPassword: (input: {
+    userId: number;
+    temporaryPassword: string;
+  }) => Promise<boolean>;
 };
 
 function draftFrom(member: OfficeMember): MemberDraft {
@@ -115,17 +146,26 @@ function draftFrom(member: OfficeMember): MemberDraft {
   const offices = member.offices ? [...member.offices] : [];
   const normalizedOffices =
     role === "office_manager"
-      ? offices.filter(office => officeManagerOfficeIds.includes(office)).slice(0, 1)
-      : offices;
+      ? offices
+          .filter(office => officeManagerOfficeIds.includes(office))
+          .slice(0, 1)
+      : singleOfficeRole(role)
+        ? offices.slice(0, 1)
+        : offices;
   return {
     role,
     offices: normalizedOffices,
     homeOffice:
       member.homeOffice && normalizedOffices.includes(member.homeOffice)
         ? member.homeOffice
-        : role === "office_manager"
+        : singleOfficeRole(role)
           ? (normalizedOffices[0] ?? null)
-        : null,
+          : null,
+    canUpdateTracking: Boolean(
+      member.canUpdateTracking &&
+        role === "staff" &&
+        normalizedOffices[0] !== "nouakchott"
+    ),
     dirty: false,
     version: member.version,
   };
@@ -144,7 +184,9 @@ export default function OfficeMemberships({
   const [drafts, setDrafts] = useState<Record<number, MemberDraft>>({});
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
-  const [temporaryPasswords, setTemporaryPasswords] = useState<Record<number, string>>({});
+  const [temporaryPasswords, setTemporaryPasswords] = useState<
+    Record<number, string>
+  >({});
 
   useEffect(() => {
     setDrafts(current => {
@@ -184,11 +226,10 @@ export default function OfficeMemberships({
     if (
       !draft.offices.length ||
       !validOfficeManagerScope ||
-      (draft.role === "accountant" &&
-        draft.offices.length > 1 &&
-        !draft.homeOffice)
+      (singleOfficeRole(draft.role) &&
+        (draft.offices.length !== 1 || draft.homeOffice !== draft.offices[0]))
     ) {
-      setError(homeOfficeCopy[language].required);
+      setError(permissionCopy[language].required);
       return;
     }
     if (
@@ -203,6 +244,11 @@ export default function OfficeMemberships({
         role: draft.role,
         offices: [...draft.offices],
         homeOffice: draft.homeOffice,
+        canUpdateTracking: Boolean(
+          draft.role === "staff" &&
+            draft.offices[0] !== "nouakchott" &&
+            draft.canUpdateTracking
+        ),
         expectedVersion: draft.version,
       });
       if (result) {
@@ -274,21 +320,26 @@ export default function OfficeMemberships({
                     disabled={!canEdit || locked || pending}
                     onChange={event => {
                       const nextRole = event.target.value as AssignableRole;
-                      const office = draft.offices.find(id =>
-                        officeManagerOfficeIds.includes(id)
-                      );
+                      const office =
+                        nextRole === "office_manager"
+                          ? draft.offices.find(id =>
+                              officeManagerOfficeIds.includes(id)
+                            )
+                          : draft.offices[0];
                       patch(member, {
                         role: nextRole,
-                        offices:
-                          nextRole === "office_manager"
-                            ? office
-                              ? [office]
-                              : []
-                            : draft.offices,
-                        homeOffice:
-                          nextRole === "office_manager"
-                            ? (office ?? null)
-                            : draft.homeOffice,
+                        offices: singleOfficeRole(nextRole)
+                          ? office
+                            ? [office]
+                            : []
+                          : draft.offices,
+                        homeOffice: singleOfficeRole(nextRole)
+                          ? (office ?? null)
+                          : draft.homeOffice,
+                        canUpdateTracking:
+                          nextRole === "staff" && office !== "nouakchott"
+                            ? draft.canUpdateTracking
+                            : false,
                       });
                     }}
                   >
@@ -314,25 +365,29 @@ export default function OfficeMemberships({
                       >
                         <input
                           type={
-                            draft.role === "office_manager" ? "radio" : "checkbox"
+                            singleOfficeRole(draft.role) ? "radio" : "checkbox"
                           }
+                          name={`member-office-${member.userId}`}
                           checked={draft.offices.includes(officeId)}
                           disabled={!canEdit || locked || pending}
                           onChange={event =>
                             patch(member, {
-                              offices:
-                                draft.role === "office_manager"
-                                  ? [officeId]
-                                  : event.target.checked
-                                    ? [...draft.offices, officeId]
-                                    : draft.offices.filter(id => id !== officeId),
-                              homeOffice:
-                                draft.role === "office_manager"
-                                  ? officeId
-                                  : !event.target.checked &&
-                                      draft.homeOffice === officeId
-                                    ? null
-                                    : draft.homeOffice,
+                              offices: singleOfficeRole(draft.role)
+                                ? [officeId]
+                                : event.target.checked
+                                  ? [...draft.offices, officeId]
+                                  : draft.offices.filter(id => id !== officeId),
+                              homeOffice: singleOfficeRole(draft.role)
+                                ? officeId
+                                : !event.target.checked &&
+                                    draft.homeOffice === officeId
+                                  ? null
+                                  : draft.homeOffice,
+                              canUpdateTracking:
+                                officeId !== "nouakchott" &&
+                                draft.role === "staff"
+                                  ? draft.canUpdateTracking
+                                  : false,
                             })
                           }
                         />
@@ -345,13 +400,41 @@ export default function OfficeMemberships({
                   </p>
                 </fieldset>
               </div>
+              {draft.role === "staff" && (
+                <label className="mt-4 flex items-start gap-3 rounded-xl border border-slate-200 bg-white p-3 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={draft.canUpdateTracking}
+                    disabled={
+                      !canEdit ||
+                      locked ||
+                      pending ||
+                      draft.offices.length !== 1 ||
+                      draft.offices[0] === "nouakchott"
+                    }
+                    onChange={event =>
+                      patch(member, { canUpdateTracking: event.target.checked })
+                    }
+                  />
+                  <span>
+                    <strong>{permissionCopy[language].label}</strong>
+                    <span className="mt-1 block text-xs leading-5 text-slate-600">
+                      {permissionCopy[language].hint}
+                    </span>
+                  </span>
+                </label>
+              )}
               <label className="mt-4 grid max-w-xl gap-1.5 text-sm font-semibold text-[#243f52]">
                 <span>{homeOfficeCopy[language].label}</span>
                 <select
                   className={packingInputClass}
                   value={draft.homeOffice ?? ""}
                   disabled={
-                    !canEdit || locked || pending || !draft.offices.length
+                    !canEdit ||
+                    locked ||
+                    pending ||
+                    !draft.offices.length ||
+                    singleOfficeRole(draft.role)
                   }
                   onChange={event =>
                     patch(member, {
@@ -361,7 +444,7 @@ export default function OfficeMemberships({
                     })
                   }
                 >
-                  {draft.role !== "office_manager" && (
+                  {!singleOfficeRole(draft.role) && (
                     <option value="">{homeOfficeCopy[language].none}</option>
                   )}
                   {draft.offices.map(officeId => (
@@ -387,9 +470,9 @@ export default function OfficeMemberships({
                       (draft.role === "office_manager" &&
                         (draft.offices.length !== 1 ||
                           draft.homeOffice !== draft.offices[0])) ||
-                      (draft.role === "accountant" &&
-                        draft.offices.length > 1 &&
-                        !draft.homeOffice)
+                      (singleOfficeRole(draft.role) &&
+                        (draft.offices.length !== 1 ||
+                          draft.homeOffice !== draft.offices[0]))
                     }
                     onClick={() => void save(member)}
                   >
@@ -397,51 +480,70 @@ export default function OfficeMemberships({
                   </button>
                 </div>
               )}
-              {canEdit && !locked && member.accountType === "employee" && (member.isLocalAccount || Boolean(member.email)) && (
-                <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3">
-                  <p className="text-sm font-bold text-amber-950">
-                    {c.resetPasswordTitle}
-                  </p>
-                  <p className="mt-1 text-xs leading-5 text-amber-900">
-                    {c.resetPasswordHint}
-                  </p>
-                  <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-                    <input
-                      type="password"
-                      minLength={8}
-                      maxLength={128}
-                      value={temporaryPasswords[member.userId] ?? ""}
-                      onChange={event => setTemporaryPasswords(current => ({ ...current, [member.userId]: event.target.value }))}
-                      placeholder={c.temporaryPassword}
-                      className={packingInputClass}
-                      dir="ltr"
-                    />
-                    <button
-                      type="button"
-                      className={packingSecondaryClass}
-                      disabled={pending || !online || (temporaryPasswords[member.userId] ?? "").length < 8}
-                      onClick={async () => {
-                        setError("");
-                        setNotice("");
-                        const password = temporaryPasswords[member.userId] ?? "";
-                        if (
-                          !window.confirm(
-                            `${c.resetPasswordConfirm} ${member.name || member.email}?`
+              {canEdit &&
+                !locked &&
+                member.accountType === "employee" &&
+                (member.isLocalAccount || Boolean(member.email)) && (
+                  <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3">
+                    <p className="text-sm font-bold text-amber-950">
+                      {c.resetPasswordTitle}
+                    </p>
+                    <p className="mt-1 text-xs leading-5 text-amber-900">
+                      {c.resetPasswordHint}
+                    </p>
+                    <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                      <input
+                        type="password"
+                        minLength={8}
+                        maxLength={128}
+                        value={temporaryPasswords[member.userId] ?? ""}
+                        onChange={event =>
+                          setTemporaryPasswords(current => ({
+                            ...current,
+                            [member.userId]: event.target.value,
+                          }))
+                        }
+                        placeholder={c.temporaryPassword}
+                        className={packingInputClass}
+                        dir="ltr"
+                      />
+                      <button
+                        type="button"
+                        className={packingSecondaryClass}
+                        disabled={
+                          pending ||
+                          !online ||
+                          (temporaryPasswords[member.userId] ?? "").length < 8
+                        }
+                        onClick={async () => {
+                          setError("");
+                          setNotice("");
+                          const password =
+                            temporaryPasswords[member.userId] ?? "";
+                          if (
+                            !window.confirm(
+                              `${c.resetPasswordConfirm} ${member.name || member.email}?`
+                            )
                           )
-                        )
-                          return;
-                        const ok = await onResetPassword({ userId: member.userId, temporaryPassword: password });
-                        if (ok) {
-                          setTemporaryPasswords(current => ({ ...current, [member.userId]: "" }));
-                          setNotice(c.resetPasswordSuccess);
-                        } else setError(c.resetPasswordError);
-                      }}
-                    >
-                      {c.resetPassword}
-                    </button>
+                            return;
+                          const ok = await onResetPassword({
+                            userId: member.userId,
+                            temporaryPassword: password,
+                          });
+                          if (ok) {
+                            setTemporaryPasswords(current => ({
+                              ...current,
+                              [member.userId]: "",
+                            }));
+                            setNotice(c.resetPasswordSuccess);
+                          } else setError(c.resetPasswordError);
+                        }}
+                      >
+                        {c.resetPassword}
+                      </button>
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
             </article>
           );
         })}

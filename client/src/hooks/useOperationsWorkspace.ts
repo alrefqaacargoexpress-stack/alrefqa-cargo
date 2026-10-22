@@ -27,6 +27,15 @@ import {
   type PendingChange,
 } from "@shared/operations";
 import { canonicalPackingShipment, normalizeTracking } from "@shared/packing";
+import { canNoteTracking } from "@shared/tracking";
+import {
+  canCreateSourceShipment,
+  canEditCustomerAccount,
+  canOpenLocalWorkspace,
+  canStaffSendShipment,
+  isNouakchottStaff,
+  profileMatchesUser,
+} from "@/lib/offlineAccess";
 import { assertShipmentAction } from "@shared/shipmentDeletion";
 import {
   canReadOfficeRecord,
@@ -42,7 +51,12 @@ type Profile = {
   name?: string;
   offices?: OfficeId[] | null;
 };
-type AccessResponse = { role: AppRole | null; offices?: OfficeId[] | null };
+type AccessResponse = {
+  role: AppRole | null;
+  offices?: OfficeId[] | null;
+  // Pending server contract: this belongs to OfficeScope/access/member.
+  canUpdateTracking?: boolean;
+};
 const words = {
   ar: {
     saved: "حُفظت التغييرات محليًا.",
@@ -229,13 +243,21 @@ export function useOperationsWorkspace() {
     retry: false,
   });
   const accessData = access.data as AccessResponse | undefined;
-  const role = activeId ? (accessData?.role ?? null) : (profile?.role ?? null);
-  const accessReady = !activeId || Boolean(accessData);
+  const cachedProfile = profile ?? readProfile();
+  const offlineIdentity = Boolean(
+    activeId && !online && profileMatchesUser(cachedProfile, activeId)
+  );
+  const role = activeId
+    ? (accessData?.role ??
+      (offlineIdentity ? (cachedProfile?.role ?? null) : null))
+    : null;
+  const accessReady = Boolean(activeId && (accessData || offlineIdentity));
   const offices: OfficeId[] | null = activeId
-    ? (accessData?.offices ?? null)
-    : (profile?.offices ?? null);
-  const userId = activeId ?? profile?.userId ?? null;
-  const localOnly = !activeId && Boolean(profile);
+    ? (accessData?.offices ??
+      (offlineIdentity ? (cachedProfile?.offices ?? null) : null))
+    : null;
+  const userId = activeId;
+  const localOnly = offlineIdentity;
   const snapshot = trpc.operations.snapshot.useQuery(undefined, {
     enabled: Boolean(activeId && role),
     retry: false,
@@ -262,7 +284,7 @@ export function useOperationsWorkspace() {
     };
   }, []);
   useEffect(() => {
-    if (!userId) {
+    if (!userId || !accessReady) {
       ref.current = null;
       setWorkspace(null);
       return;
@@ -277,7 +299,7 @@ export function useOperationsWorkspace() {
       setWorkspace(null);
       setError(w.saveError);
     }
-  }, [userId]);
+  }, [userId, accessReady]);
   useEffect(() => {
     if (!activeId || !role) return;
     try {
@@ -321,7 +343,14 @@ export function useOperationsWorkspace() {
   ): Promise<boolean> => {
     const id = userId,
       current = ref.current;
-    if (entity !== "account" || !id || !current || !accessReady || busy) {
+    if (
+      entity !== "account" ||
+      !id ||
+      !current ||
+      !accessReady ||
+      busy ||
+      !canEditCustomerAccount(role, offices)
+    ) {
       setNotice(w.access);
       return false;
     }
@@ -358,7 +387,13 @@ export function useOperationsWorkspace() {
   ): Promise<boolean> => {
     const id = userId,
       current = ref.current;
-    if (!id || !current || !canWrite(role, "shipment") || !accessReady) {
+    if (
+      !id ||
+      !current ||
+      !canWrite(role, "shipment") ||
+      !canCreateSourceShipment(role, offices) ||
+      !accessReady
+    ) {
       setNotice(w.access);
       return false;
     }
@@ -389,6 +424,11 @@ export function useOperationsWorkspace() {
       return false;
     }
     try {
+      if (
+        role === "staff" &&
+        !canStaffSendShipment(role, existing?.status, candidate.status)
+      )
+        throw new Error("staff_final_status_forbidden");
       assertShipmentAction(role, candidate, existing, action);
       const safe = canonicalPackingShipment(
         canViewFinance(role)
@@ -547,9 +587,9 @@ export function useOperationsWorkspace() {
     }
   };
   const openLocal = () => {
-    if (navigator.onLine) return;
+    if (navigator.onLine || !activeId) return;
     const saved = readProfile();
-    if (saved) setProfile(saved);
+    if (canOpenLocalWorkspace(saved, activeId, false)) setProfile(saved);
   };
   const hidden =
     role === "viewer" || role === "tracking_staff"
@@ -579,12 +619,20 @@ export function useOperationsWorkspace() {
     userId,
     role,
     offices,
-    canEditShipments: accessReady && canWrite(role, "shipment"),
-    canEditAccounts:
+    canEditShipments:
       accessReady &&
-      canWrite(role, "account") &&
-      (offices === null || offices.length > 0),
-    showFinance: canViewFinance(role),
+      canCreateSourceShipment(role, offices) &&
+      canWrite(role, "shipment"),
+    canEditAccounts: accessReady && canEditCustomerAccount(role, offices),
+    canCreateShipments: accessReady && canCreateSourceShipment(role, offices),
+    warehouseOnly: isNouakchottStaff(role, offices),
+    canUpdateTracking:
+      accessReady &&
+      (accessData?.canUpdateTracking === true ||
+        (accessData?.canUpdateTracking === undefined && canNoteTracking(role))),
+    authenticated: Boolean(activeId),
+    accessReady,
+    showFinance: accessReady && canViewFinance(role),
     online,
     localOnly,
     loading: (online && me.isLoading) || Boolean(activeId && access.isLoading),
@@ -598,7 +646,7 @@ export function useOperationsWorkspace() {
     syncRecords,
     reload,
     openLocal,
-    offlineAvailable: !online && Boolean(readProfile()),
+    offlineAvailable: canOpenLocalWorkspace(readProfile(), activeId, online),
     conflicts,
     resolveConflict,
     busy,

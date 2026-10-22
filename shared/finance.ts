@@ -144,6 +144,34 @@ export const expenseInputSchema = z
       c.addIssue({ code: "custom", message: "unexpected_shipment" });
   });
 export type FinanceExpenseInput = z.infer<typeof expenseInputSchema>;
+export const openingBalanceDirections = ["debit", "credit"] as const;
+export const openingBalanceDirectionSchema = z.enum(openingBalanceDirections);
+export const openingBalanceInputSchema = z
+  .object({
+    openingId: id,
+    officeId: officeIdSchema,
+    currency: currencySchema,
+    amount: financeMoneySchema.refine(n => n > 0, "opening_amount_required"),
+    direction: openingBalanceDirectionSchema,
+    date: dateSchema,
+    note: z.string().trim().min(1).max(500),
+  })
+  .strict();
+export type FinanceOpeningBalanceInput = z.infer<
+  typeof openingBalanceInputSchema
+>;
+export const shipmentPriceInputSchema = z
+  .object({
+    shipmentId: id,
+    sourceOfficeId: officeIdSchema,
+    pricePerKg: financeMoneySchema,
+    pricePerKgMRU: financeMoneySchema.optional(),
+    expectedVersion: z.number().int().positive(),
+  })
+  .strict();
+export type FinanceShipmentPriceInput = z.infer<
+  typeof shipmentPriceInputSchema
+>;
 export const settlementInputSchema = z
   .object({
     invoiceId: id,
@@ -205,8 +233,23 @@ export const financeCommandSchema = z.discriminatedUnion("kind", [
       payload: customerMovementInputSchema,
     })
     .strict(),
+  z
+    .object({
+      ...commandMeta,
+      kind: z.literal("opening_balance"),
+      payload: openingBalanceInputSchema,
+    })
+    .strict(),
+  z
+    .object({
+      ...commandMeta,
+      kind: z.literal("shipment_price"),
+      payload: shipmentPriceInputSchema,
+    })
+    .strict(),
 ]);
 export type FinanceCommand = z.infer<typeof financeCommandSchema>;
+export type FinanceMutationCommand = FinanceCommand;
 export const financeEntryKinds = [
   "daily_expense",
   "monthly_expense",
@@ -218,6 +261,7 @@ export const financeEntryKinds = [
   "collection",
   "customer_credit",
   "customer_debit",
+  "opening_balance",
 ] as const;
 export const financeEntrySchema = z
   .object({
@@ -231,6 +275,7 @@ export const financeEntrySchema = z
     actorId: z.number().int().positive(),
     actorName: z.string().max(320),
     recordedAt: z.string().datetime(),
+    direction: openingBalanceDirectionSchema.optional(),
     invoiceId: id.optional(),
     shipmentId: id.optional(),
     customerId: id.optional(),
@@ -260,6 +305,50 @@ export const financeSnapshotSchema = z
     homeOffice: officeIdSchema.nullable(),
     offices: z.array(officeIdSchema).nullable(),
     lastReadAt: z.string().datetime().nullable(),
+    receivables: z
+      .array(
+        z
+          .object({
+            officeId: officeIdSchema,
+            currency: currencySchema,
+            total: financeMoneySchema,
+            shipments: z.array(
+              z
+                .object({
+                  shipmentId: id,
+                  tracking: z.string().trim().min(1).max(240),
+                  amount: financeMoneySchema,
+                })
+                .strict()
+            ),
+          })
+          .strict()
+      )
+      .optional()
+      .default([]),
+    // shipmentReceivables is the explicit public name used by the finance UI.
+    // Keep the older receivables key optional so previously cached snapshots remain valid.
+    shipmentReceivables: z
+      .array(
+        z
+          .object({
+            officeId: officeIdSchema,
+            currency: currencySchema,
+            total: financeMoneySchema,
+            shipments: z.array(
+              z
+                .object({
+                  shipmentId: id,
+                  tracking: z.string().trim().min(1).max(240),
+                  amount: financeMoneySchema,
+                })
+                .strict()
+            ),
+          })
+          .strict()
+      )
+      .optional()
+      .default([]),
   })
   .strict();
 export type FinanceSnapshot = {
@@ -268,6 +357,19 @@ export type FinanceSnapshot = {
   homeOffice: OfficeId | null;
   offices: OfficeId[] | null;
   lastReadAt: string | null;
+  receivables?: FinanceReceivable[];
+  shipmentReceivables?: FinanceReceivable[];
+};
+export type FinanceReceivableShipment = {
+  shipmentId: string;
+  tracking: string;
+  amount: number;
+};
+export type FinanceReceivable = {
+  officeId: OfficeId;
+  currency: FinanceCurrency;
+  total: number;
+  shipments: FinanceReceivableShipment[];
 };
 export type FinanceSyncResult = {
   applied: Array<{
@@ -290,10 +392,25 @@ export function emptyFinanceSnapshot(): FinanceSnapshot {
     homeOffice: null,
     offices: null,
     lastReadAt: null,
+    receivables: [],
+    shipmentReceivables: [],
   };
 }
 export function canUseFinance(role: AppRole | null) {
   return role === "admin" || role === "accountant" || role === "office_manager";
+}
+export const canReadFinance = canUseFinance;
+export function canWriteFinance(scope: {
+  role: AppRole | null;
+  offices: OfficeId[] | null;
+  homeOffice?: OfficeId | null;
+}) {
+  if (scope.role !== "accountant") return false;
+  const home =
+    scope.homeOffice ?? (scope.offices?.length === 1 ? scope.offices[0] : null);
+  return Boolean(
+    home && scope.offices?.length === 1 && scope.offices[0] === home
+  );
 }
 export function employeeFinanceOffice(
   scope: {
@@ -431,6 +548,42 @@ export function isShipmentSent(shipment: Shipment): boolean {
       Boolean(shipment.journey && shipment.journey.stage !== "preparing"))
   );
 }
+export function deriveShipmentReceivables(
+  shipments: readonly Shipment[],
+  allowedOffices: readonly OfficeId[] | null = null
+): FinanceReceivable[] {
+  const grouped = new Map<string, FinanceReceivable>();
+  for (const shipment of shipments) {
+    if (!isShipmentSent(shipment) || !shipment.packing) continue;
+    const officeId = shipment.packing.source as OfficeId;
+    if (allowedOffices && !allowedOffices.includes(officeId)) continue;
+    const currency = sourceCurrency[shipment.packing.source] as FinanceCurrency;
+    const amount = goodsTotals(
+      shipment.packing.cartons.flatMap(carton => carton.goods),
+      shipment.packing.pricePerKg
+    ).amount;
+    const key = `${officeId}:${currency}`;
+    const row = grouped.get(key) ?? {
+      officeId,
+      currency,
+      total: 0,
+      shipments: [],
+    };
+    row.total = (Math.round(row.total * 100) + Math.round(amount * 100)) / 100;
+    row.shipments.push({
+      shipmentId: shipment.id,
+      tracking: shipment.tracking,
+      amount,
+    });
+    grouped.set(key, row);
+  }
+  return [...grouped.values()].map(row => ({
+    ...row,
+    shipments: [...row.shipments].sort((a, b) =>
+      a.tracking.localeCompare(b.tracking)
+    ),
+  }));
+}
 export type OfficeFinanceSummary = {
   officeId: OfficeId;
   currency: FinanceCurrency;
@@ -444,6 +597,7 @@ export type OfficeFinanceSummary = {
   net: number;
   debts: number;
   collections: number;
+  openingBalance: number;
 };
 export function summarizeOfficeFinance(
   entries: readonly FinanceEntry[]
@@ -464,6 +618,7 @@ export function summarizeOfficeFinance(
       net: 0,
       debts: 0,
       collections: 0,
+      openingBalance: 0,
     };
     const add = (a: number, b: number) => {
       const cents = Math.round(a * 100) + Math.round(b * 100);
@@ -488,6 +643,11 @@ export function summarizeOfficeFinance(
       row.collections = add(row.collections, e.amount);
     if (e.kind === "customer_debit")
       row.collections = add(row.collections, -e.amount);
+    if (e.kind === "opening_balance")
+      row.openingBalance = add(
+        row.openingBalance,
+        e.direction === "debit" ? -e.amount : e.amount
+      );
     row.revenue = add(row.shipmentRevenue, row.invoiceRevenue);
     row.expenses = add(
       add(row.shipmentCosts, row.dailyExpenses),

@@ -60,7 +60,7 @@ vi.mock("./db", () => ({
         const selected =
           table === memberRoles
             ? role
-              ? [{ role }]
+              ? [{ role, offices: ["dubai"], homeOffice: "dubai", version: 1 }]
               : []
             : table === records
               ? rows

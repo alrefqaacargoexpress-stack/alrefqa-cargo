@@ -30,7 +30,7 @@ describe("Financial lock and correction acknowledgments", () => {
     ])
       expect(() =>
         prepareRecordForWrite("admin", { ...current, packing }, current)
-      ).toThrow("shipment_not_open");
+      ).toThrow("finance_command_required");
   });
   it("does not trust the client clock for a newly shared tombstone or mutate the input object", () => {
     const current = create();

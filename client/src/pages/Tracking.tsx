@@ -28,6 +28,7 @@ import {
   canTrackingDetails,
   canUseOperations,
   staffStageTargets,
+  warehouseStageTargets,
   stageIds,
   trackingSchedule,
   type TrackingCommand,
@@ -173,12 +174,37 @@ export default function Tracking() {
   }, [currentJourney, workspace.canDetails]);
   const availableStages = useMemo(() => {
     if (workspace.canSupervise) return [...stageIds];
-    if (!canNoteTracking(workspace.role) || !currentJourney) return [];
+    if (workspace.role === "staff" && !workspace.canUpdateWarehouseStage)
+      return [];
+    if (!currentJourney)
+      return workspace.canUpdateWarehouseStage &&
+        detail?.status === "قيد التجهيز"
+        ? ["preparing" as TrackingStage]
+        : [];
+    if (!canNoteTracking(workspace.role)) return [];
     const next = stageIds[stageIds.indexOf(currentJourney.stage) + 1];
-    return next && staffStageTargets.includes(next) ? [next] : [];
-  }, [currentJourney, workspace.canSupervise, workspace.role]);
-  const canCommand = workspace.canSupervise || canNoteTracking(workspace.role);
-  const canEditStage = canNoteTracking(workspace.role);
+    return next &&
+      (workspace.role === "staff"
+        ? warehouseStageTargets
+        : staffStageTargets
+      ).includes(next)
+      ? [next]
+      : [];
+  }, [
+    currentJourney,
+    workspace.canSupervise,
+    workspace.role,
+    workspace.canUpdateWarehouseStage,
+    detail?.status,
+  ]);
+  const canCommand =
+    workspace.canSupervise ||
+    workspace.canUpdateWarehouseStage ||
+    (workspace.role !== "staff" && canNoteTracking(workspace.role));
+  const canEditStage =
+    workspace.role === "staff"
+      ? workspace.canUpdateWarehouseStage
+      : canNoteTracking(workspace.role);
   useEffect(() => {
     if (detail?.journey) {
       setStage(detail.journey.stage);
@@ -772,7 +798,7 @@ function DetailView({
                   {c.createPlan}
                 </button>
               )}
-              {canEditStage && (
+              {canEditStage && role !== "staff" && (
                 <button
                   onClick={() => onModal("note")}
                   className="rounded-xl border border-[#dce4e7] bg-white px-4 py-2 text-sm font-semibold"

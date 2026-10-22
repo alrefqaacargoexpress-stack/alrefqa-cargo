@@ -16,7 +16,10 @@ export function financeCommandOffice(
       );
     case "expense":
     case "customer_movement":
+    case "opening_balance":
       return command.payload.officeId;
+    case "shipment_price":
+      return command.payload.sourceOfficeId;
     case "settlement":
       return invoices.find(invoice => invoice.id === command.payload.invoiceId)
         ?.officeId;
