@@ -36,6 +36,8 @@ const kindLabels = (
   customer_debt: c.customerDebt,
   debt_payment: c.debtPayment,
   collection: c.collection,
+  customer_credit: c.customerCredit,
+  customer_debit: c.customerDebit,
 });
 
 function formatMoney(

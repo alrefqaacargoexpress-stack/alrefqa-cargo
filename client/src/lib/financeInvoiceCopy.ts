@@ -1,5 +1,8 @@
 import type { Language } from "@/lib/publicCopy";
-import { searchableInvoiceGoods as sharedSearchableInvoiceGoods } from "@shared/finance";
+import {
+  invoicePaymentChoices,
+  searchableInvoiceGoods as sharedSearchableInvoiceGoods,
+} from "@shared/finance";
 import type { Invoice, Shipment } from "@shared/operations";
 
 export type FinanceLanguage = "ar" | "en" | "zh" | "tr";
@@ -13,6 +16,11 @@ export type FinanceInvoiceCopy = {
   title: string;
   description: string;
   newInvoice: string;
+  stageCustomer: string;
+  stageDetails: string;
+  stagePayment: string;
+  newCustomer: string;
+  openCustomer: string;
   customer: string;
   searchCustomer: string;
   accountRequired: string;
@@ -84,7 +92,12 @@ export type FinanceInvoiceCopy = {
 const base: FinanceInvoiceCopy = {
   title: "",
   description: "",
-  newInvoice: "",
+    newInvoice: "",
+    stageCustomer: "",
+    stageDetails: "",
+    stagePayment: "",
+    newCustomer: "",
+    openCustomer: "",
   customer: "",
   searchCustomer: "",
   accountRequired: "",
@@ -159,6 +172,11 @@ export const financeInvoiceCopy: Record<FinanceLanguage, FinanceInvoiceCopy> = {
     title: "الفواتير المالية",
     description: "إصدار ومراجعة الفواتير ضمن مكتبك المالي",
     newInvoice: "فاتورة جديدة",
+    stageCustomer: "العميل",
+    stageDetails: "تفاصيل الفاتورة",
+    stagePayment: "وسيلة الإصدار",
+    newCustomer: "عميل جديد",
+    openCustomer: "فتح الحساب",
     customer: "حساب العميل",
     searchCustomer: "ابحث بالاسم أو الهاتف",
     accountRequired: "اختر حساب عميل حقيقي للبيع الآجل",
@@ -233,6 +251,11 @@ export const financeInvoiceCopy: Record<FinanceLanguage, FinanceInvoiceCopy> = {
     title: "Finance invoices",
     description: "Issue and review invoices within your financial scope",
     newInvoice: "New invoice",
+    stageCustomer: "Customer",
+    stageDetails: "Invoice details",
+    stagePayment: "Issue method",
+    newCustomer: "New customer",
+    openCustomer: "Open account",
     customer: "Customer account",
     searchCustomer: "Search by name or phone",
     accountRequired: "Choose a real customer account for on-account sales",
@@ -308,6 +331,11 @@ export const financeInvoiceCopy: Record<FinanceLanguage, FinanceInvoiceCopy> = {
     title: "财务发票",
     description: "在授权财务范围内开具和审核发票",
     newInvoice: "新发票",
+    stageCustomer: "客户",
+    stageDetails: "发票详情",
+    stagePayment: "开具方式",
+    newCustomer: "新客户",
+    openCustomer: "打开账户",
     customer: "客户账户",
     searchCustomer: "按姓名或电话搜索",
     accountRequired: "赊账销售必须选择真实客户账户",
@@ -380,6 +408,11 @@ export const financeInvoiceCopy: Record<FinanceLanguage, FinanceInvoiceCopy> = {
     title: "Finans faturaları",
     description: "Yetkili mali kapsamınızda fatura düzenleyin ve inceleyin",
     newInvoice: "Yeni fatura",
+    stageCustomer: "Müşteri",
+    stageDetails: "Fatura ayrıntıları",
+    stagePayment: "Düzenleme yöntemi",
+    newCustomer: "Yeni müşteri",
+    openCustomer: "Hesabı aç",
     customer: "Müşteri hesabı",
     searchCustomer: "Ad veya telefonla ara",
     accountRequired: "Vadeli satış için gerçek müşteri hesabı seçin",
@@ -460,12 +493,12 @@ export function invoiceCopyFor(language: Language): FinanceInvoiceCopy {
 }
 
 export function invoicePaymentOptions(copy: FinanceInvoiceCopy) {
-  return [
-    ["on_account", copy.onAccount],
-    ["shipping_fee", copy.shippingFee],
-    ["cash", copy.cash],
-    ["wallet", copy.wallet],
-  ] as const;
+  const labels = {
+    cash: copy.cash,
+    wallet: copy.wallet,
+    on_account: copy.onAccount,
+  };
+  return invoicePaymentChoices.map(value => [value, labels[value]] as const);
 }
 
 export function searchableInvoiceGoods(

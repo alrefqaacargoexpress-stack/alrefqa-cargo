@@ -1,6 +1,8 @@
+import { isSharedCustomerAccount } from "@shared/customerAccountCreation";
 import { canBillShipmentCurrency } from "@shared/officeFinanceVisibility";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Check, CircleAlert, Plus, Search } from "lucide-react";
+import { Link } from "wouter";
 import {
   calculateFinanceInvoice,
   type FinanceCommand,
@@ -37,11 +39,13 @@ type Workspace = {
   role?: import("@shared/operations").AppRole | null;
   online: boolean;
   saveCommand: (command: FinanceCommand) => Promise<boolean>;
+  syncCommands?: (commandIds: string[]) => Promise<unknown>;
 };
 
 type Props = {
   workspace: Workspace;
   initialIssuingOffice?: OfficeId;
+  initialCustomerId?: string;
   onSaved?: () => void;
 };
 const inputClass =
@@ -59,6 +63,7 @@ function uuid() {
 export default function InvoiceFinancialForm({
   workspace,
   initialIssuingOffice,
+  initialCustomerId,
   onSaved,
 }: Props) {
   const { language, dir } = useLanguage();
@@ -68,7 +73,7 @@ export default function InvoiceFinancialForm({
   const [accountQuery, setAccountQuery] = useState("");
   const [accountId, setAccountId] = useState("");
   const [paymentMode, setPaymentMode] =
-    useState<FinanceInvoiceInput["paymentMode"]>("on_account");
+    useState<FinanceInvoiceInput["paymentMode"]>("cash");
   const [chargeKind, setChargeKind] =
     useState<FinanceInvoiceInput["chargeKind"]>("shipping");
   const [shipmentId, setShipmentId] = useState("");
@@ -92,6 +97,17 @@ export default function InvoiceFinancialForm({
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!initialCustomerId) return;
+    const account = accounts.find(item => item.id === initialCustomerId);
+    if (account) {
+      setAccountId(account.id);
+      setAccountQuery(account.name);
+    } else {
+      setAccountId("");
+    }
+  }, [accounts, initialCustomerId]);
 
   const wallet = trpc.office.public.useQuery(undefined, {
     enabled: paymentMode === "wallet",
@@ -228,6 +244,19 @@ export default function InvoiceFinancialForm({
     if (!workspace.canEdit) return setError(c.noPermission);
     if (!accountId || (paymentMode === "on_account" && !accountId))
       return setError(c.accountRequired);
+    if (
+      !isSharedCustomerAccount(
+        workspace.base.state.accounts.find(account => account.id === accountId)
+      )
+    )
+      return setError(
+        {
+          ar: "شارك حساب العميل مع المكتب أولاً قبل إصدار الفاتورة.",
+          en: "Share this customer account with the office before issuing an invoice.",
+          zh: "开票前请先将客户账户共享至办公室。",
+          tr: "Fatura kesmeden önce müşteri hesabını ofisle paylaşın.",
+        }[language]
+      );
     if (!issuingOffice) return setError(c.officeRequired);
     if (!workspace.homeOffice && !employeeOffice)
       return setError(c.officeRequired);
@@ -326,6 +355,21 @@ export default function InvoiceFinancialForm({
           {c.draft}
         </span>
       </div>
+      <ol className="mb-5 grid gap-2 sm:grid-cols-3" aria-label={c.newInvoice}>
+        {[c.stageCustomer, c.stageDetails, c.stagePayment].map(
+          (label, index) => (
+            <li
+              key={label}
+              className="flex items-center gap-2 rounded-xl border border-[#dce4e7] bg-[#f7faf8] px-3 py-2 text-xs font-bold text-[#23445d]"
+            >
+              <span className="grid size-6 shrink-0 place-items-center rounded-full bg-[#092d50] text-white">
+                {index + 1}
+              </span>
+              {label}
+            </li>
+          )
+        )}
+      </ol>
       <div className="grid gap-4 lg:grid-cols-2">
         <PackingField label={c.customer} required hint={c.searchCustomer}>
           <div className="relative">
@@ -355,6 +399,22 @@ export default function InvoiceFinancialForm({
           {accountQuery && !filteredAccounts.length && (
             <span className="text-xs text-red-700">{c.noCustomers}</span>
           )}
+          <div className="flex flex-wrap gap-2 text-xs font-bold">
+            <Link
+              className="text-[#2d6380] underline"
+              href="/operations/customers?new=1"
+            >
+              {c.newCustomer}
+            </Link>
+            {accountId && (
+              <Link
+                className="text-[#2d6380] underline"
+                href={`/operations/customers/${encodeURIComponent(accountId)}`}
+              >
+                {c.openCustomer}
+              </Link>
+            )}
+          </div>
         </PackingField>
         <PackingField label={c.paymentMode} required>
           <select
@@ -364,7 +424,6 @@ export default function InvoiceFinancialForm({
               const mode = event.target
                 .value as FinanceInvoiceInput["paymentMode"];
               setPaymentMode(mode);
-              if (mode === "shipping_fee") setChargeKind("shipping");
             }}
           >
             {invoicePaymentOptions(c).map(([value, label]) => (
@@ -378,7 +437,6 @@ export default function InvoiceFinancialForm({
           <select
             className={inputClass}
             value={chargeKind}
-            disabled={paymentMode === "shipping_fee"}
             onChange={event => {
               const kind = event.target
                 .value as FinanceInvoiceInput["chargeKind"];

@@ -44,6 +44,8 @@ export const paymentModes = [
   "cash",
   "wallet",
 ] as const;
+// Historical records retain shipping_fee; new invoice screens expose these three choices only.
+export const invoicePaymentChoices = ["cash", "wallet", "on_account"] as const;
 export const invoiceGoodsSchema = z
   .object({
     goodsId: id,
@@ -118,6 +120,11 @@ export const invoiceInputSchema = z
       c.addIssue({ code: "custom", message: "wallet_required" });
   });
 export type FinanceInvoiceInput = z.infer<typeof invoiceInputSchema>;
+/** Retain old snapshots/drafts, but never post shipping_fee as a new payment method. */
+export const newInvoiceInputSchema = invoiceInputSchema.refine(
+  value => invoicePaymentChoices.some(choice => choice === value.paymentMode),
+  "payment_mode_legacy_requires_review"
+);
 export const expenseInputSchema = z
   .object({
     expenseId: z.string().trim().min(1).max(64),
@@ -147,6 +154,27 @@ export const settlementInputSchema = z
   })
   .strict();
 export type FinanceSettlementInput = z.infer<typeof settlementInputSchema>;
+export const customerMovementInputSchema = z
+  .object({
+    movementId: z.string().trim().min(1).max(64),
+    customerId: id,
+    officeId: officeIdSchema,
+    direction: z.enum(["credit", "debit"]),
+    amount: financeMoneySchema.refine(n => n > 0, "payment_required"),
+    currency: currencySchema,
+    date: dateSchema,
+    description: z.string().trim().min(1).max(500),
+    paymentMode: z.enum(["cash", "wallet"]),
+    payment: invoicePaymentSchema.optional(),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (value.paymentMode === "wallet" && !value.payment)
+      context.addIssue({ code: "custom", message: "wallet_required" });
+    if (value.paymentMode === "cash" && value.payment)
+      context.addIssue({ code: "custom", message: "unexpected_wallet" });
+  });
+export type CustomerMovementInput = z.infer<typeof customerMovementInputSchema>;
 const commandMeta = { id, createdAt: z.string().datetime() };
 export const financeCommandSchema = z.discriminatedUnion("kind", [
   z
@@ -170,6 +198,13 @@ export const financeCommandSchema = z.discriminatedUnion("kind", [
       payload: settlementInputSchema,
     })
     .strict(),
+  z
+    .object({
+      ...commandMeta,
+      kind: z.literal("customer_movement"),
+      payload: customerMovementInputSchema,
+    })
+    .strict(),
 ]);
 export type FinanceCommand = z.infer<typeof financeCommandSchema>;
 export const financeEntryKinds = [
@@ -181,6 +216,8 @@ export const financeEntryKinds = [
   "customer_debt",
   "debt_payment",
   "collection",
+  "customer_credit",
+  "customer_debit",
 ] as const;
 export const financeEntrySchema = z
   .object({
@@ -198,6 +235,7 @@ export const financeEntrySchema = z
     shipmentId: id.optional(),
     customerId: id.optional(),
     customerName: z.string().max(240).optional(),
+    payment: invoicePaymentSchema.optional(),
   })
   .strict();
 export type FinanceEntry = z.infer<typeof financeEntrySchema>;
@@ -446,6 +484,10 @@ export function summarizeOfficeFinance(
     if (e.kind === "debt_payment") row.debts = add(row.debts, -e.amount);
     if (e.kind === "collection" || e.kind === "debt_payment")
       row.collections = add(row.collections, e.amount);
+    if (e.kind === "customer_credit")
+      row.collections = add(row.collections, e.amount);
+    if (e.kind === "customer_debit")
+      row.collections = add(row.collections, -e.amount);
     row.revenue = add(row.shipmentRevenue, row.invoiceRevenue);
     row.expenses = add(
       add(row.shipmentCosts, row.dailyExpenses),

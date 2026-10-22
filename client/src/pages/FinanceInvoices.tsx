@@ -17,6 +17,9 @@ import {
 } from "@/components/packing/PackingPrimitives";
 
 type FinanceWorkspace = ReturnType<typeof useFinanceWorkspace>;
+type SelectiveFinanceWorkspace = FinanceWorkspace & {
+  syncCommands?: (commandIds: string[]) => Promise<unknown>;
+};
 const inputClass =
   "min-h-10 rounded-xl border border-[#dce4e7] bg-white px-3 py-2 text-sm text-[#092d50]";
 function officeLabel(language: "ar" | "en" | "zh" | "tr", office?: OfficeId) {
@@ -27,10 +30,12 @@ function InvoiceTable({
   workspace,
   language,
   c,
+  selectedInvoiceId,
 }: {
   workspace: FinanceWorkspace;
   language: "ar" | "en" | "zh" | "tr";
   c: ReturnType<typeof invoiceCopyFor>;
+  selectedInvoiceId?: string;
 }) {
   const [settling, setSettling] = useState<string | null>(null);
   const [amounts, setAmounts] = useState<Record<string, string>>({});
@@ -115,8 +120,9 @@ function InvoiceTable({
                 <tr
                   key={invoice.id}
                   className={
-                    readonly ? "bg-[#fbfcfb] text-[#718088]" : "text-[#23445d]"
+                    `${readonly ? "bg-[#fbfcfb] text-[#718088]" : "text-[#23445d]"} ${selectedInvoiceId === invoice.id ? "ring-2 ring-inset ring-[#d9a441]" : ""}`
                   }
+                  aria-current={selectedInvoiceId === invoice.id ? "true" : undefined}
                 >
                   <td className="p-3 font-mono text-xs">
                     {invoice.id}
@@ -244,6 +250,7 @@ function DraftRows({
     command => command.kind === "invoice"
   );
   if (!drafts.length) return null;
+  const syncCommands = (workspace as SelectiveFinanceWorkspace).syncCommands;
   return (
     <section className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
       <h3 className="font-black text-amber-950">
@@ -260,6 +267,16 @@ function DraftRows({
             <span className="mt-1 block text-amber-800">
               {new Date(command.createdAt).toLocaleString()}
             </span>
+            {syncCommands && (
+              <button
+                type="button"
+                className={`${packingSecondaryClass} mt-2 min-h-9 px-2 py-1 text-xs`}
+                disabled={!workspace.online || workspace.busy || !workspace.canEdit}
+                onClick={() => void syncCommands([command.id])}
+              >
+                <RefreshCw size={13} /> {c.syncPending}
+              </button>
+            )}
           </div>
         ))}
       </div>
@@ -275,6 +292,24 @@ export default function FinanceInvoices() {
   const queryOffice = new URLSearchParams(search).get(
     "office"
   ) as OfficeId | null;
+  const queryParams = new URLSearchParams(search);
+  const queryCustomer = queryParams.get("customer");
+  const queryInvoice = queryParams.get("invoice");
+  const initialCustomerId = queryCustomer &&
+    workspace.base.state.accounts.some(account => account.id === queryCustomer)
+    ? queryCustomer
+    : undefined;
+  const selectedInvoice = queryInvoice
+    ? workspace.invoices.find(invoice => invoice.id === queryInvoice)
+    : undefined;
+  const selectedCommand = selectedInvoice
+    ? workspace.commands.find(
+        command =>
+          command.kind === "invoice" &&
+          command.payload.invoiceId === selectedInvoice.id
+      )
+    : undefined;
+  const selectiveSync = (workspace as SelectiveFinanceWorkspace).syncCommands;
   const issuingOffice =
     queryOffice &&
     (workspace.offices === null || workspace.offices.includes(queryOffice))
@@ -319,9 +354,10 @@ export default function FinanceInvoices() {
     >
       <div dir={dir} className="space-y-5">
         <InvoiceFinancialForm
-          key={workspace.base.userId ?? "local"}
+          key={`${workspace.base.userId ?? "local"}:${initialCustomerId ?? ""}`}
           workspace={workspace}
           initialIssuingOffice={issuingOffice}
+          initialCustomerId={initialCustomerId}
         />
         <DraftRows workspace={workspace} c={c} />
         <FinanceExcelPanel
@@ -339,19 +375,32 @@ export default function FinanceInvoices() {
             <button
               className={packingSecondaryClass}
               disabled={
-                !workspace.online || workspace.busy || !workspace.canEdit
+                !selectiveSync ||
+                !selectedCommand ||
+                !workspace.online ||
+                workspace.busy ||
+                !workspace.canEdit
               }
-              onClick={() => void workspace.sync()}
+              onClick={() =>
+                selectedCommand &&
+                void selectiveSync?.([selectedCommand.id])
+              }
             >
               <RefreshCw size={15} />
               {c.syncPending}
             </button>
           </div>
+          {selectedInvoice && (
+            <div className="rounded-2xl border border-[#d9a441] bg-[#fffaf0] p-3 text-sm text-[#5d4610]" role="status">
+              <b>{c.invoiceId}: </b>{selectedInvoice.id} · {selectedInvoice.account} · {selectedInvoice.amount} {selectedInvoice.finance?.currency ?? ""}
+            </div>
+          )}
           <InvoiceTable
-            key={workspace.base.userId ?? "local"}
+            key={`${workspace.base.userId ?? "local"}:${selectedInvoice?.id ?? "all"}`}
             workspace={workspace}
             language={language}
             c={c}
+            selectedInvoiceId={selectedInvoice?.id}
           />
         </section>
         {!workspace.online && (

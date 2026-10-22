@@ -44,6 +44,7 @@ const copy = {
     invoice: "فاتورة",
     expense: "مصروف",
     settlement: "سداد دين",
+    movement: "حركة حساب العميل",
     reason: "بيانات الصف غير صالحة أو معرفه مكرر؛ لن يُستبدل سجل موجود.",
   },
   en: {
@@ -76,6 +77,7 @@ const copy = {
     invoice: "Invoice",
     expense: "Expense",
     settlement: "Debt payment",
+    movement: "Customer account movement",
     reason:
       "Invalid row data or duplicate identifier; existing records will not be replaced.",
   },
@@ -106,6 +108,7 @@ const copy = {
     invoice: "发票",
     expense: "支出",
     settlement: "偿还欠款",
+    movement: "客户账户流水",
     reason: "数据无效或标识重复，不会替换现有记录。",
   },
   tr: {
@@ -137,6 +140,7 @@ const copy = {
     invoice: "Fatura",
     expense: "Gider",
     settlement: "Borç ödemesi",
+    movement: "Müşteri hesap hareketi",
     reason: "Geçersiz veri veya yinelenen kimlik; mevcut kayıt değiştirilmez.",
   },
 };
@@ -166,6 +170,12 @@ export default function FinanceExcelPanel({
             ...f.entries.map(e => e.id),
             ...f.commands.flatMap(x =>
               x.kind === "expense" ? [x.payload.expenseId] : []
+            ),
+          ],
+          movementIds: [
+            ...f.entries.map(e => e.id),
+            ...f.commands.flatMap(x =>
+              x.kind === "customer_movement" ? [x.payload.movementId] : []
             ),
           ],
           accountIds: f.base.state.accounts.map(a => a.id),
@@ -294,7 +304,9 @@ export default function FinanceExcelPanel({
                   ? `${c.invoice}: ${x.payload.invoiceId} · ${x.payload.customerId} · ${x.payload.currency}`
                   : x.kind === "expense"
                     ? `${c.expense}: ${x.payload.amount} ${x.payload.currency} · ${x.payload.officeId}`
-                    : c.settlement}
+                    : x.kind === "customer_movement"
+                      ? `${c.movement}: ${x.payload.customerId} · ${x.payload.amount} ${x.payload.currency} · ${x.payload.officeId}`
+                      : c.settlement}
               </p>
             ))}
             {preview.rejected.map((r, i) => (
@@ -346,7 +358,9 @@ export default function FinanceExcelPanel({
                     ? `${c.invoice}: ${x.payload.invoiceId} · ${x.payload.customerId} · ${x.payload.employeeOfficeId ?? f.homeOffice ?? "—"} · ${x.payload.currency}`
                     : x.kind === "expense"
                       ? `${c.expense}: ${x.payload.category} · ${x.payload.amount} ${x.payload.currency} · ${x.payload.officeId}`
-                      : `${c.settlement}: ${x.payload.invoiceId} · ${x.payload.amount}`}
+                      : x.kind === "customer_movement"
+                        ? `${c.movement}: ${x.payload.customerId} · ${x.payload.amount} ${x.payload.currency} · ${x.payload.officeId}`
+                        : `${c.settlement}: ${x.payload.invoiceId} · ${x.payload.amount}`}
                 </p>
               ))}
             </div>

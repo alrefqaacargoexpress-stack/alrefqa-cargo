@@ -54,7 +54,20 @@ export default function PackingLayout({
       text: c.shipments,
     },
     { href: "/operations/customers", label: null, text: c.customers },
-    { href: "/operations/reports", label: null, text: c.reports },
+    ...(workspace.role === "admin" || workspace.role === "accountant"
+      ? [
+          {
+            href: "/operations/billing",
+            label: null,
+            text: {
+              ar: "الفواتير",
+              en: "Invoices",
+              zh: "发票",
+              tr: "Faturalar",
+            }[language],
+          },
+        ]
+      : []),
     {
       href: "/operations/tracking",
       label: null,
@@ -65,41 +78,6 @@ export default function PackingLayout({
         tr: "Gönderi takibi",
       }[language],
     },
-    {
-      href: "/operations/offices",
-      label: null,
-      text: {
-        ar: "لوحات المكاتب",
-        en: "Office dashboards",
-        zh: "办公室面板",
-        tr: "Ofis panoları",
-      }[language],
-    },
-    ...(workspace.role === "admin" || workspace.role === "accountant"
-      ? [
-          {
-            href: "/operations/billing",
-            label: null,
-            text: { ar: "الفواتير والديون", en: "Invoices & debts", zh: "发票与应收账款", tr: "Faturalar ve borçlar" }[language],
-          },
-          {
-            href: "/operations/finance",
-            label: null,
-            text: { ar: "حسابات المكاتب والمصروفات", en: "Office finance & expenses", zh: "办公室财务与支出", tr: "Ofis hesapları ve giderler" }[language],
-          },
-          {
-            href: "/operations/settings",
-            label: null,
-            text: {
-              ar: "إعدادات نواكشوط",
-              en: "Nouakchott settings",
-              zh: "努瓦克肖特设置",
-              tr: "Nuakşot ayarları",
-            }[language],
-          },
-        ]
-      : []),
-    { href: "/operations?tab=accounts", label: null, text: "Excel" },
   ];
 
   const reviewAndSync = async () => {
@@ -356,6 +334,60 @@ export default function PackingLayout({
               </div>
             )}
             {children}
+            <details className="mt-6 rounded-2xl border border-[#dce4e7] bg-white p-4">
+              <summary className="cursor-pointer text-sm font-black text-[#092d50]">
+                {
+                  {
+                    ar: "المزيد",
+                    en: "More",
+                    zh: "更多",
+                    tr: "Daha fazla",
+                  }[language]
+                }
+              </summary>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Link href="/operations/advanced" className={packingSecondaryClass}>
+                  {
+                    {
+                      ar: "الأدوات المتقدمة",
+                      en: "Advanced tools",
+                      zh: "高级工具",
+                      tr: "Gelişmiş araçlar",
+                    }[language]
+                  }
+                </Link>
+                <Link href="/operations/advanced?tab=accounts" className={packingSecondaryClass}>
+                  Excel
+                </Link>
+                <Link href="/operations/reports" className={packingSecondaryClass}>
+                  {c.reports}
+                </Link>
+                {workspace.role === "admin" && (
+                  <Link href="/operations/settings" className={packingSecondaryClass}>
+                    {
+                      {
+                        ar: "إعدادات المكاتب",
+                        en: "Office settings",
+                        zh: "办公室设置",
+                        tr: "Ofis ayarları",
+                      }[language]
+                    }
+                  </Link>
+                )}
+                {(workspace.role === "admin" || workspace.role === "accountant") && (
+                  <Link href="/operations/finance" className={packingSecondaryClass}>
+                    {
+                      {
+                        ar: "حسابات المكاتب",
+                        en: "Office accounts",
+                        zh: "办公室账务",
+                        tr: "Ofis hesapları",
+                      }[language]
+                    }
+                  </Link>
+                )}
+              </div>
+            </details>
           </>
         )}
         {blocked}

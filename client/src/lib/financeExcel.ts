@@ -39,6 +39,20 @@ const expenseHeaders = [
   "الوصف",
   "الشحنة",
 ];
+const movementHeaders = [
+  "رقم الحركة",
+  "حساب العميل",
+  "المكتب",
+  "اتجاه الحركة",
+  "المبلغ",
+  "العملة",
+  "التاريخ",
+  "الوصف",
+  "طريقة الدفع",
+  "طريقة المحفظة",
+  "اسم الطريقة",
+  "مرجع التحصيل",
+];
 const goodsHeaders = ["رقم الفاتورة", "رقم البند"];
 function addSheet(
   workbook: XLSX.WorkBook,
@@ -64,7 +78,8 @@ export function buildFinanceWorkbook(
   const wb = buildAccountsWorkbook(accounts);
   const invoiceRows: unknown[][] = [],
     expenseRows: unknown[][] = [],
-    goodsRows: unknown[][] = [];
+    goodsRows: unknown[][] = [],
+    movementRows: unknown[][] = [];
   for (const c of commands) {
     if (c.kind === "invoice") {
       const p = c.payload;
@@ -100,6 +115,25 @@ export function buildFinanceWorkbook(
       ]);
     }
   }
+  for (const command of commands) {
+    if (command.kind !== "customer_movement") continue;
+    const p = command.payload;
+    movementRows.push([
+      p.movementId,
+      p.customerId,
+      p.officeId,
+      p.direction,
+      p.amount,
+      p.currency,
+      p.date,
+      p.description,
+      p.paymentMode,
+      p.payment?.methodId ?? "",
+      p.payment?.methodLabel ?? "",
+      p.payment?.reference ?? "",
+    ]);
+  }
+  addSheet(wb, "مسودات حركات العملاء", movementHeaders, movementRows);
   addSheet(wb, "مسودات الفواتير", invoiceHeaders, invoiceRows);
   addSheet(wb, "مسودات المصروفات", expenseHeaders, expenseRows);
   addSheet(wb, "بنود المسودات", goodsHeaders, goodsRows);
@@ -205,13 +239,13 @@ export function buildFinanceWorkbook(
         "تُحفظ أسعار العملات كما هي ولا يتم تحويلها. إعادة استيراد معرف موجود ترفض بدل استبدال بياناته.",
       ],
       [
-        "خيارات الرسوم: shipping أو general. الدفع: on_account أو shipping_fee أو cash أو wallet. التصحيح: increase أو decrease.",
+        "خيارات الرسوم: shipping أو general. الدفع الجديد: cash أو wallet أو on_account. shipping_fee للتوافق مع مسودات قديمة فقط. التصحيح: increase أو decrease.",
       ],
       [
         "تصنيف المصروف: daily_expense أو monthly_expense أو shipment_cost. المكاتب: nouakchott أو dubai أو china أو turkey.",
       ],
       [
-        "مسودات سداد الدين لا تُستورد من Excel؛ راجع الفاتورة وإصدارها وسجل السداد من التطبيق.",
+        "حركة العميل: credit للقبض لصالحه أو debit للصرف له، والدفع cash أو wallet. مسودات سداد الدين لا تُستورد من Excel؛ راجع الفاتورة وإصدارها وسجل السداد من التطبيق.",
       ],
     ]
   );
@@ -252,6 +286,7 @@ export function parseFinanceBuffer(
   existing: {
     invoiceIds?: string[];
     expenseIds?: string[];
+    movementIds?: string[];
     accountIds?: string[];
     shipmentIds?: string[];
   } = {}
@@ -272,13 +307,15 @@ export function parseFinanceBuffer(
         ![
           "مسودات الفواتير",
           "مسودات المصروفات",
+          "مسودات حركات العملاء",
           "بنود المسودات",
           "الحسابات",
         ].includes(n)
     ),
   };
   const seenInvoices = new Set(existing.invoiceIds ?? []),
-    seenExpenses = new Set(existing.expenseIds ?? []);
+    seenExpenses = new Set(existing.expenseIds ?? []),
+    seenMovements = new Set(existing.movementIds ?? []);
   const lines = new Map<string, string[]>();
   const invalidGoodsInvoices = new Set<string>();
   function grid(name: string, headers: string[]): unknown[][] {
@@ -355,7 +392,7 @@ export function parseFinanceBuffer(
   const accept = (
     name: string,
     headers: string[],
-    kind: "invoice" | "expense"
+    kind: "invoice" | "expense" | "customer_movement"
   ) => {
     for (const [index, row] of grid(name, headers).entries()) {
       if (row.every(v => String(v ?? "").trim() === "")) continue;
@@ -394,16 +431,38 @@ export function parseFinanceBuffer(
                   }
                 : {}),
             }
-          : {
-              expenseId: s(0),
-              officeId: s(1),
-              category: s(2),
-              amount: numeric(row[3]),
-              currency: s(4),
-              date: s(5),
-              description: s(6),
-              ...(s(7) ? { shipmentId: s(7) } : {}),
-            };
+          : kind === "customer_movement"
+            ? {
+                movementId: s(0),
+                customerId: s(1),
+                officeId: s(2),
+                direction: s(3),
+                amount: numeric(row[4]),
+                currency: s(5),
+                date: s(6),
+                description: s(7),
+                paymentMode: s(8),
+                ...(s(9)
+                  ? {
+                      payment: {
+                        office: "nouakchott",
+                        methodId: s(9),
+                        methodLabel: s(10),
+                        ...(s(11) ? { reference: s(11) } : {}),
+                      },
+                    }
+                  : {}),
+              }
+            : {
+                expenseId: s(0),
+                officeId: s(1),
+                category: s(2),
+                amount: numeric(row[3]),
+                currency: s(4),
+                date: s(5),
+                description: s(6),
+                ...(s(7) ? { shipmentId: s(7) } : {}),
+              };
       const command = financeCommandSchema.safeParse({
         id: crypto.randomUUID(),
         createdAt: new Date().toISOString(),
@@ -411,7 +470,12 @@ export function parseFinanceBuffer(
         payload,
       });
       const recordId = s(0),
-        seen = kind === "invoice" ? seenInvoices : seenExpenses;
+        seen =
+          kind === "invoice"
+            ? seenInvoices
+            : kind === "expense"
+              ? seenExpenses
+              : seenMovements;
       let reason = "";
       if (!command.success)
         reason = command.error.issues[0]?.message ?? "invalid_row";
@@ -419,14 +483,15 @@ export function parseFinanceBuffer(
       else if (kind === "invoice" && invalidGoodsInvoices.has(recordId))
         reason = "invalid_goods_row";
       else if (
-        kind === "invoice" &&
+        kind !== "expense" &&
         existing.accountIds &&
         !accountIds.has(s(1))
       )
         reason = "customer_unavailable";
       else if (
+        kind !== "customer_movement" &&
         existing.shipmentIds &&
-        s(kind === "invoice" ? 7 : 7) &&
+        s(7) &&
         !existing.shipmentIds.includes(s(7))
       )
         reason = "shipment_unavailable";
@@ -442,9 +507,15 @@ export function parseFinanceBuffer(
   };
   accept("مسودات الفواتير", invoiceHeaders, "invoice");
   accept("مسودات المصروفات", expenseHeaders, "expense");
+  accept("مسودات حركات العملاء", movementHeaders, "customer_movement");
   if (
     !wb.SheetNames.some(n =>
-      ["مسودات الفواتير", "مسودات المصروفات", "الحسابات"].includes(n)
+      [
+        "مسودات الفواتير",
+        "مسودات المصروفات",
+        "مسودات حركات العملاء",
+        "الحسابات",
+      ].includes(n)
     )
   )
     throw new Error("draft_sheets_required");

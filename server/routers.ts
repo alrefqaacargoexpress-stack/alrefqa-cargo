@@ -207,6 +207,11 @@ export const appRouter = router({
         const scope = await readOfficeScope(db, ctx.user);
         if (scope.role !== "admin")
           throw branchForbidden("Only global admins may assign members");
+        if (input.offices.length === 0)
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "office_required",
+          });
         return db.transaction(async (tx: any) => {
           const target = await tx
             .select({
@@ -252,6 +257,11 @@ export const appRouter = router({
             throw new TRPCError({
               code: "BAD_REQUEST",
               message: "home_office_outside_scope",
+            });
+          if (input.role === "accountant" && input.offices.length > 1 && !homeOffice)
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: "employee_office_required",
             });
           const nextVersion = (old?.version ?? 0) + 1;
           if (!old)
@@ -458,57 +468,12 @@ export const appRouter = router({
         const actorRole = await effectiveRole(ctx.user);
         if (!canManageMembers(ctx.user, actorRole))
           throw forbidden("Only the owner or an admin may assign roles");
-        const db = await dbOrThrow();
-        return db.transaction(async tx => {
-          const target = await tx
-            .select({ id: users.id, openId: users.openId, role: users.role })
-            .from(users)
-            .where(eq(users.id, input.userId))
-            .limit(1);
-          if (!target[0])
-            throw new TRPCError({
-              code: "NOT_FOUND",
-              message: "User not found",
-            });
-          if (
-            (ENV.ownerOpenId && target[0].openId === ENV.ownerOpenId) ||
-            target[0].role === "admin"
-          )
-            throw forbidden("The project owner/root admin cannot be changed");
-          const previous = await tx
-            .select({
-              role: memberRoles.role,
-              offices: memberRoles.offices,
-              version: memberRoles.version,
-            })
-            .from(memberRoles)
-            .where(eq(memberRoles.userId, input.userId))
-            .limit(1)
-            .for("update");
-          await tx
-            .insert(memberRoles)
-            .values({
-              userId: input.userId,
-              role: input.role,
-              offices: previous[0]?.offices ?? null,
-              version: (previous[0]?.version ?? 0) + 1,
-            })
-            .onDuplicateKeyUpdate({
-              set: {
-                role: input.role,
-                version: (previous[0]?.version ?? 0) + 1,
-              },
-            });
-          await appendAudit(tx, {
-            actor: actor(ctx.user, "admin"),
-            entity: "member_role",
-            recordId: String(input.userId),
-            action: "role_set",
-            before: { role: previous[0]?.role ?? null },
-            after: { role: input.role },
-            requestKey: `role:${input.userId}:${input.role}:${Date.now()}`,
-          });
-          return { userId: input.userId, role: input.role };
+        // The legacy endpoint could grant a role without an office scope. Keep
+        // it as a hard failure so callers must use assignMember atomically.
+        void input;
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "office_required_use_assignMember",
         });
       }),
 

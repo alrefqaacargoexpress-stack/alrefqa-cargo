@@ -336,7 +336,6 @@ export default function Operations() {
     enabled: role === "admin",
     retry: false,
   });
-  const setRoleMutation = trpc.operations.setRole.useMutation();
   const [tab, setTab] = useState<Tab>("overview");
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const workspaceRef = useRef<Workspace | null>(null);
@@ -1227,33 +1226,32 @@ export default function Operations() {
             />
           )}
           {tab === "access" && (
-            <Access
-              c={c}
-              language={language}
-              members={tabAccess.data ?? []}
-              currentUserId={userId}
-              pending={setRoleMutation.isPending}
-              onSetRole={async (memberId, nextRole) => {
-                if (
-                  !ROLE_VALUES.includes(nextRole) ||
-                  String(memberId) === userId
-                )
-                  return notify(c.accessDenied, "error");
-                try {
-                  await setRoleMutation.mutateAsync({
-                    userId: Number(memberId),
-                    role: nextRole,
-                  });
-                  await tabAccess.refetch();
-                  notify(c.roleSaved);
-                } catch (error) {
-                  notify(
-                    error instanceof Error ? error.message : c.operationError,
-                    "error"
-                  );
+            <section className="rounded-2xl border border-slate-200 bg-white p-5">
+              <h2 className="font-bold">{c.members}</h2>
+              <p className="mt-2 text-sm text-slate-500">
+                {
+                  {
+                    ar: "حدد مكتب الموظف ودوره من إعدادات المكاتب قبل منحه الصلاحية.",
+                    en: "Assign the employee's office and role in office settings before granting access.",
+                    zh: "授权前请在办公室设置中指定员工办公室和角色。",
+                    tr: "Yetki vermeden önce ofis ayarlarından çalışanın ofisini ve rolünü seçin.",
+                  }[language]
                 }
-              }}
-            />
+              </p>
+              <Link
+                className="mt-4 inline-flex rounded-xl bg-[#092d50] px-4 py-3 font-bold text-white"
+                href="/operations/settings?tab=memberships"
+              >
+                {
+                  {
+                    ar: "الموظفون والصلاحيات",
+                    en: "Employees & permissions",
+                    zh: "员工与权限",
+                    tr: "Çalışanlar ve yetkiler",
+                  }[language]
+                }
+              </Link>
+            </section>
           )}
         </main>
       </div>
@@ -1606,7 +1604,6 @@ function Accounts({
                 c.account,
                 c.phone,
                 c.city,
-                c.shipments,
                 ...(showFinance ? [c.amount] : []),
                 "",
               ].map((head, i) => (
@@ -1625,10 +1622,11 @@ function Accounts({
                 </td>
                 <td className="px-5 py-4">{item.phone}</td>
                 <td className="px-5 py-4">{item.city}</td>
-                <td className="px-5 py-4">{item.shipments}</td>
-                <td className="px-5 py-4">
-                  {formatAmount(item.balance, language)}
-                </td>
+                {showFinance && (
+                  <td className="px-5 py-4">
+                    {formatAmount(item.balance, language)}
+                  </td>
+                )}
                 <td className="px-5 py-4">
                   <div className="flex items-center gap-2">
                     <ScopeBadge scope={item.scope} labels={scopeLabels(c)} />
@@ -1773,74 +1771,6 @@ function Invoices({
         {items.length === 0 && (
           <div className="p-10 text-center text-sm text-slate-500">
             {c.noResults}
-          </div>
-        )}
-      </div>
-    </section>
-  );
-}
-
-function Access({
-  c,
-  language,
-  members,
-  currentUserId,
-  pending,
-  onSetRole,
-}: {
-  c: OperationsCopy;
-  language: string;
-  members: {
-    userId: number | string;
-    name: string;
-    email: string;
-    role: AppRole | null;
-  }[];
-  currentUserId: string | null;
-  pending: boolean;
-  onSetRole: (id: number | string, role: AppRole) => Promise<void>;
-}) {
-  const roles: AppRole[] = ROLE_VALUES;
-  return (
-    <section className="rounded-2xl border border-slate-200 bg-white">
-      <div className="border-b border-slate-100 p-5">
-        <h2 className="font-bold">{c.members}</h2>
-        <p className="mt-1 text-xs text-slate-500">{c.readOnly}</p>
-      </div>
-      <div className="divide-y divide-slate-100">
-        {members.map(member => (
-          <div
-            key={member.userId}
-            className="flex flex-wrap items-center gap-3 p-5"
-          >
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 font-bold text-sky-900">
-              {member.name?.slice(0, 1) || "?"}
-            </div>
-            <div className="min-w-[180px] flex-1">
-              <div className="font-bold">{member.name}</div>
-              <div className="text-xs text-slate-500">{member.email}</div>
-            </div>
-            <select
-              value={member.role ?? ""}
-              disabled={String(member.userId) === currentUserId || pending}
-              onChange={event => {
-                if (isAppRole(event.target.value))
-                  void onSetRole(member.userId, event.target.value);
-              }}
-              className={inputClass}
-            >
-              <option value="">{c.noRole}</option>
-              {roles.map(role => (
-                <option key={role} value={role}>
-                  {roleText(role, c, language)}
-                </option>
-              ))}
-            </select>
-          </div>
-        ))}
-        {members.length === 0 && (
-          <div className="p-10 text-center text-sm text-slate-500">
-            {c.noMembers}
           </div>
         )}
       </div>

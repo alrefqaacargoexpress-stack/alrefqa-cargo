@@ -1,4 +1,5 @@
 import { protectOfficeShipmentFinance } from "@shared/officeFinanceVisibility";
+import { prepareCustomerAccount } from "@shared/customerAccountCreation";
 import { useEffect, useRef, useState } from "react";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { trpc } from "@/lib/trpc";
@@ -17,6 +18,7 @@ import {
   canViewFinance,
   canWrite,
   type AppRole,
+  type Account,
   type Entity,
   type EntityRecord,
   type LocalState,
@@ -312,6 +314,43 @@ export function useOperationsWorkspace() {
       stopped = true;
     };
   }, [snapshot.data, activeId]);
+  const saveRecord = async (
+    entity: "account",
+    account: Account,
+    label?: string
+  ): Promise<boolean> => {
+    const id = userId,
+      current = ref.current;
+    if (entity !== "account" || !id || !current || !accessReady || busy) {
+      setNotice(w.access);
+      return false;
+    }
+    try {
+      const existing =
+        current.state.accounts.find(item => item.id === account.id) ?? null;
+      const candidate = prepareCustomerAccount(
+        account,
+        existing,
+        role,
+        offices
+      );
+      const next = stageChange(
+        current,
+        "account",
+        candidate,
+        label ?? candidate.name
+      );
+      await saveWorkspace(id, next);
+      if (owner.current !== id) return false;
+      ref.current = next;
+      setWorkspace(next);
+      setNotice(w.saved);
+      return true;
+    } catch {
+      setNotice(w.saveError);
+      return false;
+    }
+  };
   const saveShipment = async (
     shipment: Shipment,
     label?: string,
@@ -388,7 +427,9 @@ export function useOperationsWorkspace() {
       return false;
     }
   };
-  const sync = async (): Promise<SyncResult | null> => {
+  const runSync = async (
+    selected?: Array<{ entity: Entity; recordId: string }>
+  ): Promise<SyncResult | null> => {
     const id = activeId,
       current = ref.current;
     if (!id || localOnly || !online) {
@@ -401,6 +442,14 @@ export function useOperationsWorkspace() {
       return null;
     }
     const batch = current.queue
+      .filter(
+        change =>
+          !selected ||
+          selected.some(
+            item =>
+              item.entity === change.entity && item.recordId === change.recordId
+          )
+      )
       .filter(change => changeAllowed(current, change, role, offices))
       .slice(0, 500);
     if (!batch.length) {
@@ -412,6 +461,7 @@ export function useOperationsWorkspace() {
     setBusy(true);
     try {
       const result = await mutation.mutateAsync({ changes: batch });
+      if (owner.current !== id) return null;
       const latest = ref.current ?? current;
       const next = applySyncResult(latest, result);
       await saveWorkspace(id, next);
@@ -439,6 +489,9 @@ export function useOperationsWorkspace() {
       setBusy(false);
     }
   };
+  const sync = () => runSync();
+  const syncRecords = (records: Array<{ entity: Entity; recordId: string }>) =>
+    runSync(records);
   const resolveConflict = async (
     conflict: SyncResult["conflicts"][number],
     useServer: boolean
@@ -527,6 +580,10 @@ export function useOperationsWorkspace() {
     role,
     offices,
     canEditShipments: accessReady && canWrite(role, "shipment"),
+    canEditAccounts:
+      accessReady &&
+      canWrite(role, "account") &&
+      (offices === null || offices.length > 0),
     showFinance: canViewFinance(role),
     online,
     localOnly,
@@ -535,8 +592,10 @@ export function useOperationsWorkspace() {
     notice,
     queue: visibleQueue,
     snapshotError: snapshot.error?.message ?? null,
+    saveRecord,
     saveShipment,
     sync,
+    syncRecords,
     reload,
     openLocal,
     offlineAvailable: !online && Boolean(readProfile()),

@@ -61,21 +61,28 @@ const homeOfficeCopy = {
     label: "مكتب الموظف الأساسي",
     none: "حسب المكتب الوحيد / غير محدد",
     hint: "يُسند الدين إلى مكتب الموظف. يجب أن يكون المكتب ضمن المكاتب المحددة.",
+    required:
+      "حدد مكتبًا للموظف قبل منح الصلاحية، ومكتبًا أساسيًا للمحاسب متعدد المكاتب.",
   },
   en: {
     label: "Employee home office",
     none: "Use sole office / not specified",
     hint: "Debt is assigned to the employee's office. It must be one of the checked offices.",
+    required:
+      "Select an office before granting access, and a home office for a multi-office accountant.",
   },
   zh: {
     label: "员工主办公室",
     none: "按唯一办公室 / 未指定",
     hint: "债务归属于员工办公室；该办公室必须在已勾选的办公室中。",
+    required: "授权前必须选择办公室，多办公室会计还需选择主办公室。",
   },
   tr: {
     label: "Çalışanın ana ofisi",
     none: "Tek ofisi kullan / belirtilmemiş",
     hint: "Borç çalışanın ofisine atanır. Seçili ofislerden biri olmalıdır.",
+    required:
+      "Yetki vermeden önce ofis ve çok ofisli muhasebeci için ana ofis seçin.",
   },
 } as const;
 
@@ -149,6 +156,15 @@ export default function OfficeMemberships({
     if (!canEdit || pending || member.role === "admin") return;
     if (!online) {
       setError(c.onlineRequired);
+      return;
+    }
+    if (
+      !draft.offices.length ||
+      (draft.role === "accountant" &&
+        draft.offices.length > 1 &&
+        !draft.homeOffice)
+    ) {
+      setError(homeOfficeCopy[language].required);
       return;
     }
     if (
@@ -312,7 +328,16 @@ export default function OfficeMemberships({
                 <div className="mt-4 flex justify-end">
                   <button
                     className={packingPrimaryClass}
-                    disabled={locked || !draft.dirty || pending || !online}
+                    disabled={
+                      locked ||
+                      !draft.dirty ||
+                      pending ||
+                      !online ||
+                      !draft.offices.length ||
+                      (draft.role === "accountant" &&
+                        draft.offices.length > 1 &&
+                        !draft.homeOffice)
+                    }
                     onClick={() => void save(member)}
                   >
                     {c.saveMember}

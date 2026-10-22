@@ -9,6 +9,10 @@
       "title": "مركز عمليات الرفكة"
     },
     {
+      "path": "/operations/advanced",
+      "title": "الأدوات المتقدمة"
+    },
+    {
       "path": "/admin",
       "title": "مركز عمليات الرفكة"
     },
@@ -29,6 +33,10 @@
       "title": "إدارة العملاء"
     },
     {
+      "path": "/operations/customers/:id",
+      "title": "كشف حساب العميل"
+    },
+    {
       "path": "/operations/reports",
       "title": "التقارير"
     },
@@ -42,7 +50,7 @@
     },
     {
       "path": "/operations/settings",
-      "title": "إعدادات مكاتب الرفكة"
+      "title": "إعدادات المكاتب"
     },
     {
       "path": "/operations/offices",

@@ -47,6 +47,8 @@ export type OfficeFinanceCopy = {
   customerDebt: string;
   debtPayment: string;
   collection: string;
+  customerCredit: string;
+  customerDebit: string;
   shipmentCost: string;
   dailyExpense: string;
   monthlyExpense: string;
@@ -70,6 +72,8 @@ export type OfficeFinanceCopy = {
 };
 
 const ar: OfficeFinanceCopy = {
+  customerCredit: "قبض لصالح العميل",
+  customerDebit: "صرف للعميل",
   title: "المالية حسب المكاتب",
   description: "لقطة الخادم الرسمية للقيود المالية، مع عملة ومكتب واضحين",
   noAccess: "الوصول المالي متاح للمدير والمحاسب فقط.",
@@ -139,6 +143,8 @@ const ar: OfficeFinanceCopy = {
 };
 
 const en: OfficeFinanceCopy = {
+  customerCredit: "Customer deposit",
+  customerDebit: "Customer payout",
   title: "Office finance",
   description: "Official server ledger with an explicit office and currency",
   noAccess: "Finance access is limited to administrators and accountants.",
@@ -212,6 +218,8 @@ const en: OfficeFinanceCopy = {
 };
 
 const zh: OfficeFinanceCopy = {
+  customerCredit: "客户存入款项",
+  customerDebit: "向客户付款",
   title: "办公室财务",
   description: "来自服务器的正式账簿，明确显示办公室和币种",
   noAccess: "只有管理员和会计可以访问财务。",
@@ -279,6 +287,8 @@ const zh: OfficeFinanceCopy = {
 };
 
 const tr: OfficeFinanceCopy = {
+  customerCredit: "Müşteri yatırımı",
+  customerDebit: "Müşteriye ödeme",
   title: "Ofis finansı",
   description: "Açık ofis ve para birimiyle sunucunun resmi defteri",
   noAccess: "Finans erişimi yalnızca yöneticiler ve muhasebeciler içindir.",

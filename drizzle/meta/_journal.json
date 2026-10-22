@@ -36,6 +36,13 @@
       "when": 1792627257498,
       "tag": "0004_silly_smasher",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "5",
+      "when": 1792631271620,
+      "tag": "0005_peaceful_earthquake",
+      "breakpoints": true
     }
   ]
 }

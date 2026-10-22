@@ -21,7 +21,7 @@ export const localAccountSchema = z
     id: text(128),
     name: text(240),
     phone: z.string().trim().max(64),
-    city: text(160),
+    city: z.string().trim().max(160),
     shipments: integer,
     balance: money,
     updatedAt: text(80),

@@ -363,3 +363,146 @@ it("bills an incoming shipment in MRU in Nouakchott without access to source AED
     "finance_forbidden"
   );
 });
+
+function movement(
+  id: string,
+  overrides: Partial<
+    Extract<FinanceCommand, { kind: "customer_movement" }>["payload"]
+  > = {}
+): FinanceCommand {
+  return {
+    id: `command-${id}`,
+    kind: "customer_movement",
+    createdAt: now,
+    payload: {
+      movementId: id,
+      customerId: "c1",
+      officeId: "nouakchott",
+      direction: "credit",
+      amount: 12.5,
+      currency: "MRU",
+      date: "2026-10-20",
+      description: "Customer cash movement",
+      paymentMode: "cash",
+      ...overrides,
+    },
+  };
+}
+
+describe("independent customer movements (isolated memory database)", () => {
+  it("writes only the customer ledger fact, with the requested date and server recordedAt", async () => {
+    const db = database();
+    seed(db);
+    const result = await financeSync(db, user, copiedScope(), [
+      movement("move-1"),
+    ]);
+    expect(result.conflicts).toEqual([]);
+    const row = db.rows.get(financeEntries)[0].data;
+    expect(row).toMatchObject({
+      id: "move-1",
+      kind: "customer_credit",
+      officeId: "nouakchott",
+      customerId: "c1",
+      amount: 12.5,
+      date: "2026-10-20",
+      actorId: user.id,
+    });
+    expect(row.recordedAt).not.toBe("2026-10-20T00:00:00.000Z");
+    expect(
+      db.rows.get(records).filter((r: any) => r.entity === "invoice")
+    ).toHaveLength(0);
+    expect(db.events).toHaveLength(1);
+  });
+
+  it("maps a customer payout to customer_debit, keeps wallet metadata canonical, and replays safely", async () => {
+    const db = database();
+    seed(db);
+    const command = movement("move-wallet", {
+      direction: "debit",
+      paymentMode: "wallet",
+      payment: {
+        office: "nouakchott",
+        methodId: "bankily",
+        methodLabel: "forged label",
+        reference: "ref-1",
+      },
+    });
+    const first = await financeSync(db, user, copiedScope(), [command]);
+    expect(first.conflicts).toEqual([]);
+    expect(db.rows.get(financeEntries)[0].data).toMatchObject({
+      id: "move-wallet",
+      kind: "customer_debit",
+      payment: { methodId: "bankily", methodLabel: "Bankily" },
+    });
+    expect(
+      (await financeSync(db, user, copiedScope(), [command])).applied
+    ).toHaveLength(1);
+    expect(db.rows.get(financeEntries)).toHaveLength(1);
+    expect(db.events).toHaveLength(1);
+    const otherCommand = movement("move-wallet-2");
+    if (otherCommand.kind === "customer_movement")
+      otherCommand.payload.movementId = "move-wallet";
+    const duplicate = await financeSync(db, user, copiedScope(), [
+      otherCommand,
+    ]);
+    expect(duplicate.conflicts[0].code).toBe("movement_exists");
+    expect(db.rows.get(financeEntries)).toHaveLength(1);
+    expect(db.rows.get(financeReceipts)).toHaveLength(1);
+    expect(db.events).toHaveLength(1);
+  });
+
+  it("rejects an inaccessible office, customer, or wallet atomically without an entry, receipt, or audit", async () => {
+    const cases = [
+      {
+        command: movement("bad-office", { officeId: "dubai" }),
+        code: "financial_office_mismatch",
+      },
+      {
+        command: movement("bad-customer", { customerId: "missing" }),
+        code: "customer_not_found",
+      },
+      {
+        command: movement("bad-wallet", {
+          paymentMode: "wallet",
+          payment: {
+            office: "nouakchott",
+            methodId: "not-configured",
+            methodLabel: "not trusted",
+          },
+        }),
+        code: "payment_method_unknown",
+      },
+    ];
+    for (const { command, code } of cases) {
+      const db = database();
+      seed(db);
+      const result = await financeSync(db, user, copiedScope(), [command]);
+      expect(result.conflicts[0].code).toBe(code);
+      expect(db.rows.get(financeEntries)).toHaveLength(0);
+      expect(db.rows.get(financeReceipts)).toHaveLength(0);
+      expect(db.events).toHaveLength(0);
+    }
+    const outside = database();
+    seed(outside);
+    outside.rows.get(records)[0].data.officeId = "china";
+    const denied = await financeSync(outside, user, copiedScope(), [
+      movement("outside-customer"),
+    ]);
+    expect(denied.conflicts[0].code).toBe("finance_forbidden");
+    expect(outside.rows.get(financeEntries)).toHaveLength(0);
+    expect(outside.rows.get(financeReceipts)).toHaveLength(0);
+    expect(outside.events).toHaveLength(0);
+  });
+});
+
+it("rejects shipping_fee for a new invoice before writing financial facts", async () => {
+  const db = database();
+  const command = invoice("legacy-method");
+  if (command.kind === "invoice") command.payload.paymentMode = "shipping_fee";
+  const result = await financeSync(db, user, copiedScope(), [command]);
+  expect(result.applied).toHaveLength(0);
+  expect(result.conflicts).toHaveLength(1);
+  expect(db.rows.get(financeEntries)).toHaveLength(0);
+  expect(db.rows.get(financeReceipts)).toHaveLength(0);
+  expect(db.events).toHaveLength(0);
+});

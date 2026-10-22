@@ -1,3 +1,7 @@
+import {
+  financeCommandOffice,
+  selectedFinanceCommands,
+} from "@shared/financeCommands";
 import { useEffect, useRef, useState } from "react";
 import { useOperationsWorkspace } from "./useOperationsWorkspace";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -179,16 +183,11 @@ export function useFinanceWorkspace() {
       setNotice(w.forbidden);
       return false;
     }
-    const office =
-      command.kind === "invoice"
-        ? (command.payload.employeeOfficeId ??
-          workspace?.snapshot.homeOffice ??
-          command.payload.issuingOfficeId)
-        : command.kind === "expense"
-          ? command.payload.officeId
-          : workspace?.snapshot.invoices.find(
-              i => i.id === command.payload.invoiceId
-            )?.officeId;
+    const office = financeCommandOffice(
+      command,
+      workspace?.snapshot.invoices ?? [],
+      workspace?.snapshot.homeOffice ?? null
+    );
     if (office && !officeAllowed(office)) {
       setNotice(w.forbidden);
       return false;
@@ -206,9 +205,14 @@ export function useFinanceWorkspace() {
       return false;
     }
   };
-  const sync = async (): Promise<FinanceSyncResult | null> => {
+  const posting = useRef(false);
+  const runSync = async (
+    selectedIds?: string[]
+  ): Promise<FinanceSyncResult | null> => {
     if (
       mutation.isPending ||
+      posting.current ||
+      workspaceOwner.current !== base.userId ||
       !base.online ||
       base.localOnly ||
       !base.userId ||
@@ -218,17 +222,15 @@ export function useFinanceWorkspace() {
       setNotice(w.offline);
       return null;
     }
-    const available = ref.current.commands.filter(command => {
-      const office =
-        command.kind === "expense"
-          ? command.payload.officeId
-          : command.kind === "invoice"
-            ? (command.payload.employeeOfficeId ??
-              workspace?.snapshot.homeOffice ??
-              command.payload.issuingOfficeId)
-            : workspace?.snapshot.invoices.find(
-                i => i.id === command.payload.invoiceId
-              )?.officeId;
+    const available = selectedFinanceCommands(
+      ref.current.commands,
+      selectedIds
+    ).filter(command => {
+      const office = financeCommandOffice(
+        command,
+        workspace?.snapshot.invoices ?? [],
+        workspace?.snapshot.homeOffice ?? null
+      );
       return office ? officeAllowed(office) : false;
     });
     const batch = available.slice(0, 100);
@@ -239,6 +241,19 @@ export function useFinanceWorkspace() {
           return `${command.payload.category}: ${command.payload.amount} ${command.payload.currency} · ${command.payload.officeId} · ${command.payload.description}`;
         if (command.kind === "settlement")
           return `${command.payload.invoiceId}: ${command.payload.amount} · ${command.payload.description}`;
+        if (command.kind === "customer_movement") {
+          const p = command.payload;
+          const names = {
+            ar: { credit: "قبض من العميل", debit: "صرف للعميل" },
+            en: { credit: "Customer receipt", debit: "Customer payout" },
+            zh: { credit: "客户收款", debit: "向客户付款" },
+            tr: { credit: "Müşteriden tahsilat", debit: "Müşteriye ödeme" },
+          };
+          const customer =
+            base.state.accounts.find(a => a.id === p.customerId)?.name ??
+            p.customerId;
+          return `${names[language][p.direction]} · ${customer}: ${p.amount} ${p.currency} · ${p.officeId} · ${p.paymentMode} · ${p.description}`;
+        }
         const p = command.payload;
         let total = "—";
         try {
@@ -256,6 +271,7 @@ export function useFinanceWorkspace() {
       })
       .join("\n");
     if (!window.confirm(`${w.review}\n\n${review}`)) return null;
+    posting.current = true;
     try {
       const userId = base.userId;
       const result = await mutation.mutateAsync({
@@ -267,10 +283,10 @@ export function useFinanceWorkspace() {
         workspaceOwner.current !== userId ||
         !ref.current
       )
-        return result;
+        return null;
       const next = applyFinanceSync(ref.current, result);
       await saveFinanceWorkspace(userId, next);
-      if (currentUser.current !== userId) return result;
+      if (currentUser.current !== userId) return null;
       ref.current = next;
       setWorkspace(next);
       setConflicts(result.conflicts);
@@ -286,8 +302,12 @@ export function useFinanceWorkspace() {
     } catch (e) {
       setNotice(w.failed);
       return null;
+    } finally {
+      posting.current = false;
     }
   };
+  const sync = () => runSync();
+  const syncCommands = (ids: string[]) => runSync(ids);
   const reload = async () => {
     if (!base.userId) return;
     try {
@@ -322,22 +342,14 @@ export function useFinanceWorkspace() {
         )
       : [],
     commands: visible
-      ? (workspace?.commands ?? []).filter(c =>
-          c.kind === "expense"
-            ? officeAllowed(c.payload.officeId)
-            : c.kind === "invoice"
-              ? officeAllowed(
-                  c.payload.employeeOfficeId ??
-                    snapshot.homeOffice ??
-                    c.payload.issuingOfficeId
-                )
-              : (() => {
-                  const office = snapshot.invoices.find(
-                    i => i.id === c.payload.invoiceId
-                  )?.officeId;
-                  return Boolean(office && officeAllowed(office));
-                })()
-        )
+      ? (workspace?.commands ?? []).filter(command => {
+          const office = financeCommandOffice(
+            command,
+            snapshot.invoices,
+            snapshot.homeOffice
+          );
+          return Boolean(office && officeAllowed(office));
+        })
       : [],
     error: error ?? (denied ? w.forbidden : null),
     notice,
@@ -345,6 +357,7 @@ export function useFinanceWorkspace() {
     canEdit,
     saveCommand,
     sync,
+    syncCommands,
     reload,
     busy: mutation.isPending,
     store: workspace,

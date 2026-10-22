@@ -50,7 +50,7 @@ export const accountDataSchema = z
     id: boundedString(128),
     name: boundedString(240),
     phone: z.string().trim().max(64),
-    city: boundedString(160),
+    city: z.string().trim().max(160),
     shipments: safeNonNegative,
     balance: nonNegative,
     updatedAt: boundedString(80),

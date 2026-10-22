@@ -13,6 +13,7 @@ import {
   financialInvoiceSchema,
   financeEntrySchema,
   financeSnapshotSchema,
+  newInvoiceInputSchema,
   employeeFinanceOffice,
 } from "@shared/finance";
 import { isShipmentSent } from "@shared/finance";
@@ -212,6 +213,8 @@ async function applyInvoice(
   command: Extract<FinanceCommand, { kind: "invoice" }>
 ) {
   const input = command.payload;
+  if (!newInvoiceInputSchema.safeParse(input).success)
+    throw new Error("payment_mode_legacy_requires_review");
   const financialOfficeId = employeeFinanceOffice(
     scope,
     input.employeeOfficeId
@@ -513,6 +516,69 @@ async function applySettlement(
   };
 }
 
+async function applyCustomerMovement(
+  tx: any,
+  user: FinanceActor,
+  scope: FinanceScope,
+  command: Extract<FinanceCommand, { kind: "customer_movement" }>
+) {
+  const input = command.payload;
+  // The requested office is only a claim until it is bound to the employee's
+  // configured financial home office. Never persist the client-supplied office
+  // as the financial office without this check.
+  const financialOfficeId = employeeFinanceOffice(scope, input.officeId);
+  assertOffice(scope, financialOfficeId);
+  const customer = await accountFor(tx, input.customerId);
+  if (customer.id !== input.customerId) throw new Error("customer_not_found");
+  if (
+    !canReadOfficeRecord(scope.role, scope.offices, "account", customer as any)
+  )
+    throw new Error("finance_forbidden");
+
+  const duplicate = await tx
+    .select()
+    .from(financeEntries)
+    .where(eq(financeEntries.id, input.movementId))
+    .limit(1)
+    .for("update");
+  if (duplicate[0]) throw new Error("movement_exists");
+
+  let payment = input.payment;
+  if (payment)
+    payment = canonicalInvoicePayment(
+      payment,
+      null,
+      await readOfficeSettings(tx)
+    );
+
+  const row = entry(
+    input.direction === "credit" ? "customer_credit" : "customer_debit",
+    input.movementId,
+    financialOfficeId,
+    input.currency,
+    input.amount,
+    input.description,
+    user,
+    {
+      date: input.date,
+      customerId: customer.id,
+      customerName: customer.name,
+      ...(payment ? { payment } : {}),
+    }
+  );
+  await insertEntry(tx, row);
+  await appendAudit(tx, {
+    actor: { id: user.id, name: actorName(user), role: scope.role! },
+    entity: "finance_entry",
+    recordId: row.id,
+    action: "customer_movement",
+    before: null,
+    after: row,
+    requestKey: `finance:${command.id}`,
+  });
+  return { entries: [row] };
+}
+
 export async function applyFinanceCommand(
   tx: any,
   user: FinanceActor,
@@ -522,6 +588,8 @@ export async function applyFinanceCommand(
   assertFinance(scope);
   if (command.kind === "invoice") return applyInvoice(tx, user, scope, command);
   if (command.kind === "expense") return applyExpense(tx, user, scope, command);
+  if (command.kind === "customer_movement")
+    return applyCustomerMovement(tx, user, scope, command);
   return applySettlement(tx, user, scope, command);
 }
 

@@ -49,8 +49,13 @@ describe("finance invoice pure helpers", () => {
     for (const language of ["ar", "en", "zh", "tr"] as const) {
       expect(Object.keys(financeInvoiceCopy[language]).sort()).toEqual(keys);
       expect(invoicePaymentOptions(financeInvoiceCopy[language])).toHaveLength(
-        4
+        3
       );
+      expect(invoicePaymentOptions(financeInvoiceCopy[language]).map(pair => pair[0])).toEqual([
+        "cash",
+        "wallet",
+        "on_account",
+      ]);
       for (const value of Object.values(financeInvoiceCopy[language]))
         expect(value.trim()).not.toBe("");
     }

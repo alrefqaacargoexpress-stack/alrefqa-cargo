@@ -9,6 +9,8 @@ import { LanguageProvider, useLanguage } from "./contexts/LanguageContext";
 import { lazy, Suspense } from "react";
 
 const Operations = lazy(() => import("./pages/Operations"));
+const OperationsHome = lazy(() => import("./pages/OperationsHome"));
+const CustomerAccount = lazy(() => import("./pages/CustomerAccount"));
 const PackingHub = lazy(() => import("./pages/PackingHub"));
 const ShipmentPacking = lazy(() => import("./pages/ShipmentPacking"));
 const Customers = lazy(() => import("./pages/Customers"));
@@ -41,6 +43,7 @@ function Router() {
       <Route path="/operations/shipments/new" component={PackingHub} />
       <Route path="/operations/shipments/:id" component={ShipmentPacking} />
       <Route path="/operations/shipments" component={PackingHub} />
+      <Route path="/operations/customers/:id" component={CustomerAccount} />
       <Route path="/operations/customers" component={Customers} />
       <Route path="/operations/reports" component={Reports} />
       <Route path="/operations/tracking/:id" component={Tracking} />
@@ -49,7 +52,8 @@ function Router() {
       <Route path="/operations/settings" component={OfficeSettings} />
       <Route path="/operations/billing" component={FinanceInvoices} />
       <Route path="/operations/finance" component={OfficeFinance} />
-      <Route path="/operations" component={Operations} />
+      <Route path="/operations/advanced" component={Operations} />
+      <Route path="/operations" component={OperationsHome} />
       <Route path="/admin" component={Operations} />
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />
