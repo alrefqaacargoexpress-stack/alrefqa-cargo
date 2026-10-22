@@ -1,3 +1,3 @@
 export default {
-  logoUrl: "https://www.alrefqaacargo.space/manus-storage/alrafkah-logo-final_cabb0750.webp",
+  logoUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663361639038/rkBBIXeVsiTFrOcf.webp",
 };

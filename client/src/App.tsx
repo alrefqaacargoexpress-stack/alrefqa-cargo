@@ -20,6 +20,7 @@ const OfficeSettings = lazy(() => import("./pages/OfficeSettings"));
 const OfficeDashboard = lazy(() => import("./pages/OfficeDashboard"));
 const FinanceInvoices = lazy(() => import("./pages/FinanceInvoices"));
 const OfficeFinance = lazy(() => import("./pages/OfficeFinance"));
+const PublicTracking = lazy(() => import("./pages/PublicTracking"));
 function PageLoading() {
   const { language } = useLanguage();
   return (
@@ -40,6 +41,7 @@ function Router() {
   return (
     <Switch>
       <Route path="/" component={Home} />
+      <Route path="/track" component={PublicTracking} />
       <Route path="/operations/shipments/new" component={PackingHub} />
       <Route path="/operations/shipments/:id" component={ShipmentPacking} />
       <Route path="/operations/shipments" component={PackingHub} />

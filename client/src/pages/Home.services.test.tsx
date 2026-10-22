@@ -81,7 +81,7 @@ describe("Home public inquiry and navigation contract", () => {
       const html = renderToStaticMarkup(<Home />);
       const tracking = publicCopy[language].tracking;
 
-      expect(html).toContain('id="tracking"');
+      expect(html).toContain('href="/track"');
       expect(html).toContain('id="offices"');
       expect(html).toContain('id="contact"');
       expect(html).not.toContain('id="services"');

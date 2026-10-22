@@ -163,7 +163,13 @@ export default function Home() {
             />
             <div className="leading-tight">
               <div className="font-bold text-[#092d50]">
-                الرفكة <span className="font-semibold">Al-Rafqaa</span>
+                {language === "ar"
+                  ? "مؤسسة الرفكة للشحن"
+                  : language === "en"
+                    ? "Al-Rafqaa Shipping"
+                    : language === "zh"
+                      ? "Al-Rafqaa 运输"
+                      : "Al-Rafqaa Kargo"}
               </div>
               <div className="text-[11px] tracking-[0.14em] text-[#7b8991]">
                 {copy.brandTagline}
@@ -174,7 +180,7 @@ export default function Home() {
             className="hidden items-center gap-6 text-sm font-medium text-[#52636e] md:flex"
             aria-label={copy.a11y.mainNavigation}
           >
-            <a href="#tracking" className="transition hover:text-[#092d50]">
+            <a href="/track" className="transition hover:text-[#092d50]">
               {copy.nav.tracking}
             </a>
             <details className="relative group">
@@ -226,7 +232,7 @@ export default function Home() {
         {menuOpen && (
           <div className="border-t border-[#dce4e7] bg-[#f7f8f5] px-5 py-4 md:hidden">
             <div className="flex flex-col gap-3 text-sm font-medium">
-              <a href="#tracking" onClick={() => setMenuOpen(false)}>
+              <a href="/track" onClick={() => setMenuOpen(false)}>
                 {copy.nav.tracking}
               </a>
               <details>
@@ -307,7 +313,7 @@ export default function Home() {
                     <Arrow size={17} />
                   </a>
                   <a
-                    href="#tracking"
+                    href="/track"
                     className="inline-flex min-h-12 items-center gap-2 rounded-full border border-white/45 bg-[#092d50]/55 px-5 py-3.5 text-base font-bold text-white transition hover:border-white"
                   >
                     {copy.hero.trackingCta}
@@ -343,7 +349,7 @@ export default function Home() {
                   <Arrow size={17} />
                 </a>
                 <a
-                  href="#tracking"
+                  href="/track"
                   className="inline-flex min-h-12 items-center justify-center gap-2 rounded-full border border-white/45 bg-white/10 px-5 py-3.5 text-base font-bold text-white transition hover:border-white"
                 >
                   {copy.hero.trackingCta}

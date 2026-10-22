@@ -86,6 +86,15 @@ import {
   maybePostShipmentRevenue,
 } from "./finance";
 import { financeSyncInputSchema } from "@shared/finance";
+import {
+  lookupPublicTracking,
+  publicTrackingLimiter,
+  trustedClientAddress,
+} from "./publicTracking";
+import {
+  publicTrackingInputSchema,
+  publicTrackingResultSchema,
+} from "@shared/publicTracking";
 
 const unavailable = () =>
   new TRPCError({
@@ -151,6 +160,26 @@ function trackingError(error: unknown): never {
 
 export const appRouter = router({
   system: systemRouter,
+  publicTracking: router({
+    lookup: publicProcedure
+      .input(publicTrackingInputSchema)
+      .output(publicTrackingResultSchema)
+      .mutation(async ({ ctx, input }) => {
+        ctx.res.setHeader("Cache-Control", "no-store");
+        if (
+          !publicTrackingLimiter.check(
+            trustedClientAddress(ctx.req),
+            input.tracking
+          )
+        )
+          throw new TRPCError({
+            code: "TOO_MANY_REQUESTS",
+            message: "too_many_requests",
+          });
+        const db = await dbOrThrow();
+        return lookupPublicTracking(db, input);
+      }),
+  }),
   auth: router({
     me: publicProcedure.query(opts => opts.ctx.user),
     logout: publicProcedure.mutation(({ ctx }) => {

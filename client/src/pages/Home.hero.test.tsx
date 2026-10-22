@@ -54,7 +54,7 @@ function htmlText(value: string) {
 
 describe("Home hero", () => {
   for (const language of ["ar", "en", "zh", "tr"] as const) {
-    it(`renders the ${language} hero image, copy, and anchors`, () => {
+    it(`renders the ${language} hero image, copy, and links`, () => {
       f.language = language;
       const html = renderToStaticMarkup(<Home />);
       const hero = publicCopy[language].hero;
@@ -72,7 +72,7 @@ describe("Home hero", () => {
         expect(html).toContain(htmlText(text));
       }
       expect(html).toContain('href="#offices"');
-      expect(html).toContain('href="#tracking"');
+      expect(html).toContain('href="/track"');
       expect(html).not.toContain(hero.routeLabel);
       expect(html).not.toContain(hero.routeCaption);
     });
