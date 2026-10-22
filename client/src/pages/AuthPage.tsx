@@ -13,6 +13,7 @@ const copy = {
   ar: {
     title: "الدخول إلى مؤسسة الرفكة للشحن",
     subtitle: "سجّل دخولك من داخل الموقع مباشرة، بدون الانتقال إلى صفحة أخرى.",
+    loginRoleHint: "يدخل المدير العام ومدير المكتب بالبريد وكلمة المرور؛ يحدد النظام الصلاحيات من الحساب تلقائيًا.",
     login: "تسجيل الدخول",
     signup: "إنشاء حساب",
     name: "الاسم الكامل",
@@ -28,7 +29,7 @@ const copy = {
     submitSignup: "إنشاء الحساب",
     loading: "جارٍ المعالجة…",
     backHome: "العودة إلى الصفحة الرئيسية",
-    invalid: "تعذر تسجيل الدخول. تحقق من البريد وكلمة المرور ونوع الحساب.",
+    invalid: "تعذر تسجيل الدخول. تحقق من البريد وكلمة مرور الموقع.",
     registered: "هذا البريد مسجل مسبقًا. استخدم تسجيل الدخول أو بريدًا آخر.",
     savedCustomer: "تم إنشاء حساب الزبون. يمكنك متابعة الخدمات العامة من الموقع.",
     savedEmployee: "تم إنشاء حساب الموظف. يجب أن يربطك المدير بالمكتب والدور قبل دخول مساحة العمليات.",
@@ -43,6 +44,7 @@ const copy = {
   en: {
     title: "Sign in to Al-Rafqaa Shipping",
     subtitle: "Sign in directly inside the website without leaving for another page.",
+    loginRoleHint: "General and office managers sign in with email and password. Permissions come automatically from the saved account.",
     login: "Sign in",
     signup: "Create account",
     name: "Full name",
@@ -58,7 +60,7 @@ const copy = {
     submitSignup: "Create account",
     loading: "Processing…",
     backHome: "Back to home",
-    invalid: "Could not sign in. Check your email, password, and account type.",
+    invalid: "Could not sign in. Check your email and website password.",
     registered: "This email is already registered. Sign in or use another email.",
     savedCustomer: "Customer account created. You can continue with public services.",
     savedEmployee: "Employee account created. A manager must assign your office and role before operations access.",
@@ -73,6 +75,7 @@ const copy = {
   zh: {
     title: "登录 Al-Rafqaa 运输",
     subtitle: "直接在网站内登录，无需跳转到其他页面。",
+    loginRoleHint: "总经理和办公室经理使用邮箱和密码登录，系统根据保存的账户自动确定权限。",
     login: "登录",
     signup: "创建账户",
     name: "姓名",
@@ -88,7 +91,7 @@ const copy = {
     submitSignup: "创建账户",
     loading: "处理中…",
     backHome: "返回首页",
-    invalid: "无法登录，请检查邮箱、密码和账户类型。",
+    invalid: "无法登录，请检查邮箱和网站密码。",
     registered: "该邮箱已注册，请登录或使用其他邮箱。",
     savedCustomer: "客户账户已创建，可以继续使用公共服务。",
     savedEmployee: "员工账户已创建，进入运营空间前需由管理员分配办公室和角色。",
@@ -103,6 +106,7 @@ const copy = {
   tr: {
     title: "Al-Rafqaa Kargo hesabına giriş",
     subtitle: "Başka bir sayfaya gitmeden doğrudan web sitesinde giriş yapın.",
+    loginRoleHint: "Genel müdür ve ofis müdürü e-posta ve şifreyle giriş yapar. Yetkiler kayıtlı hesaptan otomatik belirlenir.",
     login: "Giriş yap",
     signup: "Hesap oluştur",
     name: "Ad soyad",
@@ -118,7 +122,7 @@ const copy = {
     submitSignup: "Hesap oluştur",
     loading: "İşleniyor…",
     backHome: "Ana sayfaya dön",
-    invalid: "Giriş yapılamadı. E-posta, şifre ve hesap türünü kontrol edin.",
+    invalid: "Giriş yapılamadı. E-posta ve site şifresini kontrol edin.",
     registered: "Bu e-posta zaten kayıtlı. Giriş yapın veya başka bir e-posta kullanın.",
     savedCustomer: "Müşteri hesabı oluşturuldu. Genel hizmetlere devam edebilirsiniz.",
     savedEmployee: "Çalışan hesabı oluşturuldu. Operasyon erişimi için yönetici ofis ve rol atamalıdır.",
@@ -176,7 +180,7 @@ export default function AuthPage() {
     event.preventDefault();
     setNotice(null);
     if (mode === "login") {
-      loginMutation.mutate({ email, password, accountType });
+      loginMutation.mutate({ email: email.trim(), password });
       return;
     }
     signupMutation.mutate({ name, email, password, accountType });
@@ -224,6 +228,7 @@ export default function AuthPage() {
               </div>
               <h2 className="text-2xl font-black">{mode === "login" ? c.login : c.signup}</h2>
               <p className="mt-2 text-sm leading-6 text-[#71818b]">{c.subtitle}</p>
+              {mode === "login" && <p className="mt-3 rounded-xl bg-[#eef4f7] p-3 text-xs leading-6 text-[#486a7f]">{c.loginRoleHint}</p>}
             </div>
 
             <form onSubmit={submit} className="space-y-5">
@@ -245,13 +250,13 @@ export default function AuthPage() {
                 <input required type="password" minLength={8} maxLength={128} value={password} onChange={event => setPassword(event.target.value)} className="w-full rounded-xl border border-[#d5e0e4] bg-[#fbfcfa] px-4 py-3 outline-none transition focus:border-[#092d50] focus:ring-2 focus:ring-[#092d50]/10" autoComplete={mode === "login" ? "current-password" : "new-password"} dir="ltr" />
               </label>
 
-              <fieldset>
+              {mode === "signup" && <fieldset>
                 <legend className="mb-3 text-sm font-bold">{c.accountType}</legend>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <AccountChoice selected={accountType === "customer"} onClick={() => setAccountType("customer")} icon={<UserRound size={19} />} title={c.customer} description={c.customerHint} />
                   <AccountChoice selected={accountType === "employee"} onClick={() => setAccountType("employee")} icon={<BriefcaseBusiness size={19} />} title={c.employee} description={c.employeeHint} />
                 </div>
-              </fieldset>
+              </fieldset>}
 
               {errorMessage && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm leading-6 text-red-700">{errorMessage}</p>}
               {notice && <p className="flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm leading-6 text-emerald-800"><CheckCircle2 className="mt-0.5 shrink-0" size={17} />{notice}</p>}

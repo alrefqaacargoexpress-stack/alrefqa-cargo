@@ -207,7 +207,8 @@ export const appRouter = router({
           .object({
             email: z.string().email().max(320),
             password: z.string().min(8).max(128),
-            accountType: z.enum(["customer", "employee"]),
+            // Accepted for older clients only, never an authorization decision.
+            accountType: z.enum(["customer", "employee"]).optional(),
           })
           .strict()
       )
@@ -216,7 +217,6 @@ export const appRouter = router({
         const user = await dbQueries.getUserByEmail(email);
         const valid = Boolean(
           user?.passwordHash &&
-            user.accountType === input.accountType &&
             (await verifyPassword(input.password, user.passwordHash))
         );
         if (!valid || !user)
