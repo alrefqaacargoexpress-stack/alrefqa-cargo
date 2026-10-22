@@ -4,6 +4,7 @@ import {
   hashSessionToken,
   normalizeEmail,
   verifyPassword,
+  needsInitialEmailSetup,
 } from "./localAuth";
 
 describe("local email authentication", () => {
@@ -25,5 +26,11 @@ describe("local email authentication", () => {
     expect(hash).toHaveLength(64);
     expect(hash).toBe(hashSessionToken(token));
     expect(hash).not.toContain(token);
+  });
+  it("allows private setup for unsupported legacy credentials but preserves existing email accounts", async () => {
+    expect(needsInitialEmailSetup({ loginMethod: "google", passwordHash: "legacy-fixture" })).toBe(true);
+    expect(needsInitialEmailSetup({ loginMethod: "email", passwordHash: "invalid-fixture" })).toBe(false);
+    expect(needsInitialEmailSetup({ loginMethod: "google", passwordHash: await hashPassword("unit-test-only-password") })).toBe(false);
+    expect(needsInitialEmailSetup({ loginMethod: "google", passwordHash: "scrypt$salt$aa11" })).toBe(false);
   });
 });

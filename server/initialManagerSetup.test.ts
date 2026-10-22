@@ -80,9 +80,18 @@ describe("Approved one-time manager setup", () => {
   it("cannot enroll a non-root account or replace a configured password", async () => {
     memory.user.role = "user";
     await expect(completeInitialManagerSetup(ctx, { token: code, password: "secret-test-123" })).rejects.toThrow("initial_setup_unavailable");
-    memory.user.role = "admin"; memory.user.passwordHash = "already-configured";
+    memory.user.role = "admin"; memory.user.loginMethod = "email"; memory.user.passwordHash = "already-configured";
     await expect(completeInitialManagerSetup(ctx, { token: code, password: "secret-test-123" })).rejects.toThrow("initial_setup_unavailable");
     expect(memory.session).not.toHaveBeenCalled();
+  });
+  it("repairs unsupported legacy credentials only through the bound private capability", async () => {
+    memory.user.passwordHash = "legacy-fixture";
+    const issued = await issueInitialManagerSetup(await getDb(), 1, "manager@example.test");
+    expect(memory.user.passwordHash).toBe("legacy-fixture");
+    expect((await initialManagerSetupInfo(issued.token)).email).toBe("manager@example.test");
+    const result = await completeInitialManagerSetup(ctx, { token: issued.token, password: "new-unit-test-password" });
+    expect(result.user).toMatchObject({ id: 1, role: "admin", loginMethod: "email" });
+    await expect(initialManagerSetupInfo(issued.token)).rejects.toThrow("initial_setup_unavailable");
   });
   it("owner-only issuance uses 256-bit randomness, saves only a hash, and invalidates previous links", async () => {
     const issued = await issueInitialManagerSetup(await getDb(), 1, "manager@example.test");

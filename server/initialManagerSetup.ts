@@ -5,7 +5,7 @@ import { emailEnrollments, users, type User } from "../drizzle/schema";
 import { getDb } from "./db";
 import { rootAdmin } from "./branches";
 import { appendAudit } from "./audit";
-import { hashSessionToken, normalizeEmail } from "./localAuth";
+import { hashSessionToken, normalizeEmail, needsInitialEmailSetup } from "./localAuth";
 import { enrollGeneralManagerInTransaction, setEmailSession } from "./accountSecurity";
 import type { TrpcContext } from "./_core/context";
 
@@ -32,7 +32,7 @@ async function existingManager(db: any, userId: number, lock = false): Promise<U
   const query = db.select().from(users).where(eq(users.id, userId)).limit(1);
   const rows = lock ? await query.for("update") : await query;
   const user = rows[0] as User | undefined;
-  if (!user || !rootAdmin(user) || user.passwordHash || !user.email) throw unavailable();
+  if (!user || !rootAdmin(user) || !needsInitialEmailSetup(user) || !user.email) throw unavailable();
   return user;
 }
 

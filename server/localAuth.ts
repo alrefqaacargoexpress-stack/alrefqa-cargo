@@ -45,6 +45,14 @@ export async function hashPassword(password: string): Promise<string> {
   return `scrypt$${salt}$${derivedKey.toString("hex")}`;
 }
 
+/** Private owner-approved enrollment may repair unsupported legacy credentials, never an email account. */
+export function needsInitialEmailSetup(user: Pick<User, "passwordHash" | "loginMethod">): boolean {
+  if (!user.passwordHash) return true;
+  if (user.loginMethod === "email") return false;
+  // Preserve any hash verifiable by the current scrypt implementation, including older key lengths.
+  return !/^scrypt\$[^$]+\$(?:[a-f0-9]{2})+$/i.test(user.passwordHash);
+}
+
 export async function verifyPassword(
   password: string,
   encodedHash: string

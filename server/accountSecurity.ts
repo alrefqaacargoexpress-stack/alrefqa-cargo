@@ -10,7 +10,7 @@ import type { TrpcContext } from "./_core/context";
 import { COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
 import {
   createSessionToken, hashSessionToken, hashPassword, verifyPassword,
-  LOCAL_SESSION_COOKIE, normalizeEmail, publicUser,
+  LOCAL_SESSION_COOKIE, normalizeEmail, publicUser, needsInitialEmailSetup,
 } from "./localAuth";
 
 type SecurityContext = TrpcContext & { user: NonNullable<TrpcContext["user"]> };
@@ -60,7 +60,7 @@ async function securityAudit(tx: any, actor: User, target: User, action: string,
 /** The caller must lock this existing user before invoking the enrollment transaction. */
 export async function enrollGeneralManagerInTransaction(tx: any, current: User, password: string, action = "general_manager_email_enrollment") {
   if (!rootAdmin(current)) throw denied("general_manager_required");
-  if (current.passwordHash) throw invalid("email_login_already_configured");
+  if (!needsInitialEmailSetup(current)) throw invalid("email_login_already_configured");
   const email = await assertUniqueEmail(tx, current);
   const next = { ...current, email, loginMethod: "email", accountType: "employee" as const,
     passwordHash: await hashPassword(password), mustChangePassword: false };
