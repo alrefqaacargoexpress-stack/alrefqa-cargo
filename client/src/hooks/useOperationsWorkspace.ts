@@ -1,3 +1,4 @@
+import { protectOfficeShipmentFinance } from "@shared/officeFinanceVisibility";
 import { useEffect, useRef, useState } from "react";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { trpc } from "@/lib/trpc";
@@ -181,9 +182,9 @@ export function filterStateByAccess(
     accounts: state.accounts.filter(record =>
       accessAllowsRecord(role, offices, "account", record)
     ),
-    shipments: state.shipments.filter(record =>
-      accessAllowsRecord(role, offices, "shipment", record)
-    ),
+    shipments: state.shipments
+      .filter(record => accessAllowsRecord(role, offices, "shipment", record))
+      .map(record => protectOfficeShipmentFinance(record, role, offices)),
     invoices: state.invoices.filter(record =>
       accessAllowsRecord(role, offices, "invoice", record)
     ),

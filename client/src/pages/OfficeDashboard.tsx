@@ -205,10 +205,25 @@ export default function OfficeDashboard() {
             )}
             {financeVisible && (
               <Link
-                href={`/operations?tab=invoices&office=${officeId}`}
+                href={`/operations/billing?office=${officeId}`}
                 className="rounded-xl border border-[#cbd9de] px-3 py-2 font-bold text-[#2e6280]"
               >
                 {c.invoicesLink}
+              </Link>
+            )}
+            {financeVisible && (
+              <Link
+                href={`/operations/finance?office=${officeId}`}
+                className="rounded-xl border border-[#cbd9de] px-3 py-2 font-bold text-[#2e6280]"
+              >
+                {
+                  {
+                    ar: "المصروفات والديون",
+                    en: "Expenses & debts",
+                    zh: "支出与应收账款",
+                    tr: "Giderler ve borçlar",
+                  }[language]
+                }
               </Link>
             )}
             {workspace.role === "admin" && (

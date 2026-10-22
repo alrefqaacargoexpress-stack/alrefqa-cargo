@@ -47,6 +47,14 @@
     {
       "path": "/operations/offices",
       "title": "عمليات مكاتب الرفكة"
+    },
+    {
+      "path": "/operations/billing",
+      "title": "الفواتير والديون"
+    },
+    {
+      "path": "/operations/finance",
+      "title": "حسابات المكاتب والمصروفات"
     }
   ]
 }

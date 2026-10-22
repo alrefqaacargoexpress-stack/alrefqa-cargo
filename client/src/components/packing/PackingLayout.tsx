@@ -78,6 +78,16 @@ export default function PackingLayout({
     ...(workspace.role === "admin" || workspace.role === "accountant"
       ? [
           {
+            href: "/operations/billing",
+            label: null,
+            text: { ar: "الفواتير والديون", en: "Invoices & debts", zh: "发票与应收账款", tr: "Faturalar ve borçlar" }[language],
+          },
+          {
+            href: "/operations/finance",
+            label: null,
+            text: { ar: "حسابات المكاتب والمصروفات", en: "Office finance & expenses", zh: "办公室财务与支出", tr: "Ofis hesapları ve giderler" }[language],
+          },
+          {
             href: "/operations/settings",
             label: null,
             text: {

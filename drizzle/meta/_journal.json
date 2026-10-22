@@ -29,6 +29,13 @@
       "when": 1792612121488,
       "tag": "0003_youthful_outlaw_kid",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "5",
+      "when": 1792627257498,
+      "tag": "0004_silly_smasher",
+      "breakpoints": true
     }
   ]
 }

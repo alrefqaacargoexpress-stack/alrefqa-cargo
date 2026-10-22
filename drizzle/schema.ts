@@ -26,6 +26,8 @@ export const memberRoles = mysqlTable("member_roles", {
   role: mysqlEnum("role", appRoleValues).notNull(),
   /** null preserves legacy unrestricted membership; JSON is an explicit office allow-list. */
   offices: json("offices"),
+  /** Optional finance home office; null preserves legacy unrestricted membership. */
+  homeOffice: varchar("homeOffice", { length: 32 }),
   /** Optimistic-concurrency version for admin membership edits. */
   version: int("version").notNull().default(0),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
@@ -111,8 +113,51 @@ export const auditHeads = mysqlTable("audit_heads", {
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
+export const financeEntryKinds = [
+  "daily_expense", "monthly_expense", "shipment_cost", "shipment_revenue",
+  "invoice_revenue", "customer_debt", "debt_payment", "collection",
+] as const;
+export const financeCurrencies = ["MRU", "AED", "TRY", "CNY", "USD", "EUR"] as const;
+
+/** Immutable finance facts. The complete contract object is retained in data. */
+export const financeEntries = mysqlTable("finance_entries", {
+  id: varchar("id", { length: 128 }).primaryKey(),
+  kind: mysqlEnum("kind", financeEntryKinds).notNull(),
+  officeId: varchar("officeId", { length: 32 }).notNull(),
+  currency: mysqlEnum("currency", financeCurrencies).notNull(),
+  data: json("data").notNull(),
+  invoiceId: varchar("invoiceId", { length: 128 }),
+  shipmentId: varchar("shipmentId", { length: 128 }),
+  actorId: int("actorId").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, table => [
+  uniqueIndex("finance_entries_id_unique").on(table.id),
+]);
+
+/** Command receipts are actor-scoped and hash-bound, so replay with altered payload is rejected. */
+export const financeReceipts = mysqlTable("finance_receipts", {
+  id: int("id").autoincrement().primaryKey(),
+  actorId: int("actorId").notNull().references(() => users.id),
+  commandId: varchar("commandId", { length: 128 }).notNull(),
+  payloadHash: varchar("payloadHash", { length: 64 }).notNull(),
+  result: json("result").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, table => [uniqueIndex("finance_receipts_actor_command_unique").on(table.actorId, table.commandId)]);
+
+/** Claimed shipment goods prevent a good from being invoiced twice. */
+export const financeGoods = mysqlTable("finance_goods", {
+  id: int("id").autoincrement().primaryKey(),
+  shipmentId: varchar("shipmentId", { length: 128 }).notNull(),
+  goodsId: varchar("goodsId", { length: 128 }).notNull(),
+  invoiceId: varchar("invoiceId", { length: 128 }).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, table => [uniqueIndex("finance_goods_shipment_goods_unique").on(table.shipmentId, table.goodsId)]);
+
 export type MemberRole = typeof memberRoles.$inferSelect;
 export type RecordRow = typeof records.$inferSelect;
 export type SyncReceipt = typeof syncReceipts.$inferSelect;
 export type OfficeSettingsRow = typeof officeSettings.$inferSelect;
 export type AuditEventRow = typeof auditEvents.$inferSelect;
+export type FinanceEntryRow = typeof financeEntries.$inferSelect;
+export type FinanceReceiptRow = typeof financeReceipts.$inferSelect;
+export type FinanceGoodsRow = typeof financeGoods.$inferSelect;

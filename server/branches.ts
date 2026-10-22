@@ -1,3 +1,4 @@
+import { protectOfficeShipmentFinance } from "@shared/officeFinanceVisibility";
 import { createHash } from "node:crypto";
 import {
   mergeOfficeProfile,
@@ -45,6 +46,7 @@ import { actorFromUser } from "./tracking";
 export type OfficeScope = {
   role: AppRole | null;
   offices: OfficeId[] | null;
+  homeOffice: OfficeId | null;
   membershipVersion: number;
 };
 export const officeProfileUpdateSchema = officeProfileSchema.safeExtend({
@@ -92,6 +94,7 @@ export async function readOfficeScope(
     return {
       role: "admin",
       offices: null,
+      homeOffice: null,
       membershipVersion: membership?.version ?? 0,
     };
   const offices = membership?.offices;
@@ -103,6 +106,13 @@ export async function readOfficeScope(
         : Array.isArray(offices)
           ? (offices as OfficeId[])
           : [],
+    homeOffice:
+      membership?.homeOffice &&
+      officeIds.includes(membership.homeOffice as OfficeId)
+        ? (membership.homeOffice as OfficeId)
+        : Array.isArray(offices) && offices.length === 1
+          ? (offices[0] as OfficeId)
+          : null,
     membershipVersion: membership?.version ?? 0,
   };
 }
@@ -178,9 +188,7 @@ export function hideForOfficeScope<T extends EntityRecord>(
   offices: OfficeId[] | null
 ): T {
   if (role === "accountant" && offices !== null && "tracking" in record) {
-    const home = ownerOffice("shipment", record);
-    if (!home || !offices.includes(home))
-      return hideFinance(record, "staff") as T;
+    return protectOfficeShipmentFinance(record as Shipment, role, offices) as T;
   }
   return hideFinance(record, role);
 }
@@ -227,6 +235,10 @@ export function memberFromRow(row: any): OfficeMember {
       row.offices === null || row.offices === undefined
         ? null
         : (row.offices as OfficeId[]),
+    homeOffice:
+      row.homeOffice && officeIds.includes(row.homeOffice as OfficeId)
+        ? (row.homeOffice as OfficeId)
+        : null,
     version: row.version ?? 0,
   };
 }
@@ -241,6 +253,7 @@ export async function listMembers(db: any): Promise<OfficeMember[]> {
       email: users.email,
       memberRole: memberRoles.role,
       offices: memberRoles.offices,
+      homeOffice: memberRoles.homeOffice,
       version: memberRoles.version,
     })
     .from(users)
@@ -567,6 +580,11 @@ export async function assignRecord(
     if (row.version !== input.expectedVersion)
       throw branchConflict("record_version_conflict");
     const old = row.data as EntityRecord;
+    if (
+      input.entity === "invoice" &&
+      ((old as Invoice).finance || (old as Invoice).status === "دين")
+    )
+      throw branchForbidden("finance_invoice_office_immutable");
     const next = { ...old, officeId: input.officeId } as EntityRecord;
     const nextVersion = row.version + 1;
     await tx

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { packingSchema } from "./packing";
 import { journeySchema } from "./tracking";
 import { invoicePaymentSchema } from "./office";
+import { financialInvoiceSchema } from "./finance";
 import {
   shipmentDeletionSchema,
   shipmentActionSchema,
@@ -55,9 +56,10 @@ export const localInvoiceSchema = z
     id: text(128),
     account: text(240),
     amount: money,
-    status: z.enum(["مدفوعة", "بانتظار الدفع"]),
+    status: z.enum(["مدفوعة", "بانتظار الدفع", "دين"]),
     issuedAt: text(80),
     payment: invoicePaymentSchema.optional(),
+    finance: financialInvoiceSchema.optional(),
     ...meta,
   })
   .strict();

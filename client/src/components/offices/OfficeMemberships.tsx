@@ -20,6 +20,7 @@ type AssignableRole = (typeof assignableRoles)[number];
 type MemberDraft = {
   role: AssignableRole;
   offices: OfficeId[];
+  homeOffice: OfficeId | null;
   dirty: boolean;
   version: number;
 };
@@ -55,6 +56,29 @@ const roleLabels = {
   },
 } as const;
 
+const homeOfficeCopy = {
+  ar: {
+    label: "مكتب الموظف الأساسي",
+    none: "حسب المكتب الوحيد / غير محدد",
+    hint: "يُسند الدين إلى مكتب الموظف. يجب أن يكون المكتب ضمن المكاتب المحددة.",
+  },
+  en: {
+    label: "Employee home office",
+    none: "Use sole office / not specified",
+    hint: "Debt is assigned to the employee's office. It must be one of the checked offices.",
+  },
+  zh: {
+    label: "员工主办公室",
+    none: "按唯一办公室 / 未指定",
+    hint: "债务归属于员工办公室；该办公室必须在已勾选的办公室中。",
+  },
+  tr: {
+    label: "Çalışanın ana ofisi",
+    none: "Tek ofisi kullan / belirtilmemiş",
+    hint: "Borç çalışanın ofisine atanır. Seçili ofislerden biri olmalıdır.",
+  },
+} as const;
+
 type OfficeMembershipsProps = {
   members: OfficeMember[];
   canEdit: boolean;
@@ -64,6 +88,7 @@ type OfficeMembershipsProps = {
     userId: number;
     role: AssignableRole;
     offices: OfficeId[];
+    homeOffice: OfficeId | null;
     expectedVersion: number;
   }) => Promise<OfficeMember | null>;
 };
@@ -74,6 +99,10 @@ function draftFrom(member: OfficeMember): MemberDraft {
       ? (member.role as AssignableRole)
       : "staff",
     offices: member.offices ? [...member.offices] : [],
+    homeOffice:
+      member.homeOffice && (member.offices ?? []).includes(member.homeOffice)
+        ? member.homeOffice
+        : null,
     dirty: false,
     version: member.version,
   };
@@ -133,6 +162,7 @@ export default function OfficeMemberships({
         userId: member.userId,
         role: draft.role,
         offices: [...draft.offices],
+        homeOffice: draft.homeOffice,
         expectedVersion: draft.version,
       });
       if (result) {
@@ -234,6 +264,11 @@ export default function OfficeMemberships({
                               offices: event.target.checked
                                 ? [...draft.offices, officeId]
                                 : draft.offices.filter(id => id !== officeId),
+                              homeOffice:
+                                !event.target.checked &&
+                                draft.homeOffice === officeId
+                                  ? null
+                                  : draft.homeOffice,
                             })
                           }
                         />
@@ -246,6 +281,33 @@ export default function OfficeMemberships({
                   </p>
                 </fieldset>
               </div>
+              <label className="mt-4 grid max-w-xl gap-1.5 text-sm font-semibold text-[#243f52]">
+                <span>{homeOfficeCopy[language].label}</span>
+                <select
+                  className={packingInputClass}
+                  value={draft.homeOffice ?? ""}
+                  disabled={
+                    !canEdit || locked || pending || !draft.offices.length
+                  }
+                  onChange={event =>
+                    patch(member, {
+                      homeOffice: event.target.value
+                        ? (event.target.value as OfficeId)
+                        : null,
+                    })
+                  }
+                >
+                  <option value="">{homeOfficeCopy[language].none}</option>
+                  {draft.offices.map(officeId => (
+                    <option key={officeId} value={officeId}>
+                      {officeName(language, officeId)}
+                    </option>
+                  ))}
+                </select>
+                <span className="text-xs font-normal text-[#718088]">
+                  {homeOfficeCopy[language].hint}
+                </span>
+              </label>
               {canEdit && (
                 <div className="mt-4 flex justify-end">
                   <button

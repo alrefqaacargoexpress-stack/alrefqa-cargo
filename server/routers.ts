@@ -80,6 +80,12 @@ import {
   readProfile,
   updateProfile,
 } from "./branches";
+import {
+  financeSync,
+  financeSnapshot,
+  maybePostShipmentRevenue,
+} from "./finance";
+import { financeSyncInputSchema } from "@shared/finance";
 
 const unavailable = () =>
   new TRPCError({
@@ -235,12 +241,25 @@ export const appRouter = router({
               code: "CONFLICT",
               message: "member_version_conflict",
             });
+          const homeOffice =
+            input.homeOffice !== undefined
+              ? input.homeOffice
+              : (old?.homeOffice ?? null);
+          if (
+            homeOffice &&
+            !input.offices.some(office => office === homeOffice)
+          )
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: "home_office_outside_scope",
+            });
           const nextVersion = (old?.version ?? 0) + 1;
           if (!old)
             await tx.insert(memberRoles).values({
               userId: input.userId,
               role: input.role,
               offices: input.offices,
+              homeOffice,
               version: nextVersion,
             });
           else
@@ -249,6 +268,7 @@ export const appRouter = router({
               .set({
                 role: input.role,
                 offices: input.offices,
+                homeOffice,
                 version: nextVersion,
               })
               .where(eq(memberRoles.userId, input.userId));
@@ -258,11 +278,17 @@ export const appRouter = router({
             recordId: String(input.userId),
             action: "membership_assign",
             before: old
-              ? { role: old.role, offices: old.offices, version: old.version }
+              ? {
+                  role: old.role,
+                  offices: old.offices,
+                  homeOffice: old.homeOffice ?? null,
+                  version: old.version,
+                }
               : null,
             after: {
               role: input.role,
               offices: input.offices,
+              homeOffice,
               version: nextVersion,
             },
             beforeVersion: old?.version ?? 0,
@@ -275,6 +301,7 @@ export const appRouter = router({
             email: target[0].email ?? "",
             role: input.role,
             offices: input.offices,
+            homeOffice,
             version: nextVersion,
           };
         });
@@ -300,11 +327,48 @@ export const appRouter = router({
         );
       }),
   }),
+  finance: router({
+    snapshot: protectedProcedure
+      .input(z.object({ clientUserId: z.string().min(1).max(128) }).optional())
+      .query(async ({ ctx, input }) => {
+        if (input?.clientUserId && input.clientUserId !== String(ctx.user.id))
+          throw forbidden("Finance session changed");
+        const db = await dbOrThrow();
+        try {
+          return await db.transaction(async (tx: any) =>
+            financeSnapshot(tx, await readOfficeScope(tx, ctx.user))
+          );
+        } catch (error) {
+          if (error instanceof Error && error.message === "finance_forbidden")
+            throw forbidden("Finance access is restricted");
+          throw error;
+        }
+      }),
+    sync: protectedProcedure
+      .input(financeSyncInputSchema)
+      .mutation(async ({ ctx, input }) => {
+        if (input.clientUserId && input.clientUserId !== String(ctx.user.id))
+          throw forbidden("Finance session changed");
+        const db = await dbOrThrow();
+        try {
+          return await financeSync(db, ctx.user, input.commands);
+        } catch (error) {
+          if (error instanceof Error && error.message === "finance_forbidden")
+            throw forbidden("Finance access is restricted");
+          throw error;
+        }
+      }),
+  }),
   operations: router({
     access: protectedProcedure.query(async ({ ctx }) => {
       const db = await dbOrThrow();
       const scope = await readOfficeScope(db, ctx.user);
-      return { role: scope.role, userId: ctx.user.id, offices: scope.offices };
+      return {
+        role: scope.role,
+        userId: ctx.user.id,
+        offices: scope.offices,
+        homeOffice: scope.homeOffice,
+      };
     }),
 
     snapshot: protectedProcedure.query(async ({ ctx }) => {
@@ -586,6 +650,7 @@ export const appRouter = router({
                 )
               : null;
             let result: SyncResult;
+            let financeShipment: Shipment | null = null;
             if (!canWrite(role, change.entity))
               result = {
                 applied: [],
@@ -656,7 +721,7 @@ export const appRouter = router({
             else {
               let nextData: EntityRecord;
               try {
-                let candidate = change.data;
+                let candidate: EntityRecord = change.data as EntityRecord;
                 if (
                   change.entity === "invoice" &&
                   (candidate as any).payment &&
@@ -683,9 +748,11 @@ export const appRouter = router({
                     currentInvoice,
                     office
                   );
-                  candidate = payment
-                    ? ({ ...candidate, payment } as EntityRecord)
-                    : candidate;
+                  candidate = (
+                    payment
+                      ? ({ ...candidate, payment } as EntityRecord)
+                      : candidate
+                  ) as EntityRecord;
                 }
                 nextData = prepareRecordForWrite(
                   role,
@@ -693,6 +760,8 @@ export const appRouter = router({
                   current ? asEntityRecord(current.data) : null,
                   change.action
                 );
+                if (change.entity === "shipment")
+                  financeShipment = nextData as Shipment;
                 assertOfficeRecordWrite(
                   role,
                   scope.offices,
@@ -877,6 +946,14 @@ export const appRouter = router({
                 };
               }
             }
+            if (result.conflicts.length === 0 && financeShipment)
+              await maybePostShipmentRevenue(
+                tx,
+                financeShipment,
+                ctx.user,
+                undefined,
+                scope.role
+              );
             await tx
               .insert(syncReceipts)
               .values({ userId: ctx.user.id, changeId: change.id, result });
@@ -1094,6 +1171,13 @@ export const appRouter = router({
                 updatedBy: ctx.user.id,
               })
               .where(eq(records.id, row.id));
+            await maybePostShipmentRevenue(
+              tx,
+              mutation.shipment,
+              ctx.user,
+              undefined,
+              role
+            );
             await appendAudit(tx, {
               actor: actor(ctx.user, role),
               entity: "shipment",

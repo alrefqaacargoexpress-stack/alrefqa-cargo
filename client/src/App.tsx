@@ -16,6 +16,8 @@ const Reports = lazy(() => import("./pages/Reports"));
 const Tracking = lazy(() => import("./pages/Tracking"));
 const OfficeSettings = lazy(() => import("./pages/OfficeSettings"));
 const OfficeDashboard = lazy(() => import("./pages/OfficeDashboard"));
+const FinanceInvoices = lazy(() => import("./pages/FinanceInvoices"));
+const OfficeFinance = lazy(() => import("./pages/OfficeFinance"));
 function PageLoading() {
   const { language } = useLanguage();
   return (
@@ -45,6 +47,8 @@ function Router() {
       <Route path="/operations/tracking" component={Tracking} />
       <Route path="/operations/offices" component={OfficeDashboard} />
       <Route path="/operations/settings" component={OfficeSettings} />
+      <Route path="/operations/billing" component={FinanceInvoices} />
+      <Route path="/operations/finance" component={OfficeFinance} />
       <Route path="/operations" component={Operations} />
       <Route path="/admin" component={Operations} />
       <Route path="/404" component={NotFound} />

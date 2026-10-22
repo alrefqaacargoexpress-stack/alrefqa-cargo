@@ -2,6 +2,7 @@ import type { OfficeId } from "./branches";
 import type { PackingSession } from "./packing";
 import type { ShipmentJourney } from "./tracking";
 import type { InvoicePayment } from "./office";
+import type { FinancialInvoiceDetails } from "./finance";
 export const APP_ROLES = [
   "admin",
   "staff",
@@ -50,9 +51,10 @@ export type Invoice = {
   id: string;
   account: string;
   amount: number;
-  status: "مدفوعة" | "بانتظار الدفع";
+  status: "مدفوعة" | "بانتظار الدفع" | "دين";
   issuedAt: string;
   payment?: InvoicePayment;
+  finance?: FinancialInvoiceDetails;
   officeId?: OfficeId;
   scope?: DataScope;
   version?: number;

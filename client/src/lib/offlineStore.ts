@@ -28,7 +28,7 @@ function openLockDatabase():Promise<IDBDatabase> {
  });
  return lockDatabase;
 }
-async function underLock(key:string,write:()=>void):Promise<void> {
+export async function withWorkspaceLock(key:string,write:()=>void):Promise<void> {
  if(typeof navigator!=='undefined'&&navigator.locks){await navigator.locks.request(key,()=>write());return;}
  // IndexedDB read/write transactions serialize across tabs when Web Locks is unavailable.
  const db=await openLockDatabase();
@@ -42,7 +42,7 @@ async function underLock(key:string,write:()=>void):Promise<void> {
 export async function saveWorkspace(userId:number|string,value:Workspace):Promise<void> {
  const key=`${PREFIX}${userId}`;
  workspaceSchema.parse(value);
- await underLock(key,()=>{
+ await withWorkspaceLock(key,()=>{
   const store=storage();const raw=store.getItem(key);const current=raw?parseStored(raw):emptyWorkspace();
   if((current.revision??0)!==(value.revision??0))throw new Error('تغيرت هذه المساحة في تبويب آخر. لم نكتب فوقها. صدّر المسودة الحالية ثم أعد تحميل البيانات قبل الحفظ.');
   const revision=(current.revision??0)+1;

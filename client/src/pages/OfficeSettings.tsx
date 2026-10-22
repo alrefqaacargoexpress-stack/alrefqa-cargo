@@ -129,6 +129,7 @@ export default function OfficeSettings() {
     userId: number;
     role: AssignableRole;
     offices: OfficeId[];
+    homeOffice: OfficeId | null;
     expectedVersion: number;
   }): Promise<OfficeMember | null> => {
     if (workspace.role !== "admin" || !workspace.online) return null;

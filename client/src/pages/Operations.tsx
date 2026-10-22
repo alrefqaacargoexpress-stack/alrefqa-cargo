@@ -1207,11 +1207,18 @@ export default function Operations() {
               c={c}
               search={search}
               setSearch={setSearch}
-              onNew={() => {
-                setEditing(null);
-                setModal("invoice");
-              }}
+              onNew={() =>
+                setLocation(
+                  `/operations/billing${officeFilter !== "all" && officeFilter !== "unassigned" ? `?office=${officeFilter}` : ""}`
+                )
+              }
               onEdit={item => {
+                if (item.finance) {
+                  setLocation(
+                    `/operations/billing${item.officeId ? `?office=${item.officeId}` : ""}`
+                  );
+                  return;
+                }
                 setEditing(item);
                 setModal("invoice");
               }}
@@ -1673,7 +1680,9 @@ function Invoices({
   language: string;
 }) {
   const officeC = officeCopyFor(language);
-  const total = state.invoices.reduce((sum, item) => sum + item.amount, 0);
+  const total = state.invoices
+    .filter(item => !item.finance)
+    .reduce((sum, item) => sum + item.amount, 0);
   return (
     <section className="rounded-2xl border border-slate-200 bg-white">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 p-5">
@@ -1700,8 +1709,7 @@ function Invoices({
           icon={CircleDollarSign}
           label={c.awaitingPayment}
           value={String(
-            state.invoices.filter(item => item.status === "بانتظار الدفع")
-              .length
+            state.invoices.filter(item => item.status !== "مدفوعة").length
           )}
         />
         <Metric
@@ -1736,8 +1744,23 @@ function Invoices({
                 )}
               </div>
             </div>
-            <strong>{formatAmount(item.amount, "ar-MR")}</strong>
-            <StatusBadge label={statusLabel(item.status, c)} />
+            <strong>
+              {item.finance
+                ? `${new Intl.NumberFormat(language === "ar" ? "ar-MR-u-nu-latn" : language, { maximumFractionDigits: 2 }).format(item.amount)} ${item.finance.currency}`
+                : formatAmount(item.amount, "ar-MR")}
+            </strong>
+            <StatusBadge
+              label={
+                item.status === "دين"
+                  ? ({
+                      ar: "دين",
+                      en: "On account",
+                      zh: "赊账",
+                      tr: "Veresiye",
+                    }[language] ?? "دين")
+                  : statusLabel(item.status, c)
+              }
+            />
             <button
               disabled={!canEdit}
               onClick={() => onEdit(item)}

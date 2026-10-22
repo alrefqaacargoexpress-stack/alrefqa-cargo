@@ -140,11 +140,15 @@ export const officeMembershipSchema = z
     userId: z.number().int().positive(),
     offices: z.array(officeIdSchema).max(4),
     role: z.enum(assignedRoles),
+    homeOffice: officeIdSchema.nullable().optional(),
     expectedVersion: z.number().int().nonnegative(),
   })
   .strict()
   .refine(v => new Set(v.offices).size === v.offices.length, {
     message: "duplicate_office",
+  })
+  .refine(v => !v.homeOffice || v.offices.includes(v.homeOffice), {
+    message: "home_office_not_allowed",
   });
 export type OfficeMember = {
   userId: number;
@@ -152,6 +156,7 @@ export type OfficeMember = {
   email: string;
   role: AppRole | null;
   offices: OfficeId[] | null;
+  homeOffice?: OfficeId | null;
   version: number;
 };
 export function defaultOfficeProfile(

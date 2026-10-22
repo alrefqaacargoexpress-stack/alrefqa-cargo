@@ -24,6 +24,7 @@ import {
   type Shipment,
   type SyncResult,
 } from "@shared/operations";
+import { financialInvoiceSchema } from "@shared/finance";
 import {
   canReadOfficeRecord,
   canWriteOfficeRecord,
@@ -84,9 +85,10 @@ export const invoiceDataSchema = z
     id: boundedString(128),
     account: boundedString(240),
     amount: nonNegative,
-    status: z.enum(["مدفوعة", "بانتظار الدفع"]),
+    status: z.enum(["مدفوعة", "بانتظار الدفع", "دين"]),
     issuedAt: boundedString(80),
     payment: invoicePaymentSchema.optional(),
+    finance: financialInvoiceSchema.optional(),
     ...optionalMeta,
   })
   .strict();
@@ -234,6 +236,12 @@ export function prepareRecordForWrite(
   current: EntityRecord | null,
   action?: PendingChange["action"]
 ): EntityRecord {
+  // Financial invoices are immutable facts owned by the finance API. Generic
+  // operations sync must never create, edit, or erase them.
+  if ("issuedAt" in next && ("finance" in next || next.status === "دين"))
+    throw new Error("finance_command_required");
+  if (current && "issuedAt" in current && ("finance" in current || current.status === "دين"))
+    throw new Error("finance_command_required");
   let result = structuredClone(preserveStaffFinance(role, next, current));
   // Old clients omit officeId; omission must not clear a stored assignment.
   if (current?.officeId && !result.officeId)

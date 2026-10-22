@@ -1,0 +1,700 @@
+import { canBillShipmentCurrency } from "@shared/officeFinanceVisibility";
+import { createHash } from "node:crypto";
+import { and, eq } from "drizzle-orm";
+import { z } from "zod";
+import {
+  calculateFinanceInvoice,
+  type FinanceCommand,
+  type FinanceEntry,
+  type FinanceExpenseInput,
+  type FinanceSnapshot,
+  type FinanceSyncResult,
+  type FinancialInvoiceDetails,
+  financialInvoiceSchema,
+  financeEntrySchema,
+  financeSnapshotSchema,
+  employeeFinanceOffice,
+} from "@shared/finance";
+import { isShipmentSent } from "@shared/finance";
+import { sourceCurrency, packingTotals, goodsTotals } from "@shared/packing";
+import type { AppRole, Invoice, Shipment } from "@shared/operations";
+import type { OfficeId } from "@shared/branches";
+import { canReadOfficeRecord } from "@shared/branches";
+import { adjustedInvoiceTotal } from "@shared/finance";
+import { readOfficeScope } from "./branches";
+import { canonicalInvoicePayment, readOfficeSettings } from "./office";
+import { appendAudit } from "./audit";
+import {
+  records,
+  financeEntries,
+  financeReceipts,
+  financeGoods,
+} from "../drizzle/schema";
+import type { User } from "../drizzle/schema";
+
+export type FinanceScope = {
+  role: AppRole | null;
+  offices: OfficeId[] | null;
+  homeOffice?: OfficeId | null;
+};
+export type FinanceActor = Pick<User, "id" | "name">;
+export type FinanceSyncUser = Pick<User, "id" | "name" | "openId" | "role">;
+const invoiceId = (id: string) => `finance-invoice:${id}`;
+const entryId = (id: string, suffix: string) =>
+  `finance-entry:${hash({ id, suffix })}`;
+const isoNow = () => new Date().toISOString();
+function canonical(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+  return `{${Object.keys(value as Record<string, unknown>)
+    .sort()
+    .map(
+      k =>
+        `${JSON.stringify(k)}:${canonical((value as Record<string, unknown>)[k])}`
+    )
+    .join(",")}}`;
+}
+const hash = (value: unknown) =>
+  createHash("sha256").update(canonical(value)).digest("hex");
+function actorName(user: FinanceActor) {
+  return user.name?.trim() || `user-${user.id}`;
+}
+function assertFinance(scope: FinanceScope) {
+  if (scope.role !== "admin" && scope.role !== "accountant")
+    throw new Error("finance_forbidden");
+}
+function inScope(scope: FinanceScope, office: OfficeId) {
+  return (
+    scope.role === "admin" ||
+    scope.offices === null ||
+    Boolean(scope.offices?.includes(office))
+  );
+}
+function asEntry(value: unknown): FinanceEntry {
+  return financeEntrySchema.parse(value);
+}
+function entry(
+  kind: FinanceEntry["kind"],
+  id: string,
+  officeId: OfficeId,
+  currency: FinanceEntry["currency"],
+  amount: number,
+  description: string,
+  user: FinanceActor,
+  extra: Partial<FinanceEntry> = {}
+): FinanceEntry {
+  return asEntry({
+    id,
+    kind,
+    officeId,
+    currency,
+    amount,
+    date: (extra.date as string) ?? new Date().toISOString().slice(0, 10),
+    description,
+    actorId: user.id,
+    actorName: actorName(user),
+    recordedAt: isoNow(),
+    ...extra,
+  });
+}
+async function insertEntry(tx: any, value: FinanceEntry) {
+  await tx.insert(financeEntries).values({
+    id: value.id,
+    kind: value.kind,
+    officeId: value.officeId,
+    currency: value.currency,
+    data: value,
+    invoiceId: value.invoiceId ?? null,
+    shipmentId: value.shipmentId ?? null,
+    actorId: value.actorId,
+  });
+}
+function publicInvoice(row: any): Invoice {
+  const data = row.data as Invoice;
+  return { ...data, version: row.version, scope: "shared" };
+}
+async function accountFor(tx: any, customerId: string) {
+  const rows = await tx
+    .select()
+    .from(records)
+    .where(and(eq(records.entity, "account"), eq(records.recordId, customerId)))
+    .limit(1)
+    .for("update");
+  if (!rows[0]) throw new Error("customer_not_found");
+  return rows[0].data as { id: string; name: string; officeId?: OfficeId };
+}
+async function shipmentFor(tx: any, shipmentId: string) {
+  const rows = await tx
+    .select()
+    .from(records)
+    .where(
+      and(eq(records.entity, "shipment"), eq(records.recordId, shipmentId))
+    )
+    .limit(1)
+    .for("update");
+  if (!rows[0]) throw new Error("shipment_not_found");
+  return { row: rows[0], shipment: rows[0].data as Shipment };
+}
+function assertOffice(scope: FinanceScope, office: OfficeId) {
+  if (!inScope(scope, office)) throw new Error("finance_forbidden");
+}
+
+export async function financeSnapshot(
+  db: any,
+  scope: FinanceScope
+): Promise<FinanceSnapshot> {
+  assertFinance(scope);
+  const invoices: Invoice[] = [];
+  for (const row of await db
+    .select()
+    .from(records)
+    .where(eq(records.entity, "invoice"))) {
+    const invoice = row.data as Invoice;
+    if (!canReadOfficeRecord(scope.role, scope.offices, "invoice", invoice))
+      continue;
+    invoices.push(publicInvoice(row));
+  }
+  const entries: FinanceEntry[] = [];
+  for (const row of await db.select().from(financeEntries)) {
+    const parsed = asEntry(row.data);
+    if (inScope(scope, parsed.officeId)) entries.push(parsed);
+  }
+  const snapshot = {
+    invoices,
+    entries,
+    homeOffice:
+      scope.homeOffice ??
+      (scope.offices?.length === 1 ? scope.offices[0] : null),
+    offices: scope.offices,
+    lastReadAt: isoNow(),
+  } satisfies FinanceSnapshot;
+  return financeSnapshotSchema.parse(snapshot) as FinanceSnapshot;
+}
+
+function totalOf(finance: FinancialInvoiceDetails) {
+  return adjustedInvoiceTotal(finance.baseAmount, finance.adjustment);
+}
+function invoiceFinance(invoice: Invoice): FinancialInvoiceDetails {
+  if (!invoice.finance) throw new Error("finance_invoice_required");
+  return invoice.finance;
+}
+
+async function claimGoods(
+  tx: any,
+  shipmentId: string,
+  goods: { goodsId: string }[],
+  invoice: string
+) {
+  for (const good of goods) {
+    const old = await tx
+      .select()
+      .from(financeGoods)
+      .where(
+        and(
+          eq(financeGoods.shipmentId, shipmentId),
+          eq(financeGoods.goodsId, good.goodsId)
+        )
+      )
+      .limit(1)
+      .for("update");
+    if (old[0]) throw new Error("goods_already_billed");
+  }
+  for (const good of goods)
+    await tx
+      .insert(financeGoods)
+      .values({ shipmentId, goodsId: good.goodsId, invoiceId: invoice });
+}
+
+async function applyInvoice(
+  tx: any,
+  user: FinanceActor,
+  scope: FinanceScope,
+  command: Extract<FinanceCommand, { kind: "invoice" }>
+) {
+  const input = command.payload;
+  const financialOfficeId = employeeFinanceOffice(
+    scope,
+    input.employeeOfficeId
+  );
+  assertOffice(scope, financialOfficeId);
+  const account = await accountFor(tx, input.customerId);
+  if (
+    !canReadOfficeRecord(scope.role, scope.offices, "account", account as any)
+  )
+    throw new Error("finance_forbidden");
+  let shipment: Shipment | undefined;
+  let shipmentRow: any;
+  if (input.chargeKind === "shipping") {
+    const found = await shipmentFor(tx, input.shipmentId!);
+    shipment = found.shipment;
+    shipmentRow = found.row;
+    if (shipment.deleted || !shipment.packing)
+      throw new Error("shipment_unavailable");
+    if (!canReadOfficeRecord(scope.role, scope.offices, "shipment", shipment))
+      throw new Error("finance_forbidden");
+    if (
+      !canBillShipmentCurrency(
+        scope.role,
+        scope.offices,
+        shipment,
+        input.currency
+      )
+    )
+      throw new Error("finance_forbidden");
+  }
+  const calculated = calculateFinanceInvoice(input, shipment);
+  const total = calculated.totalAmount;
+  const paidAmount = input.paymentMode === "on_account" ? 0 : total;
+  const issuingOfficeId = input.issuingOfficeId;
+  assertOffice(scope, issuingOfficeId);
+  let payment = input.payment;
+  if (payment)
+    payment = canonicalInvoicePayment(
+      payment,
+      null,
+      await readOfficeSettings(tx)
+    );
+  const details = {
+    customerId: input.customerId,
+    chargeKind: input.chargeKind,
+    paymentMode: input.paymentMode,
+    issuingOfficeId,
+    financialOfficeId,
+    actorId: user.id,
+    actorName: actorName(user),
+    recordedAt: isoNow(),
+    currency: input.currency,
+    ...(input.shipmentId ? { shipmentId: input.shipmentId } : {}),
+    goods: calculated.goods,
+    baseAmount: calculated.baseAmount,
+    adjustment: input.adjustment,
+    paidAmount,
+  } satisfies FinancialInvoiceDetails;
+  const finance = financialInvoiceSchema.parse(details);
+  const invoice: Invoice = {
+    id: input.invoiceId,
+    account: account.name,
+    amount: total,
+    status: paidAmount >= total ? "مدفوعة" : "دين",
+    issuedAt: isoNow(),
+    officeId: financialOfficeId,
+    ...(payment ? { payment } : {}),
+    finance,
+  };
+  const existing = await tx
+    .select()
+    .from(records)
+    .where(and(eq(records.entity, "invoice"), eq(records.recordId, invoice.id)))
+    .limit(1)
+    .for("update");
+  if (existing[0]) throw new Error("invoice_exists");
+  if (shipment) await claimGoods(tx, shipment.id, calculated.goods, invoice.id);
+  const rows: FinanceEntry[] = [];
+  if (input.chargeKind === "general")
+    rows.push(
+      entry(
+        "invoice_revenue",
+        entryId(command.id, "revenue"),
+        financialOfficeId,
+        input.currency,
+        total,
+        "invoice_revenue",
+        user,
+        {
+          invoiceId: invoice.id,
+          customerId: account.id,
+          customerName: account.name,
+        }
+      )
+    );
+  if (input.paymentMode === "on_account")
+    rows.push(
+      entry(
+        "customer_debt",
+        entryId(command.id, "debt"),
+        financialOfficeId,
+        input.currency,
+        total,
+        "customer_debt",
+        user,
+        {
+          invoiceId: invoice.id,
+          customerId: account.id,
+          customerName: account.name,
+          ...(input.shipmentId ? { shipmentId: input.shipmentId } : {}),
+        }
+      )
+    );
+  else
+    rows.push(
+      entry(
+        "collection",
+        entryId(command.id, "collection"),
+        financialOfficeId,
+        input.currency,
+        total,
+        "collection",
+        user,
+        {
+          invoiceId: invoice.id,
+          customerId: account.id,
+          customerName: account.name,
+          ...(input.shipmentId ? { shipmentId: input.shipmentId } : {}),
+        }
+      )
+    );
+  await tx.insert(records).values({
+    entity: "invoice",
+    recordId: invoice.id,
+    version: 1,
+    data: invoice,
+    updatedBy: user.id,
+  });
+  for (const row of rows) await insertEntry(tx, row);
+  await appendAudit(tx, {
+    actor: { id: user.id, name: actorName(user), role: scope.role! },
+    entity: "invoice",
+    recordId: invoice.id,
+    action: "finance_invoice",
+    before: null,
+    after: invoice,
+    beforeVersion: 0,
+    afterVersion: 1,
+    requestKey: `finance:${command.id}`,
+  });
+  return {
+    invoice: { ...invoice, version: 1, scope: "shared" as const },
+    entries: rows,
+  };
+}
+
+async function applyExpense(
+  tx: any,
+  user: FinanceActor,
+  scope: FinanceScope,
+  command: Extract<FinanceCommand, { kind: "expense" }>
+) {
+  const input: FinanceExpenseInput = command.payload;
+  assertOffice(scope, input.officeId);
+  let shipment: Shipment | undefined;
+  if (input.category === "shipment_cost") {
+    const found = await shipmentFor(tx, input.shipmentId!);
+    shipment = found.shipment;
+    const owner = (shipment.officeId ?? shipment.packing?.source) as
+      | OfficeId
+      | undefined;
+    if (!owner || owner !== input.officeId)
+      throw new Error("shipment_office_mismatch");
+    if (shipment.deleted) throw new Error("shipment_deleted");
+  }
+  const duplicate = await tx
+    .select()
+    .from(financeEntries)
+    .where(eq(financeEntries.id, input.expenseId))
+    .limit(1)
+    .for("update");
+  if (duplicate[0]) throw new Error("expense_exists");
+  const row = entry(
+    input.category,
+    input.expenseId,
+    input.officeId,
+    input.currency,
+    input.amount,
+    input.description,
+    user,
+    {
+      date: input.date,
+      ...(input.shipmentId ? { shipmentId: input.shipmentId } : {}),
+    }
+  );
+  await insertEntry(tx, row);
+  const derived = shipment
+    ? await maybePostShipmentRevenue(
+        tx,
+        shipment,
+        user,
+        input.officeId,
+        scope.role
+      )
+    : [];
+  await appendAudit(tx, {
+    actor: { id: user.id, name: actorName(user), role: scope.role! },
+    entity: "finance_entry",
+    recordId: row.id,
+    action: "finance_expense",
+    before: null,
+    after: row,
+    requestKey: `finance:${command.id}`,
+  });
+  return { entries: [row, ...derived] };
+}
+
+async function applySettlement(
+  tx: any,
+  user: FinanceActor,
+  scope: FinanceScope,
+  command: Extract<FinanceCommand, { kind: "settlement" }>
+) {
+  const input = command.payload;
+  const rows = await tx
+    .select()
+    .from(records)
+    .where(
+      and(eq(records.entity, "invoice"), eq(records.recordId, input.invoiceId))
+    )
+    .limit(1)
+    .for("update");
+  if (!rows[0]) throw new Error("invoice_not_found");
+  const current = rows[0].data as Invoice;
+  const finance = invoiceFinance(current);
+  assertOffice(scope, finance.financialOfficeId);
+  if (rows[0].version !== input.expectedVersion)
+    throw new Error("version_conflict");
+  const outstandingCents =
+    Math.round(totalOf(finance) * 100) - Math.round(finance.paidAmount * 100);
+  const amountCents = Math.round(input.amount * 100);
+  if (amountCents > outstandingCents) throw new Error("overpayment");
+  let payment = input.payment;
+  if (payment)
+    payment = canonicalInvoicePayment(
+      payment,
+      current,
+      await readOfficeSettings(tx)
+    );
+  const nextFinance: FinancialInvoiceDetails = {
+    ...finance,
+    paidAmount: (Math.round(finance.paidAmount * 100) + amountCents) / 100,
+  };
+  const next: Invoice = {
+    ...current,
+    amount: totalOf(nextFinance),
+    status: nextFinance.paidAmount >= totalOf(nextFinance) ? "مدفوعة" : "دين",
+    finance: nextFinance,
+    ...(payment ? { payment } : {}),
+  };
+  const customer = await accountFor(tx, finance.customerId);
+  const ledger = entry(
+    "debt_payment",
+    entryId(command.id, "debt_payment"),
+    finance.financialOfficeId,
+    finance.currency,
+    input.amount,
+    input.description || "debt_payment",
+    user,
+    {
+      invoiceId: current.id,
+      customerId: finance.customerId,
+      customerName: customer.name,
+    }
+  );
+  await tx
+    .update(records)
+    .set({ version: rows[0].version + 1, data: next, updatedBy: user.id })
+    .where(eq(records.id, rows[0].id));
+  await insertEntry(tx, ledger);
+  await appendAudit(tx, {
+    actor: { id: user.id, name: actorName(user), role: scope.role! },
+    entity: "invoice",
+    recordId: current.id,
+    action: "finance_settlement",
+    before: current,
+    after: next,
+    beforeVersion: rows[0].version,
+    afterVersion: rows[0].version + 1,
+    requestKey: `finance:${command.id}`,
+  });
+  return {
+    invoice: {
+      ...next,
+      version: rows[0].version + 1,
+      scope: "shared" as const,
+    },
+    entries: [ledger],
+  };
+}
+
+export async function applyFinanceCommand(
+  tx: any,
+  user: FinanceActor,
+  scope: FinanceScope,
+  command: FinanceCommand
+) {
+  assertFinance(scope);
+  if (command.kind === "invoice") return applyInvoice(tx, user, scope, command);
+  if (command.kind === "expense") return applyExpense(tx, user, scope, command);
+  return applySettlement(tx, user, scope, command);
+}
+
+export async function financeSync(
+  db: any,
+  user: FinanceSyncUser,
+  scope: FinanceScope,
+  commands: FinanceCommand[]
+): Promise<FinanceSyncResult>;
+export async function financeSync(
+  db: any,
+  user: FinanceSyncUser,
+  commands: FinanceCommand[]
+): Promise<FinanceSyncResult>;
+export async function financeSync(
+  db: any,
+  user: FinanceSyncUser,
+  scopeOrCommands: FinanceScope | FinanceCommand[],
+  maybeCommands?: FinanceCommand[]
+): Promise<FinanceSyncResult> {
+  const fixedScope = Array.isArray(scopeOrCommands) ? null : scopeOrCommands;
+  const commands = Array.isArray(scopeOrCommands)
+    ? scopeOrCommands
+    : (maybeCommands ?? []);
+  const out: FinanceSyncResult = { applied: [], conflicts: [] };
+  for (const command of commands) {
+    const parsed = command;
+    const payloadHash = hash(parsed);
+    try {
+      // Deliberately one transaction per command: a rejected command must roll
+      // back its invoice, goods claim, ledger, audit, and receipt together,
+      // without rolling back an earlier acknowledged command.
+      const saved = await db.transaction(async (tx: any) => {
+        const scope = fixedScope ?? (await readOfficeScope(tx, user));
+        assertFinance(scope);
+        const prior = await tx
+          .select()
+          .from(financeReceipts)
+          .where(
+            and(
+              eq(financeReceipts.actorId, user.id),
+              eq(financeReceipts.commandId, parsed.id)
+            )
+          )
+          .limit(1)
+          .for("update");
+        if (prior[0]) {
+          if (prior[0].payloadHash !== payloadHash)
+            throw new Error("replay_payload_mismatch");
+          const replay = prior[0].result as any;
+          const replayInvoice = replay.invoice as Invoice | undefined;
+          const replayEntries = Array.isArray(replay.entries)
+            ? (replay.entries as FinanceEntry[])
+            : [];
+          if (
+            (replayInvoice &&
+              !canReadOfficeRecord(
+                scope.role,
+                scope.offices,
+                "invoice",
+                replayInvoice
+              )) ||
+            replayEntries.some(e => !inScope(scope, e.officeId))
+          )
+            throw new Error("finance_forbidden");
+          return replay;
+        }
+        const result = await applyFinanceCommand(tx, user, scope, parsed);
+        const resultWithId = { commandId: parsed.id, ...result };
+        await tx.insert(financeReceipts).values({
+          actorId: user.id,
+          commandId: parsed.id,
+          payloadHash,
+          result: resultWithId,
+        });
+        return resultWithId;
+      });
+      out.applied.push(saved as any);
+    } catch (error) {
+      out.conflicts.push({
+        commandId: parsed.id,
+        code:
+          error instanceof Error && /^[a-z][a-z0-9_]{0,80}$/.test(error.message)
+            ? error.message
+            : "finance_failed",
+      });
+    }
+  }
+  return out;
+}
+
+export async function maybePostShipmentRevenue(
+  tx: any,
+  shipment: Shipment,
+  user: FinanceActor,
+  officeOverride?: OfficeId,
+  actorRole?: AppRole | null
+) {
+  if (!isShipmentSent(shipment) || !shipment.packing || shipment.deleted)
+    return [];
+  const owner = (shipment.officeId ?? shipment.packing.source) as OfficeId;
+  if (officeOverride && officeOverride !== owner)
+    throw new Error("shipment_office_mismatch");
+  const office = owner;
+  // Costs remain separate ledger facts in their entered currencies, but gross
+  // shipment revenue is one derived credit per shipment. In particular, MRU
+  // and AED costs must not create two gross credits.
+  const costs = await tx
+    .select()
+    .from(financeEntries)
+    .where(
+      and(
+        eq(financeEntries.kind, "shipment_cost"),
+        eq(financeEntries.shipmentId, shipment.id)
+      )
+    )
+    .for("update");
+  if (!costs.length) return [];
+  const exists = await tx
+    .select()
+    .from(financeEntries)
+    .where(
+      and(
+        eq(financeEntries.kind, "shipment_revenue"),
+        eq(financeEntries.shipmentId, shipment.id)
+      )
+    )
+    .limit(1)
+    .for("update");
+  if (exists[0]) return [];
+  const currency: FinanceEntry["currency"] =
+    owner === "nouakchott" && shipment.packing.pricePerKgMRU !== undefined
+      ? "MRU"
+      : (sourceCurrency[shipment.packing.source] as FinanceEntry["currency"]);
+  const rate =
+    currency === "MRU"
+      ? shipment.packing.pricePerKgMRU
+      : shipment.packing.pricePerKg;
+  if (rate === undefined) return [];
+  const amount = goodsTotals(
+    shipment.packing.cartons.flatMap(c => c.goods),
+    rate
+  ).amount;
+  if (!amount && rate !== 0) return [];
+  const row = entry(
+    "shipment_revenue",
+    `shipment-revenue:${hash(shipment.id)}`,
+    office,
+    currency,
+    amount,
+    "gross_shipment_revenue",
+    user,
+    { shipmentId: shipment.id }
+  );
+  try {
+    await insertEntry(tx, row);
+  } catch {
+    const won = await tx
+      .select()
+      .from(financeEntries)
+      .where(eq(financeEntries.id, row.id))
+      .limit(1);
+    if (won[0]) return [];
+    throw new Error("shipment_revenue_insert_failed");
+  }
+  await appendAudit(tx, {
+    actor: { id: user.id, name: actorName(user), role: actorRole ?? "staff" },
+    entity: "finance_entry",
+    recordId: row.id,
+    action: "shipment_revenue_derived",
+    before: null,
+    after: row,
+    requestKey: `shipment-revenue:${row.id}`,
+  });
+  return [row];
+}
