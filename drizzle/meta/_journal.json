@@ -57,6 +57,27 @@
       "when": 1792684972781,
       "tag": "0007_dashing_husk",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "5",
+      "when": 1792688597115,
+      "tag": "0008_famous_penance",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "5",
+      "when": 1792689038988,
+      "tag": "0009_thin_supernaut",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "5",
+      "when": 1792689250531,
+      "tag": "0010_typical_scrambler",
+      "breakpoints": true
     }
   ]
 }

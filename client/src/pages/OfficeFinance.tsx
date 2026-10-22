@@ -139,7 +139,9 @@ export default function OfficeFinance() {
   );
   const [syncNotice, setSyncNotice] = useState("");
   const canUseFinance =
-    finance.role === "admin" || finance.role === "accountant";
+    finance.role === "admin" ||
+    finance.role === "accountant" ||
+    finance.role === "office_manager";
   const shipmentSource = finance.base.state.shipments;
 
   const sync = async () => {

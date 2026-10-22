@@ -74,7 +74,9 @@ export default function CustomerAccountForm({
     !allowed.length ||
     !base.saveRecord ||
     !base.userId ||
-    !["admin", "staff", "accountant"].includes(base.role ?? "")
+    !["admin", "office_manager", "staff", "accountant"].includes(
+      base.role ?? ""
+    )
   )
     return null;
   const saveRecord = base.saveRecord;

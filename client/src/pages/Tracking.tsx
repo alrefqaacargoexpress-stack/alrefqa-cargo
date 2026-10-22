@@ -383,7 +383,8 @@ export default function Tracking() {
               </Link>
             )}
             {(workspace.role === "admin" ||
-              workspace.role === "accountant") && (
+              workspace.role === "accountant" ||
+              workspace.role === "office_manager") && (
               <Link
                 href="/operations/settings"
                 className="rounded-xl px-3 py-2 hover:bg-slate-50"
@@ -787,7 +788,7 @@ function DetailView({
                   {c.editStage}
                 </button>
               )}
-              {canSupervise && (
+              {canSupervise && role !== "office_manager" && (
                 <button
                   onClick={() => onModal("transfer")}
                   className="rounded-xl border border-[#dce4e7] bg-white px-4 py-2 text-sm font-semibold"

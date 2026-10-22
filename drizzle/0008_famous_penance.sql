@@ -1,0 +1,2 @@
+ALTER TABLE `audit_events` MODIFY COLUMN `role` enum('admin','office_manager','staff','accountant','viewer','tracking_staff','supervisor') NOT NULL;--> statement-breakpoint
+ALTER TABLE `member_roles` MODIFY COLUMN `role` enum('admin','office_manager','staff','accountant','viewer','tracking_staff','supervisor') NOT NULL;

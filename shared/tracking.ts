@@ -105,13 +105,14 @@ export function canTrackingDetails(role: AppRole | null) {
 export function canNoteTracking(role: AppRole | null) {
   return (
     role === "admin" ||
+    role === "office_manager" ||
     role === "supervisor" ||
     role === "tracking_staff" ||
     role === "staff"
   );
 }
 export function canSuperviseTracking(role: AppRole | null) {
-  return role === "admin" || role === "supervisor";
+  return role === "admin" || role === "supervisor" || role === "office_manager";
 }
 export function canExportTracking(role: AppRole | null) {
   return canSuperviseTracking(role);

@@ -5,6 +5,7 @@ import type { InvoicePayment } from "./office";
 import type { FinancialInvoiceDetails } from "./finance";
 export const APP_ROLES = [
   "admin",
+  "office_manager",
   "staff",
   "accountant",
   "viewer",
@@ -94,10 +95,11 @@ export const EMPTY_STATE: LocalState = {
 export function canWrite(role: AppRole | null, entity: Entity): boolean {
   return (
     role === "admin" ||
+    role === "office_manager" ||
     (role === "staff" && entity !== "invoice") ||
     (role === "accountant" && entity !== "shipment")
   );
 }
 export function canViewFinance(role: AppRole | null): boolean {
-  return role === "admin" || role === "accountant";
+  return role === "admin" || role === "accountant" || role === "office_manager";
 }

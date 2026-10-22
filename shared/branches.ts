@@ -129,6 +129,7 @@ export const officeProfileUpdateSchema = officeProfileSchema.safeExtend({
   baseProfile: officeProfileSchema.optional(),
 });
 export const assignedRoles = [
+  "office_manager",
   "staff",
   "accountant",
   "viewer",
@@ -149,11 +150,19 @@ export const officeMembershipSchema = z
   })
   .refine(v => !v.homeOffice || v.offices.includes(v.homeOffice), {
     message: "home_office_not_allowed",
+  })
+  .refine(v => v.role !== "office_manager" || (
+    v.offices.length === 1 &&
+    ["dubai", "china", "turkey"].includes(v.offices[0]) &&
+    (!v.homeOffice || v.homeOffice === v.offices[0])
+  ), {
+    message: "office_manager_single_source_office_required",
   });
 export type OfficeMember = {
   userId: number;
   name: string;
   email: string;
+  accountType?: "customer" | "employee";
   isLocalAccount?: boolean;
   mustChangePassword?: boolean;
   role: AppRole | null;
@@ -225,6 +234,10 @@ export function canReadOfficeRecord(
   record: EntityRecord
 ) {
   if (!role) return false;
+  if (role === "office_manager") {
+    const home = ownerOffice(entity, record);
+    return Boolean(offices?.length === 1 && home && offices.includes(home));
+  }
   if (role === "admin" || offices === null) return true;
   return offices.some(id => recordBelongsToOffice(entity, record, id));
 }
@@ -235,6 +248,7 @@ export function canWriteOfficeRecord(
   record: EntityRecord
 ) {
   if (!role) return false;
+  if (role === "office_manager") return canReadOfficeRecord(role, offices, entity, record);
   if (role === "admin" || offices === null) return true;
   const home = ownerOffice(entity, record);
   return home !== null && offices.includes(home);

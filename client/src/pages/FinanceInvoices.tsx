@@ -315,7 +315,10 @@ export default function FinanceInvoices() {
     (workspace.offices === null || workspace.offices.includes(queryOffice))
       ? queryOffice
       : undefined;
-  const canSee = workspace.role === "admin" || workspace.role === "accountant";
+  const canSee =
+    workspace.role === "admin" ||
+    workspace.role === "accountant" ||
+    workspace.role === "office_manager";
   const shell = workspace.base;
   const officeRows = useMemo(
     () =>

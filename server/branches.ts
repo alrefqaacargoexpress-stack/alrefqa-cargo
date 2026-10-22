@@ -98,6 +98,17 @@ export async function readOfficeScope(
       membershipVersion: membership?.version ?? 0,
     };
   const offices = membership?.offices;
+  if (role === "office_manager") {
+    const valid = Array.isArray(offices) && offices.length === 1 &&
+      ["dubai", "turkey", "china"].includes(offices[0]) &&
+      (!membership?.homeOffice || membership.homeOffice === offices[0]);
+    return {
+      role: valid ? role : null,
+      offices: valid ? [offices[0] as OfficeId] : [],
+      homeOffice: valid ? offices[0] as OfficeId : null,
+      membershipVersion: membership?.version ?? 0,
+    };
+  }
   return {
     role,
     offices:
@@ -135,6 +146,7 @@ export function recordVisibleInOffice(
 ): boolean {
   if (!scope.role) return false;
   if (!officeIsAssigned(scope, officeId)) return false;
+  if (scope.role === "office_manager") return ownerOffice(entity, record) === officeId;
   if (entity === "shipment") {
     const shipment = record as Shipment;
     const offices = new Set<OfficeId>();
@@ -187,7 +199,7 @@ export function hideForOfficeScope<T extends EntityRecord>(
   role: AppRole | null,
   offices: OfficeId[] | null
 ): T {
-  if (role === "accountant" && offices !== null && "tracking" in record) {
+  if ((role === "accountant" || role === "office_manager") && offices !== null && "tracking" in record) {
     return protectOfficeShipmentFinance(record as Shipment, role, offices) as T;
   }
   return hideFinance(record, role);
@@ -230,6 +242,7 @@ export function memberFromRow(row: any): OfficeMember {
     userId: row.userId,
     name: row.name ?? "",
     email: row.email ?? "",
+    accountType: row.accountType,
     isLocalAccount: row.loginMethod === "email" && Boolean(row.passwordHash),
     mustChangePassword: Boolean(row.mustChangePassword),
     role,
@@ -253,6 +266,7 @@ export async function listMembers(db: any): Promise<OfficeMember[]> {
       rootRole: users.role,
       name: users.name,
       email: users.email,
+      accountType: users.accountType,
       loginMethod: users.loginMethod,
       passwordHash: users.passwordHash,
       mustChangePassword: users.mustChangePassword,
@@ -323,7 +337,8 @@ export async function dashboardData(
 export async function updateProfile(
   db: any,
   user: User,
-  input: z.infer<typeof officeProfileUpdateSchema>
+  input: z.infer<typeof officeProfileUpdateSchema>,
+  actorRole: AppRole = "admin"
 ) {
   return db.transaction(async (tx: any) => {
     const rows = await tx
@@ -391,7 +406,7 @@ export async function updateProfile(
       actor: {
         id: user.id,
         name: user.name?.trim() || `user-${user.id}`,
-        role: "admin",
+        role: actorRole,
       },
       entity: "office_profile",
       recordId: input.officeId,

@@ -50,7 +50,7 @@ export default function OfficeSettings() {
     workspace.role === "viewer" ||
     workspace.role === "tracking_staff";
   const canEditProfile =
-    workspace.role === "admin" &&
+    (workspace.role === "admin" || workspace.role === "office_manager") &&
     workspace.online &&
     !workspace.localOnly &&
     Boolean(workspace.userId);
@@ -66,6 +66,16 @@ export default function OfficeSettings() {
     retry: false,
     refetchOnWindowFocus: false,
   });
+  const managedOffice: OfficeId | null =
+    workspace.role === "office_manager"
+      ? (accessQuery.data?.homeOffice ?? workspace.offices?.[0] ?? null)
+      : null;
+  const selectableOffices: readonly OfficeId[] =
+    workspace.role === "office_manager"
+      ? managedOffice
+        ? [managedOffice]
+        : []
+      : officeIds;
   const membersQuery = trpc.branches.members.useQuery(undefined, {
     enabled:
       workspace.role === "admin" &&
@@ -88,13 +98,15 @@ export default function OfficeSettings() {
   const profile = profiles.find(item => item.officeId === selectedOffice);
 
   useEffect(() => {
-    if (
-      requestedOffice &&
-      officeIds.includes(requestedOffice) &&
-      requestedOffice !== selectedOffice
-    )
-      setSelectedOffice(requestedOffice);
-  }, [requestedOffice, selectedOffice]);
+    const requestedIsAllowed =
+      requestedOffice && selectableOffices.includes(requestedOffice);
+    const nextOffice = requestedIsAllowed
+      ? requestedOffice
+      : selectableOffices.includes(selectedOffice)
+        ? selectedOffice
+        : (selectableOffices[0] ?? "nouakchott");
+    if (nextOffice !== selectedOffice) setSelectedOffice(nextOffice);
+  }, [requestedOffice, selectableOffices, selectedOffice]);
   const chooseOffice = (officeId: OfficeId) => {
     setSelectedOffice(officeId);
     const path = location.split("?")[0] || "/operations/settings";
@@ -154,6 +166,7 @@ export default function OfficeSettings() {
   };
   const roleCanSeeProfile =
     workspace.role === "admin" ||
+    workspace.role === "office_manager" ||
     workspace.role === "accountant" ||
     workspace.role === "staff" ||
     workspace.role === "supervisor" ||
@@ -190,7 +203,7 @@ export default function OfficeSettings() {
                 value={selectedOffice}
                 onChange={event => chooseOffice(event.target.value as OfficeId)}
               >
-                {officeIds.map(officeId => (
+                {selectableOffices.map(officeId => (
                   <option key={officeId} value={officeId}>
                     {officeName(language, officeId)}
                   </option>

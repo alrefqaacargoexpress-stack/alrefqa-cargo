@@ -15,7 +15,7 @@ export const users = mysqlTable("users", {
   id: int("id").autoincrement().primaryKey(),
   openId: varchar("openId", { length: 64 }).notNull().unique(),
   name: text("name"),
-  email: varchar("email", { length: 320 }),
+  email: varchar("email", { length: 320 }).unique(),
   loginMethod: varchar("loginMethod", { length: 64 }),
   accountType: mysqlEnum("accountType", ["customer", "employee"])
     .default("employee")
@@ -46,9 +46,19 @@ export const localSessions = mysqlTable(
   table => [uniqueIndex("local_sessions_token_unique").on(table.tokenHash)]
 );
 
+/** Owner-approved one-time enrollment capabilities, never regular login sessions. */
+export const emailEnrollments = mysqlTable("email_enrollments", {
+  tokenHash: varchar("tokenHash", { length: 64 }).primaryKey(),
+  userId: int("userId").notNull().references(() => users.id),
+  expiresAt: timestamp("expiresAt").notNull(),
+  consumedAt: timestamp("consumedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
 export const recordEntityValues = ["account", "shipment", "invoice"] as const;
 export const appRoleValues = [
   "admin",
+  "office_manager",
   "staff",
   "accountant",
   "viewer",

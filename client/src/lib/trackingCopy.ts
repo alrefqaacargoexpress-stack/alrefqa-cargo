@@ -107,7 +107,8 @@ export const trackingCopy = {
     sourceCaution:
       "هذه خطة دبي–دكار–نواكشوط، ولا تُطبَّق على مصادر أخرى إلا بعد تأكيد مسارها.",
     roles: {
-      admin: "مدير",
+      admin: "مدير عام",
+      office_manager: "مدير مكتب",
       staff: "موظف",
       accountant: "محاسب",
       viewer: "مشاهد",
@@ -251,7 +252,8 @@ export const trackingCopy = {
     sourceCaution:
       "This is a Dubai–Dakar–Nouakchott plan; do not apply it to other sources until their route is confirmed.",
     roles: {
-      admin: "Admin",
+      admin: "General manager",
+      office_manager: "Office manager",
       staff: "Staff",
       accountant: "Accountant",
       viewer: "Viewer",
@@ -388,7 +390,8 @@ export const trackingCopy = {
     sourceCaution:
       "这是迪拜–达喀尔–努瓦克肖特计划；其他来源须先确认路线，不得直接套用。",
     roles: {
-      admin: "管理员",
+      admin: "总经理",
+      office_manager: "办公室经理",
       staff: "员工",
       accountant: "会计",
       viewer: "查看者",
@@ -533,7 +536,8 @@ export const trackingCopy = {
     sourceCaution:
       "Bu Dubai–Dakar–Nuakşot planıdır; diğer kaynaklara ancak rotaları doğrulandıktan sonra uygulanır.",
     roles: {
-      admin: "Yönetici",
+      admin: "Genel müdür",
+      office_manager: "Ofis müdürü",
       staff: "Personel",
       accountant: "Muhasebeci",
       viewer: "İzleyici",

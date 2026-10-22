@@ -72,6 +72,13 @@ export type BranchSettingsCopy = {
   rootAdminLocked: string;
   noMemberAccess: string;
   noOfficeAccess: string;
+  resetPasswordTitle: string;
+  resetPasswordHint: string;
+  temporaryPassword: string;
+  resetPasswordConfirm: string;
+  resetPasswordSuccess: string;
+  resetPasswordError: string;
+  resetPassword: string;
   publicProfile: string;
   paymentMethods: string;
   paymentMethodsNouakchottOnly: string;
@@ -170,6 +177,16 @@ const ar: BranchSettingsCopy = {
   rootAdminLocked: "لا يمكن تعديل المدير الجذري أو ترقيته من هذه الشاشة.",
   noMemberAccess: "إدارة العضويات متاحة للمدير فقط.",
   noOfficeAccess: "لا توجد صلاحية قراءة لهذا المكتب.",
+  resetPasswordTitle: "إعادة تعيين كلمة مرور الحساب",
+  resetPasswordHint:
+    "ضع كلمة مرور مؤقتة من 8 أحرف على الأقل. سيُطلب من الموظف تغييرها عند أول دخول.",
+  temporaryPassword: "كلمة مرور مؤقتة",
+  resetPasswordConfirm:
+    "سيتم إلغاء جلسات الموظف وتعيين كلمة مرور مؤقتة. متابعة لـ",
+  resetPasswordSuccess:
+    "تمت إعادة التعيين. سلّم كلمة المرور المؤقتة للموظف عبر وسيلة آمنة.",
+  resetPasswordError: "تعذر إعادة تعيين كلمة المرور.",
+  resetPassword: "إعادة التعيين",
   publicProfile: "معلومات الملف العام",
   paymentMethods: "طرق الدفع اليدوية",
   paymentMethodsNouakchottOnly: "تظهر طرق الدفع القديمة لمكتب نواكشوط فقط.",
@@ -274,6 +291,16 @@ const en: BranchSettingsCopy = {
   rootAdminLocked: "The root administrator cannot be changed or promoted here.",
   noMemberAccess: "Membership management is available to administrators only.",
   noOfficeAccess: "You do not have read access to this office.",
+  resetPasswordTitle: "Reset account password",
+  resetPasswordHint:
+    "Use a temporary password of at least 8 characters. The employee must change it on first sign-in.",
+  temporaryPassword: "Temporary password",
+  resetPasswordConfirm:
+    "The employee's sessions will be revoked and a temporary password set. Continue for",
+  resetPasswordSuccess:
+    "Password reset. Deliver the temporary password to the employee through a secure channel.",
+  resetPasswordError: "Could not reset the password.",
+  resetPassword: "Reset password",
   publicProfile: "Public profile information",
   paymentMethods: "Manual payment methods",
   paymentMethodsNouakchottOnly:
@@ -368,6 +395,13 @@ const zh: BranchSettingsCopy = {
   rootAdminLocked: "根管理员不能在此更改或提升。",
   noMemberAccess: "只有管理员可以管理成员权限。",
   noOfficeAccess: "您没有读取此办公室的权限。",
+  resetPasswordTitle: "重置账户密码",
+  resetPasswordHint: "请输入至少 8 个字符的临时密码；员工首次登录时必须更改。",
+  temporaryPassword: "临时密码",
+  resetPasswordConfirm: "员工会话将被撤销并设置临时密码。是否继续为",
+  resetPasswordSuccess: "密码已重置。请通过安全方式将临时密码交给员工。",
+  resetPasswordError: "无法重置密码。",
+  resetPassword: "重置密码",
   publicProfile: "公开资料信息",
   paymentMethods: "手工付款方式",
   paymentMethodsNouakchottOnly: "旧付款部分仅显示努瓦克肖特。",
@@ -475,6 +509,16 @@ const tr: BranchSettingsCopy = {
   rootAdminLocked: "Kök yönetici burada değiştirilemez veya yükseltilemez.",
   noMemberAccess: "Üyelik yönetimi yalnızca yöneticilere açıktır.",
   noOfficeAccess: "Bu ofisi okuma yetkiniz yok.",
+  resetPasswordTitle: "Hesap şifresini sıfırla",
+  resetPasswordHint:
+    "En az 8 karakterlik geçici bir şifre girin. Çalışan ilk girişte değiştirmelidir.",
+  temporaryPassword: "Geçici şifre",
+  resetPasswordConfirm:
+    "Çalışanın oturumları kapatılacak ve geçici şifre atanacak. Şu kişi için devam edilsin mi:",
+  resetPasswordSuccess:
+    "Şifre sıfırlandı. Geçici şifreyi çalışana güvenli bir kanaldan iletin.",
+  resetPasswordError: "Şifre sıfırlanamadı.",
+  resetPassword: "Şifreyi sıfırla",
   publicProfile: "Herkese açık profil bilgileri",
   paymentMethods: "Manuel ödeme yöntemleri",
   paymentMethodsNouakchottOnly:

@@ -25,9 +25,17 @@ const requireUser = t.middleware(async opts => {
   });
 });
 
-export const protectedProcedure = t.procedure.use(requireUser);
+export const authenticatedProcedure = t.procedure.use(requireUser);
+const requireReadyAccount = t.middleware(async ({ ctx, next }) => {
+  if (ctx.user?.mustChangePassword)
+    throw new TRPCError({ code: "FORBIDDEN", message: "password_change_required" });
+  if (ctx.user?.emailEnrollmentOnly)
+    throw new TRPCError({ code: "FORBIDDEN", message: "email_setup_required" });
+  return next();
+});
+export const protectedProcedure = authenticatedProcedure.use(requireReadyAccount);
 
-export const adminProcedure = t.procedure.use(
+export const adminProcedure = protectedProcedure.use(
   t.middleware(async opts => {
     const { ctx, next } = opts;
 

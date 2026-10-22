@@ -306,6 +306,7 @@ const common: PackingCopy = {
 export const packingCopy: Record<PackingLanguage, PackingCopy> = {
   ar: {
     ...common,
+    office_manager: "مدير مكتب",
     title: "تجميع الشحنات",
     shipments: "الشحنات",
     newShipment: "شحنة تجميع جديدة",
@@ -463,6 +464,7 @@ export const packingCopy: Record<PackingLanguage, PackingCopy> = {
   },
   en: {
     ...common,
+    office_manager: "Office manager",
     title: "Packing hub",
     shipments: "Shipments",
     newShipment: "New packing shipment",
@@ -620,6 +622,7 @@ export const packingCopy: Record<PackingLanguage, PackingCopy> = {
   },
   zh: {
     ...common,
+    office_manager: "办公室经理",
     title: "打包中心",
     shipments: "货运",
     newShipment: "新建打包货运",
@@ -774,6 +777,7 @@ export const packingCopy: Record<PackingLanguage, PackingCopy> = {
   },
   tr: {
     ...common,
+    office_manager: "Ofis müdürü",
     title: "Paketleme merkezi",
     shipments: "Gönderiler",
     newShipment: "Yeni paketleme gönderisi",

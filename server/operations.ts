@@ -267,7 +267,7 @@ export function prepareRecordForWrite(
       const deliveredCorrection =
         result.status === "مسلّمة" &&
         oldShipment.journey.stage === "arrived_office" &&
-        (role === "admin" || role === "staff");
+        (role === "admin" || role === "staff" || role === "office_manager");
       if (result.status !== oldShipment.status && !deliveredCorrection && result.status !== stageStatus)
         throw new Error("tracking_command_required");
     } else if (result.journey) {
@@ -406,7 +406,11 @@ export function assertOfficeRecordWrite(
   current: EntityRecord | null,
 ): void {
   if (!role) throw new Error("forbidden");
+  if (role === "office_manager" && (!offices || offices.length !== 1))
+    throw new Error("office_scope_forbidden");
   if (role === "admin" || offices === null) return;
+  if (role === "office_manager" && current && !canWriteOfficeRecord(role, offices, entity, current))
+    throw new Error("office_scope_forbidden");
   if (current?.officeId && record.officeId && current.officeId !== record.officeId)
     throw new Error("office_change_forbidden");
   const home = ownerOffice(entity, record);

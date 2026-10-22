@@ -130,7 +130,7 @@ export function operationActionsForRole(
   c: ActionCopy
 ): Action[] {
   const actions: Action[] = [];
-  if (["admin", "staff"].includes(role ?? "")) {
+  if (["admin", "office_manager", "staff"].includes(role ?? "")) {
     actions.push(
       {
         href: "/operations/shipments/new",
@@ -147,14 +147,20 @@ export function operationActionsForRole(
       icon: Users,
     });
   }
-  if (role === "admin" || role === "accountant") {
+  if (
+    role === "admin" ||
+    role === "office_manager" ||
+    role === "accountant"
+  ) {
     actions.push(
       { href: "/operations/billing", label: c.invoice, icon: FilePlus2 },
       { href: "/operations/finance", label: c.offices, icon: Landmark }
     );
   }
   if (
-    ["admin", "tracking_staff", "supervisor", "viewer"].includes(role ?? "")
+    ["admin", "office_manager", "tracking_staff", "supervisor", "viewer"].includes(
+      role ?? ""
+    )
   ) {
     actions.push({
       href: "/operations/tracking",
@@ -162,7 +168,7 @@ export function operationActionsForRole(
       icon: ClipboardList,
     });
   }
-  if (role === "admin") {
+  if (role === "admin" || role === "office_manager") {
     actions.push({
       href: "/operations/settings",
       label: c.settings,

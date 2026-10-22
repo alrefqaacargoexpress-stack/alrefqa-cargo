@@ -49,6 +49,10 @@ export default function OfficeDashboard() {
   const [officeId, setOfficeId] = useState<OfficeId>(() =>
     officeFromLocation(query)
   );
+  const officeOptions =
+    workspace.role === "office_manager"
+      ? (workspace.offices ?? []).filter(office => office !== "nouakchott")
+      : [...officeIds];
   const [notice, setNotice] = useState<string | null>(null);
   const [arrivalShipment, setArrivalShipment] = useState<Shipment | null>(null);
   const utils = trpc.useUtils();
@@ -56,7 +60,11 @@ export default function OfficeDashboard() {
     { officeId },
     {
       enabled: Boolean(
-        workspace.role && workspace.online && !workspace.localOnly
+        workspace.role &&
+          workspace.online &&
+          !workspace.localOnly &&
+          (workspace.role !== "office_manager" ||
+            officeOptions.includes(officeId))
       ),
       retry: false,
       refetchOnWindowFocus: false,
@@ -66,10 +74,15 @@ export default function OfficeDashboard() {
   const assignRecord = trpc.branches.assignRecord.useMutation();
 
   useEffect(() => {
-    setOfficeId(officeFromLocation(query));
-  }, [query]);
+    const requested = officeFromLocation(query);
+    const next = officeOptions.includes(requested)
+      ? requested
+      : officeOptions[0];
+    if (next && next !== officeId) setOfficeId(next);
+  }, [query, officeOptions.join(","), officeId]);
 
   const selectOffice = (next: OfficeId) => {
+    if (!officeOptions.includes(next)) return;
     setOfficeId(next);
     navigate(`/operations/offices?office=${encodeURIComponent(next)}`);
   };
@@ -177,7 +190,7 @@ export default function OfficeDashboard() {
               onChange={event => selectOffice(event.target.value as OfficeId)}
               className="min-h-11 rounded-xl border border-[#cbd9de] bg-white px-3 text-sm font-semibold"
             >
-              {officeIds.map(id => (
+              {officeOptions.map(id => (
                 <option key={id} value={id}>
                   {officeNames[language][id]}
                 </option>
@@ -193,7 +206,7 @@ export default function OfficeDashboard() {
                 {c.newShipment}
               </Link>
             )}
-            {["admin", "accountant", "staff"].includes(
+            {["admin", "office_manager", "accountant", "staff"].includes(
               workspace.role ?? ""
             ) && (
               <Link
@@ -226,7 +239,8 @@ export default function OfficeDashboard() {
                 }
               </Link>
             )}
-            {workspace.role === "admin" && (
+            {(workspace.role === "admin" ||
+              workspace.role === "office_manager") && (
               <Link
                 href={`/operations/settings?office=${officeId}`}
                 className="rounded-xl border border-[#cbd9de] px-3 py-2 font-bold text-[#2e6280]"

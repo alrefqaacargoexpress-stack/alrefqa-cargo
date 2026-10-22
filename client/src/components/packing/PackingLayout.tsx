@@ -54,7 +54,9 @@ export default function PackingLayout({
       text: c.shipments,
     },
     { href: "/operations/customers", label: null, text: c.customers },
-    ...(workspace.role === "admin" || workspace.role === "accountant"
+    ...(workspace.role === "admin" ||
+    workspace.role === "accountant" ||
+    workspace.role === "office_manager"
       ? [
           {
             href: "/operations/billing",
@@ -76,6 +78,16 @@ export default function PackingLayout({
         en: "Shipment tracking",
         zh: "货运追踪",
         tr: "Gönderi takibi",
+      }[language],
+    },
+    {
+      href: "/account/security",
+      label: <ShieldAlert size={15} />,
+      text: {
+        ar: "أمان الحساب",
+        en: "Account security",
+        zh: "账户安全",
+        tr: "Hesap güvenliği",
       }[language],
     },
   ];
@@ -362,7 +374,8 @@ export default function PackingLayout({
                 <Link href="/operations/reports" className={packingSecondaryClass}>
                   {c.reports}
                 </Link>
-                {workspace.role === "admin" && (
+                {(workspace.role === "admin" ||
+                  workspace.role === "office_manager") && (
                   <Link href="/operations/settings" className={packingSecondaryClass}>
                     {
                       {
@@ -374,7 +387,9 @@ export default function PackingLayout({
                     }
                   </Link>
                 )}
-                {(workspace.role === "admin" || workspace.role === "accountant") && (
+                {(workspace.role === "admin" ||
+                  workspace.role === "accountant" ||
+                  workspace.role === "office_manager") && (
                   <Link href="/operations/finance" className={packingSecondaryClass}>
                     {
                       {

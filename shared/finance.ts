@@ -293,7 +293,7 @@ export function emptyFinanceSnapshot(): FinanceSnapshot {
   };
 }
 export function canUseFinance(role: AppRole | null) {
-  return role === "admin" || role === "accountant";
+  return role === "admin" || role === "accountant" || role === "office_manager";
 }
 export function employeeFinanceOffice(
   scope: {

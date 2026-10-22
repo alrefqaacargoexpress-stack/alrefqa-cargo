@@ -225,8 +225,15 @@ export function useTrackingWorkspace(
         return false;
       }
       if (
-        (command.type === "plan" || command.type === "transfer") &&
+        command.type === "plan" &&
         !canSuperviseTracking(role)
+      ) {
+        setNotice("tracking_forbidden");
+        return false;
+      }
+      if (
+        command.type === "transfer" &&
+        (!canSuperviseTracking(role) || role === "office_manager")
       ) {
         setNotice("tracking_forbidden");
         return false;

@@ -273,9 +273,10 @@ class SDKServer {
         });
         return localUser;
       }
+      throw ForbiddenError("Invalid email session");
     }
 
-    // Manus OAuth session cookie (kept for existing employees and admins).
+    // An existing root session is accepted only for one-time email enrollment.
     let sessionToken = cookies.get(COOKIE_NAME);
     if (!sessionToken && req.path.startsWith("/api/scheduled/")) {
       const ticket = cookies.get("app_session_id");
@@ -310,36 +311,24 @@ class SDKServer {
 
     const sessionUserId = session.openId;
     const signedInAt = new Date();
-    let user = await db.getUserByOpenId(sessionUserId);
-
-    // If user not in DB, sync from OAuth server automatically
-    if (!user) {
-      try {
-        const userInfo = await this.getUserInfoWithJwt(sessionToken ?? "");
-        await db.upsertUser({
-          openId: userInfo.openId,
-          name: userInfo.name || null,
-          email: userInfo.email ?? null,
-          loginMethod: userInfo.loginMethod ?? userInfo.platform ?? null,
-          lastSignedIn: signedInAt,
-        });
-        user = await db.getUserByOpenId(userInfo.openId);
-      } catch (error) {
-        console.error("[Auth] Failed to sync user from OAuth:", error);
-        throw ForbiddenError("Failed to sync user info");
-      }
-    }
+    const user = await db.getUserByOpenId(sessionUserId);
 
     if (!user) {
       throw ForbiddenError("User not found");
     }
 
+    if (user.passwordHash || user.loginMethod === "email")
+      throw ForbiddenError("Email login required");
+    if (user.role !== "admin" && !(ENV.ownerOpenId && user.openId === ENV.ownerOpenId))
+      throw ForbiddenError("Email login required");
     await db.upsertUser({
       openId: user.openId,
       lastSignedIn: signedInAt,
     });
 
-    return user;
+    // Only an already authenticated general manager may enroll their existing
+    // account once. This session cannot read or write operational data.
+    return { ...user, emailEnrollmentOnly: true };
   }
 }
 
@@ -349,6 +338,7 @@ const CRON_OPEN_ID_PREFIX = "cron_";
 export type AuthenticatedUser = User & {
   taskUid?: string;
   isCron?: boolean;
+  emailEnrollmentOnly?: boolean;
 };
 
 function buildCronUser(

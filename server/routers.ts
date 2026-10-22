@@ -35,7 +35,9 @@ import {
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { ENV } from "./_core/env";
-import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
+import { publicProcedure, protectedProcedure, authenticatedProcedure, router } from "./_core/trpc";
+import { configureGeneralManagerEmail, changeAccountPassword, resetAccountPassword } from "./accountSecurity";
+import { initialManagerSetupInfo, completeInitialManagerSetup, INITIAL_SETUP_CODE_PATTERN } from "./initialManagerSetup";
 import { getDb } from "./db";
 import * as dbQueries from "./db";
 import {
@@ -45,6 +47,7 @@ import {
   hashSessionToken,
   LOCAL_SESSION_COOKIE,
   normalizeEmail,
+  isDuplicateEmailError,
   publicUser,
   verifyPassword,
 } from "./localAuth";
@@ -261,15 +264,21 @@ export const appRouter = router({
         const passwordHash = await hashPassword(input.password);
         const openId = createLocalOpenId();
         const db = await dbOrThrow();
-        await db.insert(users).values({
-          openId,
-          name: input.name.trim(),
-          email,
-          loginMethod: "email",
-          accountType: input.accountType,
-          passwordHash,
-          role: "user",
-        });
+        try {
+          await db.insert(users).values({
+            openId,
+            name: input.name.trim(),
+            email,
+            loginMethod: "email",
+            accountType: input.accountType,
+            passwordHash,
+            role: "user",
+          });
+        } catch (error) {
+          if (isDuplicateEmailError(error))
+            throw new TRPCError({ code: "CONFLICT", message: "email_registered" });
+          throw error;
+        }
         const user = await dbQueries.getUserByOpenId(openId);
         if (!user)
           throw new TRPCError({
@@ -289,21 +298,21 @@ export const appRouter = router({
         });
         return { user: publicUser(user), accountType: user.accountType, mustChangePassword: Boolean(user.mustChangePassword) };
       }),
-    changePassword: protectedProcedure
-      .input(z.object({ newPassword: z.string().min(8).max(128) }).strict())
-      .mutation(async ({ ctx, input }) => {
-        if (ctx.user.loginMethod !== "email" || !ctx.user.passwordHash)
-          throw new TRPCError({ code: "BAD_REQUEST", message: "email_account_required" });
-        const db = await dbOrThrow();
-        await db
-          .update(users)
-          .set({
-            passwordHash: await hashPassword(input.newPassword),
-            mustChangePassword: false,
-          })
-          .where(eq(users.id, ctx.user.id));
-        return { success: true } as const;
-      }),
+    initialSetupInfo: publicProcedure
+      .input(z.object({ token: z.string().regex(INITIAL_SETUP_CODE_PATTERN) }).strict())
+      .mutation(({ input }) => initialManagerSetupInfo(input.token)),
+    completeInitialSetup: publicProcedure
+      .input(z.object({ token: z.string().regex(INITIAL_SETUP_CODE_PATTERN), password: z.string().min(8).max(128) }).strict())
+      .mutation(({ ctx, input }) => completeInitialManagerSetup(ctx, input)),
+    configureEmail: authenticatedProcedure
+      .input(z.object({ password: z.string().min(8).max(128) }).strict())
+      .mutation(({ ctx, input }) => configureGeneralManagerEmail(ctx, input.password)),
+    changePassword: authenticatedProcedure
+      .input(z.object({
+        newPassword: z.string().min(8).max(128),
+        currentPassword: z.string().min(8).max(128).optional(),
+      }).strict())
+      .mutation(({ ctx, input }) => changeAccountPassword(ctx, input)),
     logout: publicProcedure.mutation(async ({ ctx }) => {
       const cookies = parseCookieHeader(ctx.req.headers.cookie ?? "");
       const localToken = cookies[LOCAL_SESSION_COOKIE];
@@ -323,16 +332,19 @@ export const appRouter = router({
       const scope = await readOfficeScope(db, ctx.user);
       if (!scope.role || scope.role === "viewer")
         throw branchForbidden("Branch profiles are restricted");
-      return publicProfiles(db);
+      const profiles = await publicProfiles(db);
+      return scope.role === "office_manager"
+        ? profiles.filter(profile => officeIsAssigned(scope, profile.officeId))
+        : profiles;
     }),
     update: protectedProcedure
       .input(officeProfileUpdateSchema)
       .mutation(async ({ ctx, input }) => {
         const db = await dbOrThrow();
         const scope = await readOfficeScope(db, ctx.user);
-        if (scope.role !== "admin")
-          throw branchForbidden("Only global admins may edit office profiles");
-        return updateProfile(db, ctx.user, input);
+        if (scope.role !== "admin" && !(scope.role === "office_manager" && officeIsAssigned(scope, input.officeId)))
+          throw branchForbidden("Office profile access is restricted");
+        return updateProfile(db, ctx.user, input, scope.role);
       }),
     dashboard: protectedProcedure
       .input(
@@ -377,6 +389,7 @@ export const appRouter = router({
               role: users.role,
               name: users.name,
               email: users.email,
+              accountType: users.accountType,
             })
             .from(users)
             .where(eq(users.id, input.userId))
@@ -391,6 +404,8 @@ export const appRouter = router({
             target[0].role === "admin"
           )
             throw branchForbidden("The root admin cannot be changed");
+          if (target[0].accountType !== "employee")
+            throw branchForbidden("Only employee accounts may receive office roles");
           const oldRows = await tx
             .select()
             .from(memberRoles)
@@ -403,7 +418,7 @@ export const appRouter = router({
               code: "CONFLICT",
               message: "member_version_conflict",
             });
-          const homeOffice =
+          const homeOffice = input.role === "office_manager" ? input.offices[0] :
             input.homeOffice !== undefined
               ? input.homeOffice
               : (old?.homeOffice ?? null);
@@ -626,56 +641,11 @@ export const appRouter = router({
     }),
 
     resetPassword: protectedProcedure
-      .input(
-        z.object({
-          userId: z.number().int().positive(),
-          temporaryPassword: z.string().min(8).max(128),
-        }).strict()
-      )
-      .mutation(async ({ ctx, input }) => {
-        const actorRole = await effectiveRole(ctx.user);
-        if (actorRole !== "admin") throw forbidden();
-        const db = await dbOrThrow();
-        return db.transaction(async (tx: any) => {
-          const rows = await tx
-            .select({
-              id: users.id,
-              openId: users.openId,
-              name: users.name,
-              email: users.email,
-              role: users.role,
-              loginMethod: users.loginMethod,
-            })
-            .from(users)
-            .where(eq(users.id, input.userId))
-            .limit(1);
-          const target = rows[0];
-          if (!target) throw new TRPCError({ code: "NOT_FOUND" });
-          if (target.role === "admin" || (ENV.ownerOpenId && target.openId === ENV.ownerOpenId))
-            throw forbidden("The root admin password cannot be reset here");
-          if (target.loginMethod !== "email" || !target.email)
-            throw new TRPCError({ code: "BAD_REQUEST", message: "email_account_required" });
-          await tx
-            .update(users)
-            .set({ passwordHash: await hashPassword(input.temporaryPassword), mustChangePassword: true })
-            .where(eq(users.id, input.userId));
-          await tx
-            .delete(localSessions)
-            .where(eq(localSessions.userId, input.userId));
-          await appendAudit(tx, {
-            actor: actor(ctx.user, "admin"),
-            entity: "user_account",
-            recordId: String(input.userId),
-            action: "password_reset_by_admin",
-            before: { email: target.email },
-            after: { email: target.email, mustChangePassword: true },
-            beforeVersion: 0,
-            afterVersion: 1,
-            requestKey: `password-reset:${input.userId}:${Date.now()}`,
-          });
-          return { userId: target.id, name: target.name ?? "", email: target.email, mustChangePassword: true };
-        });
-      }),
+      .input(z.object({
+        userId: z.number().int().positive(),
+        temporaryPassword: z.string().min(8).max(128),
+      }).strict())
+      .mutation(({ ctx, input }) => resetAccountPassword(ctx, input.userId, input.temporaryPassword)),
 
     setRole: protectedProcedure
       .input(setRoleInputSchema)
@@ -1242,6 +1212,8 @@ export const appRouter = router({
         if (!role || !canTrackingDetails(role))
           throw forbidden("Tracking command is not available to viewers");
         const request = parseTrackingRequest(input);
+        if (role === "office_manager" && request.command.type === "transfer")
+          throw forbidden("Only the general manager may transfer shipments for this role");
         const db = await dbOrThrow();
         const scope = await readOfficeScope(db, ctx.user);
         try {
@@ -1434,7 +1406,7 @@ export const appRouter = router({
       )
       .query(async ({ ctx, input }) => {
         const role = await effectiveRole(ctx.user);
-        if (role !== "admin" && role !== "supervisor")
+        if (role !== "admin" && role !== "supervisor" && role !== "office_manager")
           throw forbidden("Audit access is restricted");
         const db = await dbOrThrow();
         if (role !== "admin") {
@@ -1478,7 +1450,7 @@ export const appRouter = router({
       )
       .query(async ({ ctx, input }) => {
         const role = await effectiveRole(ctx.user);
-        if (role !== "admin" && role !== "supervisor")
+        if (role !== "admin" && role !== "supervisor" && role !== "office_manager")
           throw forbidden("Audit access is restricted");
         const db = await dbOrThrow();
         if (role !== "admin") {

@@ -11,7 +11,7 @@ export function canBillShipmentCurrency(
   shipment: Shipment,
   currency: string
 ): boolean {
-  if (role !== "admin" && role !== "accountant") return false;
+  if (role !== "admin" && role !== "accountant" && role !== "office_manager") return false;
   if (!canReadOfficeRecord(role, offices, "shipment", shipment)) return false;
   const source = ownerOffice("shipment", shipment);
   if (
@@ -33,7 +33,7 @@ export function protectOfficeShipmentFinance(
 ): Shipment {
   const source = ownerOffice("shipment", shipment);
   if (
-    role !== "accountant" ||
+    (role !== "accountant" && role !== "office_manager") ||
     offices === null ||
     (source && offices.includes(source))
   )

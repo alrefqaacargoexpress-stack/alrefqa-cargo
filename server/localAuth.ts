@@ -17,6 +17,16 @@ export function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
 }
 
+export function isDuplicateEmailError(error: unknown): boolean {
+  let current: unknown = error;
+  for (let depth = 0; depth < 4 && current && typeof current === "object"; depth++) {
+    const value = current as { code?: string; errno?: number; cause?: unknown };
+    if (value.code === "ER_DUP_ENTRY" || value.errno === 1062) return true;
+    current = value.cause;
+  }
+  return false;
+}
+
 export function createLocalOpenId(): string {
   return `local_${randomBytes(24).toString("hex")}`;
 }
@@ -49,7 +59,7 @@ export async function verifyPassword(
   );
 }
 
-export function publicUser(user: User): Omit<User, "passwordHash"> {
+export function publicUser<T extends User>(user: T): Omit<T, "passwordHash"> {
   const { passwordHash: _passwordHash, ...safeUser } = user;
   return safeUser;
 }

@@ -61,7 +61,9 @@ function actorName(user: FinanceActor) {
   return user.name?.trim() || `user-${user.id}`;
 }
 function assertFinance(scope: FinanceScope) {
-  if (scope.role !== "admin" && scope.role !== "accountant")
+  if (scope.role !== "admin" && scope.role !== "accountant" && scope.role !== "office_manager")
+    throw new Error("finance_forbidden");
+  if (scope.role === "office_manager" && (!scope.offices || scope.offices.length !== 1))
     throw new Error("finance_forbidden");
 }
 function inScope(scope: FinanceScope, office: OfficeId) {

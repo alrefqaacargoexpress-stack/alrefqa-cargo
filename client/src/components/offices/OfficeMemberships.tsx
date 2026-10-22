@@ -11,6 +11,7 @@ import {
 } from "@/components/packing/PackingPrimitives";
 
 const assignableRoles = [
+  "office_manager",
   "staff",
   "accountant",
   "viewer",
@@ -18,6 +19,7 @@ const assignableRoles = [
   "supervisor",
 ] as const;
 type AssignableRole = (typeof assignableRoles)[number];
+const officeManagerOfficeIds: OfficeId[] = ["dubai", "china", "turkey"];
 type MemberDraft = {
   role: AssignableRole;
   offices: OfficeId[];
@@ -28,6 +30,7 @@ type MemberDraft = {
 
 const roleLabels = {
   ar: {
+    office_manager: "مدير مكتب",
     staff: "موظف مستودع",
     accountant: "موظف حسابات",
     viewer: "مشاهد",
@@ -35,6 +38,7 @@ const roleLabels = {
     supervisor: "مشرف",
   },
   en: {
+    office_manager: "Office manager",
     staff: "Warehouse employee",
     accountant: "Accounts employee",
     viewer: "Viewer",
@@ -42,6 +46,7 @@ const roleLabels = {
     supervisor: "Supervisor",
   },
   zh: {
+    office_manager: "办公室经理",
     staff: "仓库员工",
     accountant: "会计员工",
     viewer: "查看者",
@@ -49,6 +54,7 @@ const roleLabels = {
     supervisor: "主管",
   },
   tr: {
+    office_manager: "Ofis müdürü",
     staff: "Depo çalışanı",
     accountant: "Muhasebe çalışanı",
     viewer: "Görüntüleyici",
@@ -103,14 +109,22 @@ type OfficeMembershipsProps = {
 };
 
 function draftFrom(member: OfficeMember): MemberDraft {
+  const role = assignableRoles.includes(member.role as AssignableRole)
+    ? (member.role as AssignableRole)
+    : "staff";
+  const offices = member.offices ? [...member.offices] : [];
+  const normalizedOffices =
+    role === "office_manager"
+      ? offices.filter(office => officeManagerOfficeIds.includes(office)).slice(0, 1)
+      : offices;
   return {
-    role: assignableRoles.includes(member.role as AssignableRole)
-      ? (member.role as AssignableRole)
-      : "staff",
-    offices: member.offices ? [...member.offices] : [],
+    role,
+    offices: normalizedOffices,
     homeOffice:
-      member.homeOffice && (member.offices ?? []).includes(member.homeOffice)
+      member.homeOffice && normalizedOffices.includes(member.homeOffice)
         ? member.homeOffice
+        : role === "office_manager"
+          ? (normalizedOffices[0] ?? null)
         : null,
     dirty: false,
     version: member.version,
@@ -162,8 +176,14 @@ export default function OfficeMemberships({
       setError(c.onlineRequired);
       return;
     }
+    const validOfficeManagerScope =
+      draft.role !== "office_manager" ||
+      (draft.offices.length === 1 &&
+        officeManagerOfficeIds.includes(draft.offices[0]) &&
+        draft.homeOffice === draft.offices[0]);
     if (
       !draft.offices.length ||
+      !validOfficeManagerScope ||
       (draft.role === "accountant" &&
         draft.offices.length > 1 &&
         !draft.homeOffice)
@@ -252,11 +272,25 @@ export default function OfficeMemberships({
                     className={packingInputClass}
                     value={draft.role}
                     disabled={!canEdit || locked || pending}
-                    onChange={event =>
+                    onChange={event => {
+                      const nextRole = event.target.value as AssignableRole;
+                      const office = draft.offices.find(id =>
+                        officeManagerOfficeIds.includes(id)
+                      );
                       patch(member, {
-                        role: event.target.value as AssignableRole,
-                      })
-                    }
+                        role: nextRole,
+                        offices:
+                          nextRole === "office_manager"
+                            ? office
+                              ? [office]
+                              : []
+                            : draft.offices,
+                        homeOffice:
+                          nextRole === "office_manager"
+                            ? (office ?? null)
+                            : draft.homeOffice,
+                      });
+                    }}
                   >
                     {assignableRoles.map(role => (
                       <option key={role} value={role}>
@@ -270,25 +304,35 @@ export default function OfficeMemberships({
                     {c.offices}
                   </legend>
                   <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                    {officeIds.map(officeId => (
+                    {(draft.role === "office_manager"
+                      ? officeManagerOfficeIds
+                      : officeIds
+                    ).map(officeId => (
                       <label
                         key={officeId}
                         className="flex items-center gap-2 rounded-lg border border-[#e5ecee] bg-white px-3 py-2 text-sm"
                       >
                         <input
-                          type="checkbox"
+                          type={
+                            draft.role === "office_manager" ? "radio" : "checkbox"
+                          }
                           checked={draft.offices.includes(officeId)}
                           disabled={!canEdit || locked || pending}
                           onChange={event =>
                             patch(member, {
-                              offices: event.target.checked
-                                ? [...draft.offices, officeId]
-                                : draft.offices.filter(id => id !== officeId),
+                              offices:
+                                draft.role === "office_manager"
+                                  ? [officeId]
+                                  : event.target.checked
+                                    ? [...draft.offices, officeId]
+                                    : draft.offices.filter(id => id !== officeId),
                               homeOffice:
-                                !event.target.checked &&
-                                draft.homeOffice === officeId
-                                  ? null
-                                  : draft.homeOffice,
+                                draft.role === "office_manager"
+                                  ? officeId
+                                  : !event.target.checked &&
+                                      draft.homeOffice === officeId
+                                    ? null
+                                    : draft.homeOffice,
                             })
                           }
                         />
@@ -317,7 +361,9 @@ export default function OfficeMemberships({
                     })
                   }
                 >
-                  <option value="">{homeOfficeCopy[language].none}</option>
+                  {draft.role !== "office_manager" && (
+                    <option value="">{homeOfficeCopy[language].none}</option>
+                  )}
                   {draft.offices.map(officeId => (
                     <option key={officeId} value={officeId}>
                       {officeName(language, officeId)}
@@ -338,6 +384,9 @@ export default function OfficeMemberships({
                       pending ||
                       !online ||
                       !draft.offices.length ||
+                      (draft.role === "office_manager" &&
+                        (draft.offices.length !== 1 ||
+                          draft.homeOffice !== draft.offices[0])) ||
                       (draft.role === "accountant" &&
                         draft.offices.length > 1 &&
                         !draft.homeOffice)
@@ -348,10 +397,14 @@ export default function OfficeMemberships({
                   </button>
                 </div>
               )}
-              {canEdit && !locked && member.isLocalAccount && (
+              {canEdit && !locked && member.accountType === "employee" && (member.isLocalAccount || Boolean(member.email)) && (
                 <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3">
-                  <p className="text-sm font-bold text-amber-950">إعادة تعيين كلمة مرور الحساب</p>
-                  <p className="mt-1 text-xs leading-5 text-amber-900">ضع كلمة مرور مؤقتة من 8 أحرف على الأقل. سيُطلب من الموظف تغييرها عند أول دخول.</p>
+                  <p className="text-sm font-bold text-amber-950">
+                    {c.resetPasswordTitle}
+                  </p>
+                  <p className="mt-1 text-xs leading-5 text-amber-900">
+                    {c.resetPasswordHint}
+                  </p>
                   <div className="mt-3 flex flex-col gap-2 sm:flex-row">
                     <input
                       type="password"
@@ -359,7 +412,7 @@ export default function OfficeMemberships({
                       maxLength={128}
                       value={temporaryPasswords[member.userId] ?? ""}
                       onChange={event => setTemporaryPasswords(current => ({ ...current, [member.userId]: event.target.value }))}
-                      placeholder="كلمة مرور مؤقتة"
+                      placeholder={c.temporaryPassword}
                       className={packingInputClass}
                       dir="ltr"
                     />
@@ -371,15 +424,20 @@ export default function OfficeMemberships({
                         setError("");
                         setNotice("");
                         const password = temporaryPasswords[member.userId] ?? "";
-                        if (!window.confirm(`سيتم إلغاء جلسات ${member.name || member.email} وتعيين كلمة مرور مؤقتة. متابعة؟`)) return;
+                        if (
+                          !window.confirm(
+                            `${c.resetPasswordConfirm} ${member.name || member.email}?`
+                          )
+                        )
+                          return;
                         const ok = await onResetPassword({ userId: member.userId, temporaryPassword: password });
                         if (ok) {
                           setTemporaryPasswords(current => ({ ...current, [member.userId]: "" }));
-                          setNotice("تمت إعادة التعيين. سلّم كلمة المرور المؤقتة للموظف عبر وسيلة آمنة.");
-                        } else setError("تعذر إعادة تعيين كلمة المرور.");
+                          setNotice(c.resetPasswordSuccess);
+                        } else setError(c.resetPasswordError);
                       }}
                     >
-                      إعادة التعيين
+                      {c.resetPassword}
                     </button>
                   </div>
                 </div>

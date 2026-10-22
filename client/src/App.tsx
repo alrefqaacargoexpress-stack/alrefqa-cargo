@@ -1,13 +1,15 @@
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/NotFound";
-import { Route, Switch } from "wouter";
+import { Route, Switch, useLocation } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import Home from "./pages/Home";
 import { LanguageProvider, useLanguage } from "./contexts/LanguageContext";
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import AuthPage from "./pages/AuthPage";
+import { trpc } from "@/lib/trpc";
+const AccountSecurity = lazy(() => import("./pages/AccountSecurity"));
 
 const Operations = lazy(() => import("./pages/Operations"));
 const OperationsHome = lazy(() => import("./pages/OperationsHome"));
@@ -39,10 +41,18 @@ function PageLoading() {
 }
 
 function Router() {
+  const me = trpc.auth.me.useQuery(undefined, { retry: false });
+  const [location, navigate] = useLocation();
+  const needsSecurity = Boolean(me.data?.mustChangePassword || me.data?.emailEnrollmentOnly);
+  useEffect(() => {
+    if (needsSecurity && location !== "/account/security") navigate("/account/security");
+  }, [needsSecurity, location, navigate]);
+  if (needsSecurity && location !== "/account/security") return <PageLoading />;
   return (
     <Switch>
       <Route path="/" component={Home} />
       <Route path="/auth" component={AuthPage} />
+      <Route path="/account/security" component={AccountSecurity} />
       <Route path="/track" component={PublicTracking} />
       <Route path="/operations/shipments/new" component={PackingHub} />
       <Route path="/operations/shipments/:id" component={ShipmentPacking} />
