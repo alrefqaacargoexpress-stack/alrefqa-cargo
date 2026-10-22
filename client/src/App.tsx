@@ -7,6 +7,7 @@ import { ThemeProvider } from "./contexts/ThemeContext";
 import Home from "./pages/Home";
 import { LanguageProvider, useLanguage } from "./contexts/LanguageContext";
 import { lazy, Suspense } from "react";
+import AuthPage from "./pages/AuthPage";
 
 const Operations = lazy(() => import("./pages/Operations"));
 const OperationsHome = lazy(() => import("./pages/OperationsHome"));
@@ -41,6 +42,7 @@ function Router() {
   return (
     <Switch>
       <Route path="/" component={Home} />
+      <Route path="/auth" component={AuthPage} />
       <Route path="/track" component={PublicTracking} />
       <Route path="/operations/shipments/new" component={PackingHub} />
       <Route path="/operations/shipments/:id" component={ShipmentPacking} />

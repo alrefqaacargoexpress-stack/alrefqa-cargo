@@ -76,7 +76,8 @@ export function useAuth(options?: UseAuthOptions) {
     if (typeof window === "undefined") return;
     if (redirectPath && window.location.pathname === redirectPath) return;
 
-    // Navigate at this moment only. startLogin() mints the nonce + cookie itself.
+    // Navigate at this moment only. The application-owned email flow is shown
+    // inside /auth; existing server sessions remain supported.
     if (redirectPath) {
       window.location.href = redirectPath;
     } else {

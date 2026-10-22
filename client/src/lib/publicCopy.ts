@@ -49,6 +49,7 @@ const ar = {
     contact: "اتصل بنا",
     offices: "المكاتب",
     operations: "مركز العمليات",
+    auth: "الدخول / إنشاء حساب",
   },
   topNotice: "خدمة شحن واضحة بين المكاتب، مع معلومات اتصال منشورة فقط.",
   brandTagline: "للشحن والنقل",
@@ -211,6 +212,7 @@ const en = {
     contact: "Contact",
     offices: "Offices",
     operations: "Operations center",
+    auth: "Sign in / Create account",
   },
   topNotice:
     "Clear shipping support between offices, with published contact details only.",
@@ -381,6 +383,7 @@ const zh = {
     contact: "联系我们",
     offices: "办公室",
     operations: "运营中心",
+    auth: "登录 / 创建账户",
   },
   topNotice: "办公室之间提供清晰的货运支持，仅展示已公开的联系方式。",
   brandTagline: "货运与物流",
@@ -539,6 +542,7 @@ const tr = {
     contact: "İletişim",
     offices: "Ofisler",
     operations: "Operasyon merkezi",
+    auth: "Giriş / Hesap oluştur",
   },
   topNotice:
     "Ofisler arasında açık kargo desteği; yalnızca yayınlanmış iletişim bilgileri kullanılır.",

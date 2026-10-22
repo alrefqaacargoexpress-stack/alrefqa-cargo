@@ -3,6 +3,7 @@ import { and, eq, gt, sql } from "drizzle-orm";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { COOKIE_NAME } from "@shared/const";
+import { ONE_YEAR_MS } from "@shared/const";
 import { normalizeTracking } from "@shared/packing";
 import {
   trackingRequestSchema,
@@ -35,6 +36,18 @@ import { systemRouter } from "./_core/systemRouter";
 import { ENV } from "./_core/env";
 import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
 import { getDb } from "./db";
+import * as dbQueries from "./db";
+import {
+  createLocalOpenId,
+  createSessionToken,
+  hashPassword,
+  hashSessionToken,
+  LOCAL_SESSION_COOKIE,
+  normalizeEmail,
+  publicUser,
+  verifyPassword,
+} from "./localAuth";
+import { parse as parseCookieHeader } from "cookie";
 import {
   canManageMembers,
   hideFinance,
@@ -181,10 +194,109 @@ export const appRouter = router({
       }),
   }),
   auth: router({
-    me: publicProcedure.query(opts => opts.ctx.user),
-    logout: publicProcedure.mutation(({ ctx }) => {
+    me: publicProcedure.query(opts =>
+      opts.ctx.user ? publicUser(opts.ctx.user) : null
+    ),
+    login: publicProcedure
+      .input(
+        z
+          .object({
+            email: z.string().email().max(320),
+            password: z.string().min(8).max(128),
+            accountType: z.enum(["customer", "employee"]),
+          })
+          .strict()
+      )
+      .mutation(async ({ ctx, input }) => {
+        const email = normalizeEmail(input.email);
+        const user = await dbQueries.getUserByEmail(email);
+        const valid = Boolean(
+          user?.passwordHash &&
+            user.accountType === input.accountType &&
+            (await verifyPassword(input.password, user.passwordHash))
+        );
+        if (!valid || !user)
+          throw new TRPCError({
+            code: "UNAUTHORIZED",
+            message: "invalid_credentials",
+          });
+
+        const token = createSessionToken();
+        await dbQueries.createLocalSession({
+          tokenHash: hashSessionToken(token),
+          userId: user.id,
+          expiresAt: new Date(Date.now() + ONE_YEAR_MS),
+        });
+        await dbQueries.upsertUser({
+          openId: user.openId,
+          lastSignedIn: new Date(),
+        });
+        ctx.res.cookie(LOCAL_SESSION_COOKIE, token, {
+          ...getSessionCookieOptions(ctx.req),
+          maxAge: ONE_YEAR_MS,
+        });
+        return { user: publicUser(user), accountType: user.accountType };
+      }),
+    signup: publicProcedure
+      .input(
+        z
+          .object({
+            name: z.string().trim().min(2).max(120),
+            email: z.string().email().max(320),
+            password: z.string().min(8).max(128),
+            accountType: z.enum(["customer", "employee"]),
+          })
+          .strict()
+      )
+      .mutation(async ({ ctx, input }) => {
+        const email = normalizeEmail(input.email);
+        const existing = await dbQueries.getUserByEmail(email);
+        if (existing)
+          throw new TRPCError({
+            code: "CONFLICT",
+            message: "email_registered",
+          });
+
+        const passwordHash = await hashPassword(input.password);
+        const openId = createLocalOpenId();
+        const db = await dbOrThrow();
+        await db.insert(users).values({
+          openId,
+          name: input.name.trim(),
+          email,
+          loginMethod: "email",
+          accountType: input.accountType,
+          passwordHash,
+          role: "user",
+        });
+        const user = await dbQueries.getUserByOpenId(openId);
+        if (!user)
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "user_creation_failed",
+          });
+
+        const token = createSessionToken();
+        await dbQueries.createLocalSession({
+          tokenHash: hashSessionToken(token),
+          userId: user.id,
+          expiresAt: new Date(Date.now() + ONE_YEAR_MS),
+        });
+        ctx.res.cookie(LOCAL_SESSION_COOKIE, token, {
+          ...getSessionCookieOptions(ctx.req),
+          maxAge: ONE_YEAR_MS,
+        });
+        return { user: publicUser(user), accountType: user.accountType };
+      }),
+    logout: publicProcedure.mutation(async ({ ctx }) => {
+      const cookies = parseCookieHeader(ctx.req.headers.cookie ?? "");
+      const localToken = cookies[LOCAL_SESSION_COOKIE];
+      if (localToken) {
+        await dbQueries.deleteLocalSession(hashSessionToken(localToken));
+      }
       const cookieOptions = getSessionCookieOptions(ctx.req);
       ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
+      ctx.res.clearCookie(LOCAL_SESSION_COOKIE, { ...cookieOptions, maxAge: -1 });
       return { success: true } as const;
     }),
   }),

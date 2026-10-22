@@ -6,6 +6,7 @@ import type { Request } from "express";
 import { SignJWT, jwtVerify } from "jose";
 import type { User } from "../../drizzle/schema";
 import * as db from "../db";
+import { hashSessionToken, LOCAL_SESSION_COOKIE } from "../localAuth";
 import { ENV } from "./env";
 import type {
   ExchangeTokenRequest,
@@ -257,8 +258,24 @@ class SDKServer {
   }
 
   async authenticateRequest(req: Request): Promise<AuthenticatedUser> {
-    // 1. Prefer the session cookie (regular OAuth login).
+    // Prefer the application-owned email session when present. This keeps
+    // email login entirely inside the site while preserving Manus OAuth below.
     const cookies = this.parseCookies(req.headers.cookie);
+    const localToken = cookies.get(LOCAL_SESSION_COOKIE);
+    if (localToken) {
+      const localUser = await db.getUserByLocalSessionHash(
+        hashSessionToken(localToken)
+      );
+      if (localUser) {
+        await db.upsertUser({
+          openId: localUser.openId,
+          lastSignedIn: new Date(),
+        });
+        return localUser;
+      }
+    }
+
+    // Manus OAuth session cookie (kept for existing employees and admins).
     let sessionToken = cookies.get(COOKIE_NAME);
     if (!sessionToken && req.path.startsWith("/api/scheduled/")) {
       const ticket = cookies.get("app_session_id");
@@ -344,6 +361,8 @@ function buildCronUser(
     name: userInfo.name || "Manus Scheduled Task",
     email: null,
     loginMethod: null,
+    accountType: "employee",
+    passwordHash: null,
     role: "user",
     createdAt: now,
     updatedAt: now,

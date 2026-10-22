@@ -16,6 +16,10 @@ export const users = mysqlTable("users", {
   name: text("name"),
   email: varchar("email", { length: 320 }),
   loginMethod: varchar("loginMethod", { length: 64 }),
+  accountType: mysqlEnum("accountType", ["customer", "employee"])
+    .default("employee")
+    .notNull(),
+  passwordHash: varchar("passwordHash", { length: 255 }),
   role: mysqlEnum("role", ["user", "admin"]).default("user").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
@@ -24,6 +28,21 @@ export const users = mysqlTable("users", {
 
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
+
+/** Application-owned email sessions. Manus OAuth sessions remain in webdev_app_session. */
+export const localSessions = mysqlTable(
+  "local_sessions",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    tokenHash: varchar("tokenHash", { length: 64 }).notNull(),
+    userId: int("userId")
+      .notNull()
+      .references(() => users.id),
+    expiresAt: timestamp("expiresAt").notNull(),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  table => [uniqueIndex("local_sessions_token_unique").on(table.tokenHash)]
+);
 
 export const recordEntityValues = ["account", "shipment", "invoice"] as const;
 export const appRoleValues = [
@@ -255,6 +274,7 @@ export const financeGoods = mysqlTable(
 );
 
 export type MemberRole = typeof memberRoles.$inferSelect;
+export type LocalSession = typeof localSessions.$inferSelect;
 export type RecordRow = typeof records.$inferSelect;
 export type SyncReceipt = typeof syncReceipts.$inferSelect;
 export type OfficeSettingsRow = typeof officeSettings.$inferSelect;

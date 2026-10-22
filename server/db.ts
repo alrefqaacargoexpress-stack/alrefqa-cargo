@@ -1,6 +1,6 @@
-import { eq } from "drizzle-orm";
+import { and, eq, gt, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { InsertUser, users } from "../drizzle/schema";
+import { InsertUser, localSessions, users } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
 let _db: ReturnType<typeof drizzle> | null = null;
@@ -34,7 +34,7 @@ export async function upsertUser(user: InsertUser): Promise<void> {
     };
     const updateSet: Record<string, unknown> = {};
 
-    const textFields = ["name", "email", "loginMethod"] as const;
+    const textFields = ["name", "email", "loginMethod", "passwordHash"] as const;
     type TextField = (typeof textFields)[number];
 
     const assignNullable = (field: TextField) => {
@@ -86,6 +86,50 @@ export async function getUserByOpenId(openId: string) {
   const result = await db.select().from(users).where(eq(users.openId, openId)).limit(1);
 
   return result.length > 0 ? result[0] : undefined;
+}
+
+export async function getUserByEmail(email: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db
+    .select()
+    .from(users)
+    .where(sql`LOWER(${users.email}) = ${email}`)
+    .limit(1);
+  return result.length > 0 ? result[0] : undefined;
+}
+
+export async function getUserByLocalSessionHash(tokenHash: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db
+    .select({ user: users })
+    .from(localSessions)
+    .innerJoin(users, eq(localSessions.userId, users.id))
+    .where(
+      and(
+        eq(localSessions.tokenHash, tokenHash),
+        gt(localSessions.expiresAt, new Date())
+      )
+    )
+    .limit(1);
+  return result[0]?.user;
+}
+
+export async function createLocalSession(input: {
+  tokenHash: string;
+  userId: number;
+  expiresAt: Date;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  await db.insert(localSessions).values(input);
+}
+
+export async function deleteLocalSession(tokenHash: string) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(localSessions).where(eq(localSessions.tokenHash, tokenHash));
 }
 
 // TODO: add feature queries here as your schema grows.

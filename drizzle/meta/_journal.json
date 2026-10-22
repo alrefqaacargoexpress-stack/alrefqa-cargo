@@ -43,6 +43,13 @@
       "when": 1792631271620,
       "tag": "0005_peaceful_earthquake",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "5",
+      "when": 1792682124802,
+      "tag": "0006_lying_tag",
+      "breakpoints": true
     }
   ]
 }

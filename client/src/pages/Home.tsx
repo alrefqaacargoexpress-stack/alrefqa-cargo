@@ -210,6 +210,12 @@ export default function Home() {
           <div className="flex items-center gap-2 sm:gap-3">
             <LanguageSwitcher />
             <Link
+              href="/auth"
+              className="hidden rounded-full border border-[#092d50] px-4 py-2.5 text-sm font-semibold text-[#092d50] transition hover:bg-[#eaf1f3] sm:inline-flex"
+            >
+              {copy.nav.auth}
+            </Link>
+            <Link
               href="/operations"
               className="hidden rounded-full bg-[#092d50] px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-[#123f68] sm:inline-flex"
             >
@@ -254,6 +260,9 @@ export default function Home() {
               </a>
               <Link href="/operations" onClick={() => setMenuOpen(false)}>
                 {copy.nav.operations}
+              </Link>
+              <Link href="/auth" onClick={() => setMenuOpen(false)}>
+                {copy.nav.auth}
               </Link>
             </div>
           </div>
