@@ -12,8 +12,9 @@ const original = createPackedShipment({
   pricePerKgMRU: 120,
 });
 const archived = deleteShipment(original, "User request");
-const workspace = (role: AppRole | null) => ({
+const workspace = (role: AppRole | null, offices?: ("nouakchott" | "dubai" | "china" | "turkey")[] | null) => ({
   role,
+  offices,
   error: null,
   saveShipment: async () => true,
 });
@@ -43,6 +44,27 @@ describe("Shipment deletion action rendering", () => {
       );
       expect(html).toBe("");
     }
+  });
+  it("shows the action to an office manager only for the manager's office", () => {
+    const c = copyFor("en");
+    expect(
+      renderToStaticMarkup(
+        <ShipmentDeleteActions
+          shipment={original}
+          workspace={workspace("office_manager", ["china"])}
+          c={c}
+        />
+      )
+    ).toContain(c.deleteShipment);
+    expect(
+      renderToStaticMarkup(
+        <ShipmentDeleteActions
+          shipment={original}
+          workspace={workspace("office_manager", ["dubai"])}
+          c={c}
+        />
+      )
+    ).toBe("");
   });
   it("offers restore instead of delete for archived data and disables it for read-only roles", () => {
     const c = copyFor("en");

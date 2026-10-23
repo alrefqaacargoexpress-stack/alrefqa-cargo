@@ -7,11 +7,19 @@ import type {
 } from "@shared/operations";
 import {
   applyChangeInMemory,
+  assertOfficeRecordWrite,
   canManageMembers,
   parseChange,
+  prepareRecordForWrite,
   roleForUser,
   type MemoryRow,
 } from "./operations";
+import {
+  addPackingGoods,
+  closePackingCarton,
+  createPackedShipment,
+} from "@shared/packing";
+import { deleteShipment, restoreShipment } from "@shared/shipmentDeletion";
 
 const account = (id: string, balance = 0): EntityRecord => ({
   id,
@@ -132,5 +140,84 @@ describe("operations pure policy", () => {
         data: { ...account("bad2"), balance: Number.NaN },
       })
     ).toThrow();
+  });
+
+  it("lets an office manager archive and restore only a shipment owned by that office", () => {
+    const shipment = createPackedShipment({
+      tracking: "MANAGER-DELETE",
+      source: "china",
+      pricePerKg: 0,
+    });
+    const archived = deleteShipment(shipment, "Duplicate");
+    expect(() =>
+      prepareRecordForWrite(
+        "office_manager",
+        archived,
+        shipment,
+        "delete-shipment"
+      )
+    ).not.toThrow();
+    expect(() =>
+      assertOfficeRecordWrite(
+        "office_manager",
+        ["china"],
+        "shipment",
+        archived,
+        shipment
+      )
+    ).not.toThrow();
+    expect(() =>
+      assertOfficeRecordWrite(
+        "office_manager",
+        ["dubai"],
+        "shipment",
+        archived,
+        shipment
+      )
+    ).toThrow("shipment_source_office_mismatch");
+    expect(() =>
+      prepareRecordForWrite(
+        "office_manager",
+        restoreShipment(archived),
+        archived,
+        "restore-shipment"
+      )
+    ).not.toThrow();
+  });
+
+  it("requires the receiving journey for a new arrival/readiness status but preserves legacy records", () => {
+    const shipment = addPackingGoods(
+      createPackedShipment({
+        tracking: "ARRIVAL-GUARD",
+        source: "china",
+        pricePerKg: 0,
+      }),
+      { name: "Guard fixture", phone: "", unitWeight: 1, pieces: 1 }
+    );
+    expect(() =>
+      prepareRecordForWrite(
+        "admin",
+        { ...shipment, status: "وصلت للمكتب" },
+        { ...shipment, status: "في الطريق" }
+      )
+    ).toThrow("arrival_confirmation_required");
+    const legacy = {
+      ...closePackingCarton(shipment),
+      status: "وصلت للمكتب" as const,
+    };
+    expect(() => prepareRecordForWrite("admin", legacy, legacy)).not.toThrow();
+    const transit = {
+      ...closePackingCarton(shipment),
+      status: "في الطريق" as const,
+    };
+    const archived = deleteShipment(transit, "Duplicate");
+    expect(() =>
+      prepareRecordForWrite(
+        "admin",
+        archived,
+        transit,
+        "delete-shipment"
+      )
+    ).not.toThrow();
   });
 });

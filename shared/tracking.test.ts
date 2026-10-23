@@ -30,24 +30,30 @@ const shipment = () => ({
   journey,
 });
 describe("Tracking phases and projected duration", () => {
-  it("keeps the seven requested phases and the supplied minimum/maximum windows", () => {
+  it("keeps the departure milestone and the existing phases and the supplied minimum/maximum windows", () => {
     expect(stageIds).toEqual([
       "preparing",
       "dubai_airport",
       "dubai_customs",
       "to_dakar",
+      "departed_dakar",
       "dakar_airport",
       "to_nouakchott",
       "arrived_office",
     ]);
     expect(stageDurations.reduce((n, d) => n + d.min, 0)).toBe(6);
-    expect(stageDurations.reduce((n, d) => n + d.max, 0)).toBe(11);
+    expect(stageDurations.reduce((n, d) => n + d.max, 0)).toBe(12);
   });
   it("allocates the exact selected total, preserving every stage and never advancing real status by date", () => {
     for (const expectedDays of [6, 7, 8, 9, 10, 11, 30, 365]) {
       const schedule = trackingSchedule({ ...journey, expectedDays });
       expect(schedule.reduce((n, s) => n + s.days, 0)).toBe(expectedDays);
-      expect(schedule.slice(0, 6).every(s => s.days >= 1)).toBe(true);
+      expect(
+        schedule
+          .slice(0, -1)
+          .filter(s => s.id !== "departed_dakar")
+          .every(s => s.days >= 1)
+      ).toBe(true);
       expect(schedule.at(-1)?.days).toBe(0);
       expect(schedule.filter(s => s.state === "current")[0].id).toBe(
         "dubai_airport"
@@ -118,7 +124,37 @@ describe("Tracking phases and projected duration", () => {
         stage: "arrived_office",
         reason: "Skip",
       })
+    ).toThrow("arrival_confirmation_required");
+  });
+  it("records departure explicitly without skipping ahead or claiming office arrival", () => {
+    const current = {
+      ...shipment(),
+      journey: { ...journey, stage: "to_dakar" as const },
+    };
+    expect(() =>
+      assertTrackingCommand("staff", current, {
+        type: "stage",
+        stage: "departed_dakar",
+        reason: "Flight departed",
+      })
+    ).not.toThrow();
+    expect(() =>
+      assertTrackingCommand("staff", current, {
+        type: "stage",
+        stage: "dakar_airport",
+        reason: "Skip departure",
+      })
     ).toThrow("tracking_forbidden");
+    expect(() =>
+      assertTrackingCommand("admin", current, {
+        type: "plan",
+        stage: "arrived_office",
+        startedAt: journey.startedAt,
+        expectedDays: 9,
+        reason: "Bypass receiving",
+      })
+    ).toThrow("arrival_confirmation_required");
+    expect(current.journey.stage).toBe("to_dakar");
   });
   it("keeps supervisors on tracking and reports, with cancellations for the admin only", () => {
     const s = shipment();

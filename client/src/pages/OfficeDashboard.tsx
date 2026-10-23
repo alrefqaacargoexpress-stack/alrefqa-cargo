@@ -22,6 +22,7 @@ import {
 import { officeNames } from "@shared/branches";
 import {
   mapsHref,
+  canConfirmOfficeArrival,
   officeIds,
   type OfficeId,
   type OfficeDashboardData,
@@ -50,9 +51,12 @@ export default function OfficeDashboard() {
     officeFromLocation(query)
   );
   const officeOptions =
-    workspace.role === "office_manager"
-      ? (workspace.offices ?? []).filter(office => office !== "nouakchott")
-      : [...officeIds];
+    workspace.role === "admin"
+      ? [...officeIds]
+      : (workspace.offices ?? []).filter(
+          office =>
+            workspace.role !== "office_manager" || office !== "nouakchott"
+        );
   const [notice, setNotice] = useState<string | null>(null);
   const [arrivalShipment, setArrivalShipment] = useState<Shipment | null>(null);
   const utils = trpc.useUtils();
@@ -88,10 +92,8 @@ export default function OfficeDashboard() {
   };
 
   const canConfirm =
-    Boolean(
-      workspace.role &&
-        ["admin", "supervisor", "staff"].includes(workspace.role)
-    ) && officeId === "nouakchott";
+    canConfirmOfficeArrival(workspace.role, workspace.offices) &&
+    officeId === "nouakchott";
   const financeVisible = Boolean(
     dashboard.data?.financial && canViewFinance(workspace.role)
   );

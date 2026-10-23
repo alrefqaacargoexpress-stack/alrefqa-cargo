@@ -9,6 +9,7 @@ import {
   Search,
   Send,
 } from "lucide-react";
+import PublishedPackingTariff from "@/components/packing/PublishedPackingTariff";
 import PackingLayout from "@/components/packing/PackingLayout";
 import ShipmentDeleteActions from "@/components/packing/ShipmentDeleteActions";
 import CartonGoods, {
@@ -124,7 +125,8 @@ export default function ShipmentPacking() {
     try {
       const ok = await workspace.saveShipment(next, label);
       if (ok) setError(null);
-      else setError(workspace.lastSaveError?.() ?? workspace.error ?? c.saveError);
+      else
+        setError(workspace.lastSaveError?.() ?? workspace.error ?? c.saveError);
       return ok;
     } finally {
       savingRef.current = false;
@@ -314,6 +316,15 @@ export default function ShipmentPacking() {
             }
           />
         </div>
+        {(packed.packing.service || packed.packing.rateSnapshot) && (
+          <PublishedPackingTariff
+            service={packed.packing.service}
+            snapshot={packed.packing.rateSnapshot}
+            c={c}
+            language={language}
+            confirmed={packed.scope === "shared"}
+          />
+        )}
         {workspace.showFinance && (
           <div className="mt-3 flex flex-wrap gap-4 text-xs text-[#718088]">
             <span>

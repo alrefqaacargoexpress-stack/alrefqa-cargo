@@ -287,6 +287,16 @@ export function canWriteOfficeRecord(
   const home = ownerOffice(entity, record);
   return home !== null && offices.includes(home);
 }
+export function canConfirmOfficeArrival(
+  role: AppRole | null,
+  offices: OfficeId[] | null
+) {
+  return (
+    role === "admin" ||
+    (role === "supervisor" && Boolean(offices?.includes("nouakchott"))) ||
+    (role === "staff" && offices?.length === 1 && offices[0] === "nouakchott")
+  );
+}
 export function mapsHref(
   mapUrl: OfficeProfile["mapUrl"] | null | undefined,
   legacyGps?: OfficeProfile["gps"] | null

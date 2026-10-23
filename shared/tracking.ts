@@ -5,6 +5,7 @@ export const stageIds = [
   "dubai_airport",
   "dubai_customs",
   "to_dakar",
+  "departed_dakar",
   "dakar_airport",
   "to_nouakchott",
   "arrived_office",
@@ -23,6 +24,7 @@ export const stageDurations = [
   { min: 1, max: 1 },
   { min: 1, max: 2 },
   { min: 1, max: 2 },
+  { min: 0, max: 1 },
   { min: 1, max: 1 },
   { min: 1, max: 3 },
   { min: 0, max: 0 },
@@ -30,10 +32,11 @@ export const stageDurations = [
 export const staffStageTargets: TrackingStage[] = [
   "dubai_airport",
   "to_dakar",
+  "departed_dakar",
   "to_nouakchott",
 ];
 export const warehouseStageTargets: TrackingStage[] = stageIds.filter(
-  stage => stage !== "preparing"
+  stage => stage !== "preparing" && stage !== "arrived_office"
 );
 export const trackingNoteSchema = z
   .object({
@@ -140,6 +143,11 @@ export function assertTrackingCommand(
   command: TrackingCommand
 ) {
   if (shipment.deleted) throw new Error("shipment_deleted");
+  if (
+    (command.type === "stage" || command.type === "plan") &&
+    command.stage === "arrived_office"
+  )
+    throw new Error("arrival_confirmation_required");
   if (role === "staff" && command.type !== "stage")
     throw new Error("tracking_forbidden");
   if (
@@ -162,8 +170,7 @@ export function assertTrackingCommand(
       command.type !== "stage" ||
       !canNoteTracking(role) ||
       !currentStage ||
-      stageIds.indexOf(command.stage) !==
-        stageIds.indexOf(currentStage) + 1 ||
+      stageIds.indexOf(command.stage) !== stageIds.indexOf(currentStage) + 1 ||
       !(role === "staff" ? warehouseStageTargets : staffStageTargets).includes(
         command.stage
       )
@@ -206,11 +213,15 @@ export function trackingSchedule(
   journey: Pick<ShipmentJourney, "stage" | "startedAt" | "expectedDays">
 ) {
   const days = z.number().int().min(6).max(365).parse(journey.expectedDays);
-  const weights = stageDurations.slice(0, 6).map(d => (d.min + d.max) / 2);
+  const weights = stageDurations.slice(0, -1).map(d => (d.min + d.max) / 2);
+  // Keep existing six-day plans valid: the added departure milestone can share a day.
+  const bases = weights.map((_, i) =>
+    days === 6 && stageIds[i] === "departed_dakar" ? 0 : 1
+  );
   const total = weights.reduce((a, b) => a + b, 0);
-  const spare = days - 6;
+  const spare = days - bases.reduce<number>((a, b) => a + b, 0);
   const shares = weights.map(w => (spare * w) / total);
-  const allocated = shares.map(n => 1 + Math.floor(n));
+  const allocated = shares.map((n, i) => bases[i] + Math.floor(n));
   let left = days - allocated.reduce((a, b) => a + b, 0);
   const order = shares
     .map((n, i) => ({ i, f: n - Math.floor(n) }))

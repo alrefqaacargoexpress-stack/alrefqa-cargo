@@ -1,8 +1,38 @@
 import { officeIdSchema, type OfficeId } from "./branches";
 import { z } from "zod";
 import type { Account, Shipment } from "./operations";
+import {
+  mruPublicShippingRateSchema,
+  publicShippingRateSchema,
+} from "./publicShipping";
 export const sources = ["dubai", "turkey", "china"] as const;
 export type PackingSource = (typeof sources)[number];
+export const packingServices = [
+  "airRegular",
+  "airExpress",
+  "sensitive",
+  "sea",
+] as const;
+export const packingServiceSchema = z.enum(packingServices);
+export type PackingService = (typeof packingServices)[number];
+export type PackingProfileRates = {
+  officeId: OfficeId;
+  version: number;
+  shippingRates?: Partial<
+    Record<PackingService, z.infer<typeof publicShippingRateSchema> | null>
+  >;
+  sourceShippingRates?: Partial<
+    Record<
+      PackingSource,
+      Partial<
+        Record<
+          PackingService,
+          z.infer<typeof mruPublicShippingRateSchema> | null
+        >
+      >
+    >
+  >;
+};
 export const sourceCurrency: Record<PackingSource, string> = {
   dubai: "AED",
   turkey: "TRY",
@@ -13,6 +43,14 @@ export const sourceName: Record<PackingSource, string> = {
   turkey: "تركيا",
   china: "الصين",
 };
+/** The legacy shipment service has only three values; sensitive remains packing metadata. */
+export function shipmentServiceForPackingService(
+  service: PackingService
+): Shipment["service"] {
+  if (service === "sea") return "بحري";
+  if (service === "airExpress") return "سريع";
+  return "جوي";
+}
 export function normalizeTracking(value: string): string {
   return value.trim().toLowerCase();
 }
@@ -57,11 +95,61 @@ export const cartonSchema = z
     goods: z.array(goodsSchema).max(5000),
   })
   .strict();
+/** Evidence written by the server when a public office tariff is selected. */
+export const packingRateSnapshotSchema = z
+  .object({
+    service: packingServiceSchema,
+    sourceOffice: officeIdSchema,
+    sourceRate: publicShippingRateSchema.nullable(),
+    nouakchottRate: mruPublicShippingRateSchema.nullable(),
+    sourceProfileVersion: z.number().int().nonnegative(),
+    nouakchottProfileVersion: z.number().int().nonnegative(),
+    capturedAt: z.string().datetime(),
+  })
+  .strict();
+export function tariffForPackingProfiles(input: {
+  source: PackingSource;
+  service: PackingService;
+  sourceProfile: PackingProfileRates;
+  nouakchottProfile: PackingProfileRates;
+  capturedAt?: string;
+}) {
+  const sourceRate = input.sourceProfile.shippingRates?.[input.service] ?? null;
+  const nouakchottRate =
+    input.nouakchottProfile.sourceShippingRates?.[input.source]?.[
+      input.service
+    ] ?? null;
+  const snapshot = packingRateSnapshotSchema.parse({
+    service: input.service,
+    sourceOffice: input.sourceProfile.officeId,
+    sourceRate,
+    nouakchottRate,
+    sourceProfileVersion: input.sourceProfile.version,
+    nouakchottProfileVersion: input.nouakchottProfile.version,
+    capturedAt: input.capturedAt ?? new Date().toISOString(),
+  });
+  return {
+    snapshot,
+    // A source profile's currency is authoritative. Never treat a USD (or a
+    // volume/shipment) rate as an AED-per-kg source tariff.
+    pricePerKg:
+      sourceRate?.currency === sourceCurrency[input.source] &&
+      sourceRate.unit === "kg"
+        ? sourceRate.amount
+        : 0,
+    pricePerKgMRU:
+      nouakchottRate?.currency === "MRU" && nouakchottRate.unit === "kg"
+        ? nouakchottRate.amount
+        : undefined,
+  };
+}
 export const packingSchema = z
   .object({
     source: z.enum(sources),
     pricePerKg: money,
     pricePerKgMRU: money.optional(),
+    service: packingServiceSchema.optional(),
+    rateSnapshot: packingRateSnapshotSchema.optional(),
     createdAt: z.string().datetime(),
     updatedAt: z.string().datetime(),
     cartons: z.array(cartonSchema).min(1).max(1000),
@@ -180,8 +268,10 @@ export function createPackedShipment(
   input: {
     tracking: string;
     source: PackingSource;
-    pricePerKg: number;
+    pricePerKg?: number;
     pricePerKgMRU?: number;
+    service?: PackingService;
+    rateSnapshot?: z.infer<typeof packingRateSnapshotSchema>;
     officeId?: OfficeId;
   },
   now = new Date().toISOString()
@@ -190,10 +280,14 @@ export function createPackedShipment(
   if (!tracking || tracking.length > 128) throw new Error("invalid_tracking");
   const packing = packingSchema.parse({
     source: input.source,
-    pricePerKg: input.pricePerKg,
+    pricePerKg: input.pricePerKg ?? 0,
     ...(input.pricePerKgMRU === undefined
       ? {}
       : { pricePerKgMRU: input.pricePerKgMRU }),
+    ...(input.service === undefined ? {} : { service: input.service }),
+    ...(input.rateSnapshot === undefined
+      ? {}
+      : { rateSnapshot: input.rateSnapshot }),
     createdAt: now,
     updatedAt: now,
     cartons: [{ number: 1, closed: false, goods: [] }],
@@ -289,7 +383,14 @@ export function canonicalPackingShipment(shipment: Shipment): Shipment {
     if (packing.cartons.some(c => !c.closed && c.goods.some(g => !g.deleted)))
       throw new Error("close_carton_first");
   }
-  return { ...shipment, packing, amount: totals.amount };
+  return {
+    ...shipment,
+    packing,
+    amount: totals.amount,
+    ...(packing.service === undefined
+      ? {}
+      : { service: shipmentServiceForPackingService(packing.service) }),
+  };
 }
 export type CustomerDirectoryEntry = {
   key: string;

@@ -5,7 +5,11 @@ import { createHash } from "node:crypto";
 import { TRPCError } from "@trpc/server";
 import { COOKIE_NAME } from "@shared/const";
 import { ONE_YEAR_MS } from "@shared/const";
-import { normalizeTracking } from "@shared/packing";
+import {
+  normalizeTracking,
+  packingServiceSchema,
+  tariffForPackingProfiles,
+} from "@shared/packing";
 import {
   trackingRequestSchema,
   summaryOf,
@@ -980,6 +984,7 @@ export const appRouter = router({
               };
             else {
               let nextData: EntityRecord;
+              let approvedServerTariff = false;
               try {
                 let candidate: EntityRecord = change.data as EntityRecord;
                 if (
@@ -1014,11 +1019,56 @@ export const appRouter = router({
                       : candidate
                   ) as EntityRecord;
                 }
+                if (
+                  change.entity === "shipment" &&
+                  !current &&
+                  (candidate as Shipment).packing
+                ) {
+                  const shipment = candidate as Shipment;
+                  const packing = shipment.packing!;
+                  const service = packingServiceSchema.parse(
+                    packing.service ?? "airRegular"
+                  );
+                  // Read immediately before preparing the record. Client prices,
+                  // snapshots, and timestamps are never trusted here.
+                  const tariffProfiles = await publicProfiles(tx);
+                  const sourceProfile = tariffProfiles.find(
+                    profile => profile.officeId === packing.source
+                  );
+                  const nouakchottProfile = tariffProfiles.find(
+                    profile => profile.officeId === "nouakchott"
+                  );
+                  if (!sourceProfile || !nouakchottProfile)
+                    throw new Error("shipping_profile_unavailable");
+                  const tariff = tariffForPackingProfiles({
+                    source: packing.source,
+                    service,
+                    sourceProfile,
+                    nouakchottProfile,
+                    capturedAt: new Date().toISOString(),
+                  });
+                  const { pricePerKgMRU: _ignoredMru, ...withoutMru } = packing;
+                  candidate = {
+                    ...shipment,
+                    amount: 0,
+                    packing: {
+                      ...withoutMru,
+                      service,
+                      pricePerKg: tariff.pricePerKg,
+                      ...(tariff.pricePerKgMRU === undefined
+                        ? {}
+                        : { pricePerKgMRU: tariff.pricePerKgMRU }),
+                      rateSnapshot: tariff.snapshot,
+                    },
+                  } as EntityRecord;
+                  approvedServerTariff = true;
+                }
                 nextData = prepareRecordForWrite(
                   role,
                   candidate,
                   current ? asEntityRecord(current.data) : null,
-                  change.action
+                  change.action,
+                  approvedServerTariff
                 );
                 if (change.entity === "shipment")
                   financeShipment = nextData as Shipment;
@@ -1043,13 +1093,11 @@ export const appRouter = router({
                     },
                   ],
                 };
-                await tx
-                  .insert(syncReceipts)
-                  .values({
-                    userId: ctx.user.id,
-                    changeId: change.id,
-                    result: { ...result, payloadHash },
-                  });
+                await tx.insert(syncReceipts).values({
+                  userId: ctx.user.id,
+                  changeId: change.id,
+                  result: { ...result, payloadHash },
+                });
                 output.conflicts.push(...result.conflicts);
                 continue;
               }
@@ -1467,13 +1515,11 @@ export const appRouter = router({
               shipment: mutation.shipment,
               version: nextVersion,
             };
-            await tx
-              .insert(syncReceipts)
-              .values({
-                userId: ctx.user.id,
-                changeId: receiptKey,
-                result: { ...result, payloadHash },
-              });
+            await tx.insert(syncReceipts).values({
+              userId: ctx.user.id,
+              changeId: receiptKey,
+              result: { ...result, payloadHash },
+            });
             return {
               requestId: result.requestId,
               shipment: hideForOfficeScope(

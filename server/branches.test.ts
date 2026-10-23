@@ -12,6 +12,7 @@ import {
   records,
   syncReceipts,
   officeProfiles,
+  memberRoles,
   type User,
 } from "../drizzle/schema";
 import { createPackedShipment } from "@shared/packing";
@@ -32,7 +33,7 @@ const scope: OfficeScope = {
   membershipVersion: 1,
 };
 const arrivalScope: OfficeScope = { ...scope, role: "supervisor" };
-function fixture() {
+function fixture(currentScope: OfficeScope = arrivalScope) {
   const shipment = {
     ...createPackedShipment({
       tracking: "ARRIVAL",
@@ -65,13 +66,23 @@ function fixture() {
     select: () => ({
       from: (table: unknown) => {
         const selected =
-          table === records
-            ? [row]
-            : table === syncReceipts
-              ? receipts
-              : table === officeProfiles
-                ? profiles
-                : [];
+          table === memberRoles
+            ? [
+                {
+                  userId: user.id,
+                  role: currentScope.role,
+                  offices: currentScope.offices,
+                  homeOffice: currentScope.homeOffice,
+                  version: 1,
+                },
+              ]
+            : table === records
+              ? [row]
+              : table === syncReceipts
+                ? receipts
+                : table === officeProfiles
+                  ? profiles
+                  : [];
         const builder: any = {
           where: () => builder,
           limit: () => builder,
@@ -134,6 +145,32 @@ describe("Office backend protection and warehouse arrival", () => {
     });
     expect(appendAudit).toHaveBeenCalledOnce();
   });
+  it("lets Nouakchott warehouse staff confirm arrival while preserving stored money", async () => {
+    const f = fixture(scope);
+    const saved = await confirmArrival(
+      f.db,
+      user,
+      scope,
+      request(f.shipment.id)
+    );
+    expect(saved.shipment.status).toBe("وصلت للمكتب");
+    expect(saved.shipment.journey?.branch).toBe("nouakchott");
+    expect(saved.shipment.packing?.pricePerKg).toBe(0);
+    expect(f.row.data.packing?.pricePerKg).toBe(10);
+    expect(appendAudit).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        actor: expect.objectContaining({ role: "staff" }),
+      })
+    );
+  });
+  it("rechecks the current warehouse office inside the arrival transaction", async () => {
+    const f = fixture({ ...scope, offices: ["dubai"], homeOffice: "dubai" });
+    await expect(
+      confirmArrival(f.db, user, scope, request(f.shipment.id))
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(f.writes()).toBe(0);
+  });
   it("acknowledges an arrival retry without adding another audit event or exposing stored finance", async () => {
     const f = fixture();
     await confirmArrival(f.db, user, arrivalScope, request(f.shipment.id));
@@ -165,7 +202,7 @@ describe("Office backend protection and warehouse arrival", () => {
     const f = fixture();
     for (const invalid of [
       { ...arrivalScope, offices: ["china"] as const },
-      scope,
+      { ...scope, offices: ["dubai"], homeOffice: "dubai" },
       { ...scope, role: "accountant" as const },
       { ...scope, role: "viewer" as const },
     ])
@@ -185,7 +222,7 @@ describe("Office backend protection and warehouse arrival", () => {
     await expect(
       confirmArrival(
         first.db,
-        user,
+        { ...user, role: "admin" },
         { ...scope, role: "admin", offices: null },
         request(first.shipment.id)
       )

@@ -8,9 +8,11 @@ import {
   restoreShipment,
 } from "@shared/shipmentDeletion";
 import type { AppRole, Shipment } from "@shared/operations";
+import type { OfficeId } from "@shared/branches";
 
 type Workspace = {
   role: AppRole | null;
+  offices?: OfficeId[] | null;
   saveShipment: (
     shipment: Shipment,
     label?: string,
@@ -43,7 +45,11 @@ export default function ShipmentDeleteActions({
   const [error, setError] = useState<string | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const busyRef = useRef(false);
-  const allowed = canDeleteShipment(workspace.role, shipment);
+  const allowed = canDeleteShipment(
+    workspace.role,
+    shipment,
+    workspace.offices
+  );
   const disabled = saving || busy || !allowed;
 
   const run = async (

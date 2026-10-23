@@ -244,7 +244,9 @@ export function prepareRecordForWrite(
   role: AppRole | null,
   next: EntityRecord,
   current: EntityRecord | null,
-  action?: PendingChange["action"]
+  action?: PendingChange["action"],
+  /** Internal-only approval produced by sync after a fresh server tariff lookup. */
+  approvedServerTariff = false
 ): EntityRecord {
   // Financial invoices are immutable facts owned by the finance API. Generic
   // operations sync must never create, edit, or erase them.
@@ -258,6 +260,60 @@ export function prepareRecordForWrite(
     throw new Error("finance_command_required");
   if ("tracking" in next) {
     const old = current && "tracking" in current ? current : null;
+    if (old?.packing && next.packing) {
+      const priceChanged =
+        next.packing.pricePerKg !== old.packing.pricePerKg ||
+        next.packing.pricePerKgMRU !== old.packing.pricePerKgMRU;
+      const staffMaskedPrices =
+        role === "staff" &&
+        next.packing.pricePerKg === 0 &&
+        (old.packing.pricePerKg !== 0 ||
+          old.packing.pricePerKgMRU !== undefined) &&
+        (old.packing.pricePerKgMRU === undefined ||
+          next.packing.pricePerKgMRU === 0);
+      const staffUnmaskedPrices =
+        role === "staff" &&
+        !staffMaskedPrices &&
+        (old.packing.pricePerKg !== 0 ||
+          old.packing.pricePerKgMRU !== undefined);
+      const metadataChanged =
+        (next.packing.service !== undefined &&
+          next.packing.service !== old.packing.service) ||
+        (next.packing.rateSnapshot !== undefined &&
+          JSON.stringify(next.packing.rateSnapshot) !==
+            JSON.stringify(old.packing.rateSnapshot));
+      if (priceChanged && !staffMaskedPrices)
+        throw new Error(
+          role === "staff"
+            ? "financial_write_forbidden"
+            : "finance_command_required"
+        );
+      if (staffUnmaskedPrices) throw new Error("financial_write_forbidden");
+      if (metadataChanged)
+        throw new Error(
+          role === "staff"
+            ? "financial_write_forbidden"
+            : "finance_command_required"
+        );
+      // Older clients omit the published tariff metadata. Preserve it rather
+      // than allowing an otherwise valid edit to erase server evidence.
+      next = {
+        ...next,
+        packing: {
+          ...next.packing,
+          pricePerKg: old.packing.pricePerKg,
+          ...(old.packing.pricePerKgMRU === undefined
+            ? {}
+            : { pricePerKgMRU: old.packing.pricePerKgMRU }),
+          ...(old.packing.service === undefined
+            ? {}
+            : { service: old.packing.service }),
+          ...(old.packing.rateSnapshot === undefined
+            ? {}
+            : { rateSnapshot: structuredClone(old.packing.rateSnapshot) }),
+        },
+      } as Shipment;
+    }
     if (
       next.destinationStorage !== undefined &&
       JSON.stringify(next.destinationStorage) !==
@@ -272,12 +328,14 @@ export function prepareRecordForWrite(
     if (
       next.packing &&
       role !== "staff" &&
+      !approvedServerTariff &&
       (next.packing.pricePerKg !== (old?.packing?.pricePerKg ?? 0) ||
         next.packing.pricePerKgMRU !== old?.packing?.pricePerKgMRU)
     )
       throw new Error("finance_command_required");
     if (
       !old &&
+      !approvedServerTariff &&
       (next.amount !== 0 ||
         (next.packing?.pricePerKg ?? 0) !== 0 ||
         (next.packing?.pricePerKgMRU ?? 0) !== 0)
@@ -308,6 +366,7 @@ export function prepareRecordForWrite(
         old &&
         next.status !== old.status &&
         next.status === "في الطريق" &&
+        action !== "delete-shipment" &&
         (!next.packing.cartons.some(carton =>
           carton.goods.some(goods => !goods.deleted)
         ) ||
@@ -325,6 +384,21 @@ export function prepareRecordForWrite(
     result = { ...result, officeId: current.officeId } as EntityRecord;
   if ("tracking" in result) {
     const oldShipment = current && "tracking" in current ? current : null;
+    const officeReceiptStatus =
+      result.status === "وصلت للمكتب" || result.status === "جاهزة للتسليم";
+    const alreadyReceived =
+      oldShipment?.status === "وصلت للمكتب" ||
+      oldShipment?.status === "جاهزة للتسليم";
+    // Arrival is a command-owned transition. Generic operations payloads may
+    // preserve an old received record, but cannot manufacture arrival/readiness
+    // without the journey marker written by the receiving endpoint.
+    if (
+      officeReceiptStatus &&
+      !alreadyReceived &&
+      oldShipment?.journey?.stage !== "arrived_office" &&
+      result.journey?.stage !== "arrived_office"
+    )
+      throw new Error("arrival_confirmation_required");
     if (oldShipment?.journey) {
       // Older clients omit fields they do not understand; preserve the journey rather than
       // allowing a sync payload to erase actor-authored notes or metadata.
@@ -382,6 +456,8 @@ export function prepareRecordForWrite(
   if (!canWrite(role, "shipment")) throw new Error("forbidden");
   if (
     role === "staff" &&
+    !current &&
+    !approvedServerTariff &&
     "tracking" in next &&
     next.packing &&
     (next.packing.pricePerKg !== 0 ||

@@ -9,6 +9,13 @@ export interface PackingCopy extends Record<string, string> {
   newShipment: string;
   shipmentNumber: string;
   source: string;
+  service: string;
+  airRegular: string;
+  airExpress: string;
+  sensitive: string;
+  sea: string;
+  publicTariff: string;
+  tariffUndefined: string;
   pricePerKg: string;
   dubai: string;
   turkey: string;
@@ -159,6 +166,13 @@ const common: PackingCopy = {
   newShipment: "",
   shipmentNumber: "",
   source: "",
+  service: "",
+  airRegular: "",
+  airExpress: "",
+  sensitive: "",
+  sea: "",
+  publicTariff: "",
+  tariffUndefined: "",
   pricePerKg: "",
   dubai: "",
   turkey: "",
@@ -312,6 +326,13 @@ export const packingCopy: Record<PackingLanguage, PackingCopy> = {
     newShipment: "شحنة تجميع جديدة",
     shipmentNumber: "رقم الشحنة",
     source: "المصدر",
+    service: "الخدمة",
+    airRegular: "جوي عادي",
+    airExpress: "جوي سريع",
+    sensitive: "حساس",
+    sea: "بحري",
+    publicTariff: "التعرفة المعلنة للمكتب",
+    tariffUndefined: "غير محدد",
     pricePerKg: "السعر لكل كغ",
     dubai: "دبي",
     turkey: "تركيا",
@@ -470,6 +491,13 @@ export const packingCopy: Record<PackingLanguage, PackingCopy> = {
     newShipment: "New packing shipment",
     shipmentNumber: "Shipment number",
     source: "Source",
+    service: "Service",
+    airRegular: "Regular air",
+    airExpress: "Express air",
+    sensitive: "Sensitive",
+    sea: "Sea",
+    publicTariff: "Published office tariff",
+    tariffUndefined: "Undefined",
     pricePerKg: "Price per kg",
     dubai: "Dubai",
     turkey: "Turkey",
@@ -628,6 +656,13 @@ export const packingCopy: Record<PackingLanguage, PackingCopy> = {
     newShipment: "新建打包货运",
     shipmentNumber: "货运编号",
     source: "来源",
+    service: "服务",
+    airRegular: "普通空运",
+    airExpress: "快速空运",
+    sensitive: "敏感货",
+    sea: "海运",
+    publicTariff: "办公室公布的费率",
+    tariffUndefined: "未定义",
     pricePerKg: "每公斤价格",
     dubai: "迪拜",
     turkey: "土耳其",
@@ -783,6 +818,13 @@ export const packingCopy: Record<PackingLanguage, PackingCopy> = {
     newShipment: "Yeni paketleme gönderisi",
     shipmentNumber: "Gönderi numarası",
     source: "Kaynak",
+    service: "Hizmet",
+    airRegular: "Normal hava",
+    airExpress: "Ekspres hava",
+    sensitive: "Hassas",
+    sea: "Deniz",
+    publicTariff: "İlan edilen ofis tarifesi",
+    tariffUndefined: "Tanımsız",
     pricePerKg: "Kg başına fiyat",
     dubai: "Dubai",
     turkey: "Türkiye",

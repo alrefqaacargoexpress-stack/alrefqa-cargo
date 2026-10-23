@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useRoute, useSearch } from "wouter";
 import { Plus, Search } from "lucide-react";
 import ShipmentDeleteActions from "@/components/packing/ShipmentDeleteActions";
+import PublishedPackingTariff from "@/components/packing/PublishedPackingTariff";
 import PackingLayout from "@/components/packing/PackingLayout";
 import {
   PackingField,
@@ -16,12 +17,15 @@ import {
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useOperationsWorkspace } from "@/hooks/useOperationsWorkspace";
 import { copyFor } from "@/lib/packingCopy";
+import { trpc } from "@/lib/trpc";
 import {
+  defaultOfficeProfile,
   officeIds,
   officeNames,
   ownerOffice,
   recordBelongsToOffice,
   type OfficeId,
+  type VersionedOfficeProfile,
 } from "@shared/branches";
 import {
   createPackedShipment,
@@ -29,7 +33,10 @@ import {
   matchesShipment,
   packingTotals,
   packingTotalsMRU,
+  packingServices,
+  tariffForPackingProfiles,
   sourceCurrency,
+  type PackingService,
   type PackingSource,
 } from "@shared/packing";
 
@@ -39,6 +46,10 @@ export default function PackingHub() {
   const workspace = useOperationsWorkspace();
   const { language } = useLanguage();
   const c = copyFor(language);
+  const publicProfiles = trpc.branches.public.useQuery(undefined, {
+    retry: false,
+    refetchOnWindowFocus: false,
+  });
   const [, navigate] = useLocation();
   const [isNew] = useRoute("/operations/shipments/new");
   const [search, setSearch] = useState("");
@@ -61,6 +72,7 @@ export default function PackingHub() {
   const [source, setSource] = useState<PackingSource>(
     selectedOffice && selectedOffice !== "nouakchott" ? selectedOffice : "dubai"
   );
+  const [service, setService] = useState<PackingService>("airRegular");
   const [pricePerKg, setPricePerKg] = useState("0");
   const [pricePerKgMRU, setPricePerKgMRU] = useState("");
   const [saving, setSaving] = useState(false);
@@ -176,37 +188,40 @@ export default function PackingHub() {
       setFormError(c.invalidTracking);
       return;
     }
-    const numericRate = Number(pricePerKg);
-    const rawMru = pricePerKgMRU.trim();
-    const numericMru = rawMru === "" ? undefined : Number(rawMru);
-    if (
-      !Number.isFinite(numericRate) ||
-      numericRate < 0 ||
-      (numericMru !== undefined &&
-        (!Number.isFinite(numericMru) || numericMru < 0))
-    ) {
-      setFormError(c.error);
-      return;
-    }
     savingRef.current = true;
     setSaving(true);
     try {
       const shipment = createPackedShipment({
         tracking: cleanTracking,
         source,
-        ...(selectedOffice
-          ? { officeId: selectedOffice }
-          : { officeId: source }),
+        officeId: source,
         // Generic shipment creation never writes finance fields. Finance commands
         // are reviewed and posted from the accountant finance workspace only.
         pricePerKg: 0,
+        service,
+        ...(publicProfiles.data
+          ? {
+              rateSnapshot: tariffForPackingProfiles({
+                source,
+                service,
+                sourceProfile:
+                  publicProfiles.data.find(p => p.officeId === source) ??
+                  defaultOfficeProfile(source),
+                nouakchottProfile:
+                  publicProfiles.data.find(p => p.officeId === "nouakchott") ??
+                  defaultOfficeProfile("nouakchott"),
+              }).snapshot,
+            }
+          : {}),
       });
       const saved = await workspace.saveShipment(
         shipment,
         `${c.createShipment}: ${cleanTracking}`
       );
       if (!saved) {
-        setFormError(workspace.lastSaveError?.() ?? workspace.error ?? c.saveError);
+        setFormError(
+          workspace.lastSaveError?.() ?? workspace.error ?? c.saveError
+        );
         return;
       }
       setMessage(c.created);
@@ -451,6 +466,9 @@ export default function PackingHub() {
           setPricePerKg={setPricePerKg}
           pricePerKgMRU={pricePerKgMRU}
           setPricePerKgMRU={setPricePerKgMRU}
+          service={service}
+          setService={setService}
+          publicProfiles={publicProfiles.data ?? []}
           saving={saving}
           error={formError}
           submit={submit}
@@ -474,6 +492,9 @@ function NewShipmentForm({
   setPricePerKg,
   pricePerKgMRU,
   setPricePerKgMRU,
+  service,
+  setService,
+  publicProfiles,
   saving,
   error,
   submit,
@@ -491,10 +512,14 @@ function NewShipmentForm({
   setPricePerKg: (v: string) => void;
   pricePerKgMRU: string;
   setPricePerKgMRU: (v: string) => void;
+  service: PackingService;
+  setService: (v: PackingService) => void;
+  publicProfiles: VersionedOfficeProfile[];
   saving: boolean;
   error: string | null;
   submit: (event: React.FormEvent<HTMLFormElement>) => Promise<void>;
 }) {
+  const { language } = useLanguage();
   return (
     <form
       onSubmit={submit}
@@ -536,16 +561,43 @@ function NewShipmentForm({
             ))}
           </select>
         </PackingField>
-        {/* Generic shipment rates are finance-command fields, not packing fields. */}
+        <PackingField label={c.service} required>
+          <select
+            aria-label={c.service}
+            required
+            disabled={saving}
+            className={packingInputClass}
+            value={service}
+            onChange={event => setService(event.target.value as PackingService)}
+          >
+            {packingServices.map(item => (
+              <option key={item} value={item}>
+                {c[item]}
+              </option>
+            ))}
+          </select>
+        </PackingField>
       </div>
+      <PublishedPackingTariff
+        service={service}
+        snapshot={
+          tariffForPackingProfiles({
+            source,
+            service,
+            sourceProfile:
+              publicProfiles.find(p => p.officeId === source) ??
+              defaultOfficeProfile(source),
+            nouakchottProfile:
+              publicProfiles.find(p => p.officeId === "nouakchott") ??
+              defaultOfficeProfile("nouakchott"),
+          }).snapshot
+        }
+        c={c}
+        language={language}
+      />
       {!canEdit && (
         <p className="mt-4 rounded-xl bg-slate-50 px-3 py-2 text-sm text-[#718088]">
           {c.canNotEdit}
-        </p>
-      )}
-      {!showFinance && (
-        <p className="mt-4 rounded-xl bg-slate-50 px-3 py-2 text-sm text-[#718088]">
-          {c.rateRestricted}
         </p>
       )}
       {error && (
@@ -602,7 +654,10 @@ function ShipmentRow({
             </div>
             <p className="mt-2 text-sm text-[#718088]">
               {shipment.route} ·{" "}
-              {formatLocalNumber(shipment.packing.cartons.length, language)}{" "}
+              {shipment.packing.service
+                ? c[shipment.packing.service]
+                : shipment.service}{" "}
+              · {formatLocalNumber(shipment.packing.cartons.length, language)}{" "}
               {c.cartons}
             </p>
           </div>

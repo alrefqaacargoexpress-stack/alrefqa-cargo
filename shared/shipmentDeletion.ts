@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { AppRole, Shipment, PendingChange } from "./operations";
+import type { OfficeId } from "./branches";
 
 export const shipmentDeletionSchema = z
   .object({
@@ -13,9 +14,17 @@ export const shipmentActionSchema = z.enum([
 ]);
 export function canDeleteShipment(
   role: AppRole | null,
-  shipment: Shipment
+  shipment: Shipment,
+  offices?: readonly OfficeId[] | null
 ): boolean {
-  return role === "admin";
+  if (role === "admin") return true;
+  if (role !== "office_manager") return false;
+  // The server performs the authoritative office check in assertOfficeRecordWrite.
+  // Callers that have a cached/known scope should pass it so offline UI cannot offer
+  // an action for a shipment from another office.
+  if (offices === undefined) return true;
+  const owner = shipment.officeId ?? shipment.packing?.source;
+  return Boolean(offices?.length === 1 && owner && offices[0] === owner);
 }
 export function deleteShipment<T extends Shipment>(
   shipment: T,

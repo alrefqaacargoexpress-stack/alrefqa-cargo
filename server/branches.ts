@@ -20,6 +20,7 @@ import {
   type OfficeProfile,
   type VersionedOfficeProfile,
   ownerOffice,
+  canConfirmOfficeArrival,
 } from "@shared/branches";
 import type {
   AppRole,
@@ -452,15 +453,12 @@ export async function confirmArrival(
   scope: OfficeScope,
   input: z.infer<typeof confirmArrivalSchema>
 ) {
-  if (!scope.role || (scope.role !== "admin" && scope.role !== "supervisor"))
-    throw branchForbidden("Warehouse arrival is restricted");
-  if (
-    scope.role !== "admin" &&
-    scope.offices !== null &&
-    !scope.offices.includes("nouakchott")
-  )
-    throw branchForbidden("Nouakchott assignment required");
+  if (!canConfirmOfficeArrival(scope.role, scope.offices))
+    throw branchForbidden("Nouakchott warehouse arrival is restricted");
   return db.transaction(async (tx: any) => {
+    scope = await readOfficeScope(tx, user);
+    if (!canConfirmOfficeArrival(scope.role, scope.offices))
+      throw branchForbidden("Nouakchott assignment required");
     const payloadHash = createHash("sha256")
       .update(JSON.stringify(input))
       .digest("hex");
@@ -528,13 +526,11 @@ export async function confirmArrival(
         shipment,
         version: row.version,
       };
-      await tx
-        .insert(syncReceipts)
-        .values({
-          userId: user.id,
-          changeId: receiptKey,
-          result: { ...result, payloadHash },
-        });
+      await tx.insert(syncReceipts).values({
+        userId: user.id,
+        changeId: receiptKey,
+        result: { ...result, payloadHash },
+      });
       return {
         ...result,
         shipment: hideForOfficeScope(
@@ -597,13 +593,11 @@ export async function confirmArrival(
       shipment: mutation.shipment,
       version: nextVersion,
     };
-    await tx
-      .insert(syncReceipts)
-      .values({
-        userId: user.id,
-        changeId: receiptKey,
-        result: { ...result, payloadHash },
-      });
+    await tx.insert(syncReceipts).values({
+      userId: user.id,
+      changeId: receiptKey,
+      result: { ...result, payloadHash },
+    });
     return {
       ...result,
       shipment: hideForOfficeScope(result.shipment, scope.role, scope.offices),

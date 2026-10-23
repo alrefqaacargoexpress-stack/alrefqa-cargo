@@ -41,13 +41,20 @@ describe("Reversible shipment deletion", () => {
     expect(shipmentContent(restored)).toBe(shipmentContent(original));
     expect(removed.deleted).toBeDefined();
   });
-  it("allows deletion only for the general admin and never warehouse/accountant/viewer", () => {
+  it("allows deletion for the owning office manager and never warehouse/accountant/viewer", () => {
     const original = create();
     const transit = changePackingStatus(
       closePackingCarton(original),
       "في الطريق"
     );
     expect(canDeleteShipment("admin", transit)).toBe(true);
+    expect(canDeleteShipment("office_manager", original, ["china"])).toBe(
+      true
+    );
+    expect(canDeleteShipment("office_manager", original, ["dubai"])).toBe(
+      false
+    );
+    expect(canDeleteShipment("office_manager", original, null)).toBe(false);
     expect(canDeleteShipment("staff", original)).toBe(false);
     expect(canDeleteShipment("staff", transit)).toBe(false);
     for (const role of ["viewer", "accountant", null] as const)

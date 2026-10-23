@@ -173,7 +173,8 @@ export default function Tracking() {
     }
   }, [currentJourney, workspace.canDetails]);
   const availableStages = useMemo(() => {
-    if (workspace.canSupervise) return [...stageIds];
+    if (workspace.canSupervise)
+      return stageIds.filter(id => id !== "arrived_office");
     if (workspace.role === "staff" && !workspace.canUpdateWarehouseStage)
       return [];
     if (!currentJourney) {

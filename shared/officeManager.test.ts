@@ -67,7 +67,8 @@ describe("Office manager boundaries", () => {
         "office_manager"
       )
     ).toBe(false);
-    expect(canDeleteShipment("office_manager", cargo)).toBe(false);
+    expect(canDeleteShipment("office_manager", cargo, ["dubai"])).toBe(true);
+    expect(canDeleteShipment("office_manager", cargo, ["china"])).toBe(false);
   });
   it("hides another office even when its shipment passes through this office", () => {
     const other = {

@@ -134,19 +134,19 @@ describe("Server tracking command integrity", () => {
     expect(corrected.journey?.notes[1].text).toBe("Confirmed location");
     expect(outbound.journey?.stage).toBe("to_dakar");
   });
-  it("arrives at the office without falsely marking customer delivery", () => {
-    const arrived = applyTrackingCommand(
-      plan(),
-      {
-        type: "stage",
-        stage: "arrived_office",
-        reason: "Received at Nouakchott",
-      },
-      supervisor,
-      now
-    ).shipment;
-    expect(arrived.journey?.stage).toBe("arrived_office");
-    expect(arrived.status).toBe("وصلت للمكتب");
+  it("requires the dedicated receiving-office confirmation for final arrival", () => {
+    expect(() =>
+      applyTrackingCommand(
+        plan(),
+        {
+          type: "stage",
+          stage: "arrived_office",
+          reason: "Received at Nouakchott",
+        },
+        supervisor,
+        now
+      )
+    ).toThrow("arrival_confirmation_required");
   });
   it("preserves cargo and invoices outside the shipment while admin cancellation sets a tombstone", () => {
     const original = plan();
