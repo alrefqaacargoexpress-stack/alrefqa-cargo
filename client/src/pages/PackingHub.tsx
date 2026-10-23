@@ -296,13 +296,24 @@ export default function PackingHub() {
               </p>
               <p className="text-sm text-[#718088]">{c.createHelp}</p>
             </div>
-            <Link
-              href={`/operations/shipments/new${query ? `?${query}` : ""}`}
-              className={`${packingPrimaryClass} gap-2`}
-            >
-              <Plus size={17} />
-              {c.newShipment}
-            </Link>
+            {workspace.canCreateShipments ? (
+              <Link
+                href={`/operations/shipments/new${query ? `?${query}` : ""}`}
+                className={`${packingPrimaryClass} gap-2`}
+              >
+                <Plus size={17} />
+                {c.newShipment}
+              </Link>
+            ) : (
+              <button
+                type="button"
+                disabled
+                className={`${packingPrimaryClass} gap-2 opacity-50`}
+              >
+                <Plus size={17} />
+                {c.newShipment}
+              </button>
+            )}
           </section>
           {message && (
             <p

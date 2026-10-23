@@ -3,6 +3,15 @@ import { officeIdSchema, type OfficeId, type OfficeMember } from "./branches";
 import { goodsTotals, normalizeName, sourceCurrency } from "./packing";
 import { invoicePaymentSchema } from "./office";
 import type { AppRole, Invoice, Shipment } from "./operations";
+import {
+  canReadAnyFinance,
+  permissionAllowed,
+  permissionsFor,
+  type PermissionKey,
+  type PermissionMap,
+  type PermissionLevel,
+  type PermissionSubject,
+} from "./permissions";
 
 export const financeCurrencies = [
   "MRU",
@@ -396,31 +405,100 @@ export function emptyFinanceSnapshot(): FinanceSnapshot {
     shipmentReceivables: [],
   };
 }
-export function canUseFinance(role: AppRole | null) {
-  return role === "admin" || role === "accountant" || role === "office_manager";
-}
-export const canReadFinance = canUseFinance;
-export function canWriteFinance(scope: {
+export type FinancePermissionScope = PermissionSubject & {
   role: AppRole | null;
   offices: OfficeId[] | null;
   homeOffice?: OfficeId | null;
-}) {
-  if (scope.role !== "accountant") return false;
+  permissions?: PermissionMap | null;
+};
+
+/** A role-only call remains supported for legacy consumers; scoped calls use the matrix. */
+export function canUseFinance(
+  subject: AppRole | FinancePermissionScope | null
+) {
+  if (typeof subject === "string" || subject === null)
+    return (
+      subject === "admin" ||
+      subject === "accountant" ||
+      subject === "office_manager"
+    );
+  return canReadAnyFinance(subject);
+}
+export function canReadFinance(
+  subject: AppRole | FinancePermissionScope | null
+) {
+  return canUseFinance(subject);
+}
+export function canWriteFinance(scope: FinancePermissionScope) {
+  if (!scope.role || !scope.offices) return scope.role === "admin";
+  const permissions = permissionsFor(scope);
+  const hasManage = (Object.keys(permissions) as PermissionKey[]).some(
+    key =>
+      permissionAllowed(scope, key, "manage") &&
+      [
+        "customers",
+        "invoices",
+        "payments",
+        "expenses",
+        "opening_balance",
+        "shipment_prices",
+        "finance_reports",
+        "excel",
+        "office_wallets",
+      ].includes(key)
+  );
+  if (!hasManage) return false;
+  if (scope.role === "admin") return true;
   const home =
-    scope.homeOffice ?? (scope.offices?.length === 1 ? scope.offices[0] : null);
+    scope.homeOffice ?? (scope.offices.length === 1 ? scope.offices[0] : null);
   return Boolean(
-    home && scope.offices?.length === 1 && scope.offices[0] === home
+    home && scope.offices.length === 1 && scope.offices[0] === home
   );
 }
+export function financePermissionForCommand(
+  kind:
+    | "invoice"
+    | "expense"
+    | "settlement"
+    | "customer_movement"
+    | "opening_balance"
+    | "shipment_price"
+): PermissionKey {
+  if (kind === "invoice") return "invoices";
+  if (kind === "expense") return "expenses";
+  if (kind === "opening_balance") return "opening_balance";
+  if (kind === "shipment_price") return "shipment_prices";
+  return "payments";
+}
+export function financePermissionForEntry(
+  kind: FinanceEntry["kind"]
+): PermissionKey {
+  if (["daily_expense", "monthly_expense", "shipment_cost"].includes(kind))
+    return "expenses";
+  if (kind === "opening_balance") return "opening_balance";
+  if (kind === "shipment_revenue") return "shipment_prices";
+  if (kind === "invoice_revenue") return "invoices";
+  return "payments";
+}
+export function financeCan(
+  scope: FinancePermissionScope,
+  key: PermissionKey,
+  level: PermissionLevel = "view"
+) {
+  return permissionAllowed(scope, key, level);
+}
 export function employeeFinanceOffice(
-  scope: {
-    role: AppRole | null;
-    offices: OfficeId[] | null;
-    homeOffice?: OfficeId | null;
-  },
+  scope: FinancePermissionScope,
   requested?: OfficeId
 ): OfficeId {
-  if (!canUseFinance(scope.role)) throw new Error("finance_forbidden");
+  if (
+    ["accountant", "office_manager"].includes(scope.role ?? "") &&
+    !scope.offices?.length
+  )
+    throw new Error("employee_office_required");
+  if (!canReadAnyFinance(scope)) throw new Error("finance_forbidden");
+  if (scope.role !== "admin" && (!scope.offices || scope.offices.length !== 1))
+    throw new Error("finance_forbidden");
   const home =
     scope.homeOffice ?? (scope.offices?.length === 1 ? scope.offices[0] : null);
   if (home && scope.offices !== null && !scope.offices.includes(home))

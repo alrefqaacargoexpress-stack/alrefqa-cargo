@@ -3,6 +3,7 @@ import type { FinanceCommand, FinanceCurrency } from "@shared/finance";
 import { financeCurrencies } from "@shared/finance";
 import type { OfficeId } from "@shared/branches";
 import type { AppRole } from "@shared/operations";
+import type { PermissionMap } from "@shared/permissions";
 import { ownerOffice } from "@shared/branches";
 import type { Shipment } from "@shared/operations";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -35,6 +36,7 @@ export type OfficeExpenseFormProps = {
   saveCommand: (command: FinanceCommand) => Promise<boolean>;
   role?: AppRole | null;
   homeOffice?: OfficeId | null;
+  permissions?: PermissionMap | null;
 };
 
 export function createExpenseCommand(input: {
@@ -76,6 +78,7 @@ export default function OfficeExpenseForm({
   saveCommand,
   role,
   homeOffice,
+  permissions,
 }: OfficeExpenseFormProps) {
   const { language } = useLanguage();
   const c = officeFinanceCopyFor(language);
@@ -88,7 +91,13 @@ export default function OfficeExpenseForm({
   const canWrite =
     canEdit &&
     singleOfficeScope &&
-    canWriteFinanceUi(role, allowedOffices, officeForWrite);
+    canWriteFinanceUi(
+      role,
+      allowedOffices,
+      officeForWrite,
+      permissions,
+      "expenses"
+    );
   const [category, setCategory] = useState<
     "daily_expense" | "monthly_expense" | "shipment_cost"
   >("daily_expense");

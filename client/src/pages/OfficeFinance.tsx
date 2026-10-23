@@ -10,6 +10,7 @@ import {
   type FinanceEntry,
   canWriteFinance,
 } from "@shared/finance";
+import { canReadAnyFinance } from "@shared/permissions";
 import { sourceCurrency } from "@shared/packing";
 import type { Shipment } from "@shared/operations";
 import PackingLayout from "@/components/packing/PackingLayout";
@@ -227,10 +228,12 @@ export default function OfficeFinance() {
     [summaries]
   );
   const [syncNotice, setSyncNotice] = useState("");
-  const canUseFinance =
-    finance.role === "admin" ||
-    finance.role === "accountant" ||
-    finance.role === "office_manager";
+  const canUseFinance = canReadAnyFinance({
+    role: finance.role,
+    offices: finance.offices,
+    homeOffice: finance.homeOffice,
+    permissions: finance.permissions,
+  });
   const canWrite = canWriteFinance({
     role: finance.role,
     offices: finance.offices,
@@ -914,6 +917,7 @@ export default function OfficeFinance() {
                 {...({
                   role: finance.role,
                   homeOffice: finance.homeOffice,
+                  permissions: finance.permissions,
                   newReadonlyPolicy: !accountantHomeOnly,
                 } as Record<string, unknown>)}
               />

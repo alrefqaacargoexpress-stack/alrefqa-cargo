@@ -15,6 +15,8 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { AppRole } from "@shared/operations";
+import { permissionAllowed, type PermissionMap } from "@shared/permissions";
+import { asPermissionSubject } from "@/lib/offlineAccess";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useOperationsWorkspace } from "@/hooks/useOperationsWorkspace";
 import PackingLayout from "@/components/packing/PackingLayout";
@@ -134,12 +136,18 @@ export function operationActionsForRole(
   role: AppRole | null,
   c: ActionCopy,
   offices?: string[] | null,
-  canUpdateTracking?: boolean
+  canUpdateTracking?: boolean,
+  permissions?: PermissionMap | null
 ): Action[] {
   const actions: Action[] = [];
+  const subject = asPermissionSubject(role, offices as never, permissions);
   const nouakchottStaff =
     role === "staff" && offices?.length === 1 && offices[0] === "nouakchott";
-  if (nouakchottStaff) {
+  if (
+    nouakchottStaff &&
+    (permissionAllowed(subject, "storage", "manage") ||
+      permissions === undefined)
+  ) {
     actions.push({
       href: "/operations/warehouse",
       label: c.warehouse ?? "Warehouse",
@@ -147,20 +155,33 @@ export function operationActionsForRole(
     });
     return actions;
   }
-  if (["admin", "office_manager", "staff"].includes(role ?? "")) {
-    actions.push(
-      {
+  if (
+    permissionAllowed(subject, "shipments", "view") ||
+    (permissions === undefined &&
+      ["admin", "office_manager", "staff"].includes(role ?? ""))
+  ) {
+    if (
+      permissionAllowed(subject, "shipments", "manage") ||
+      (permissions === undefined &&
+        ["admin", "office_manager", "staff"].includes(role ?? ""))
+    )
+      actions.push({
         href: "/operations/shipments/new",
         label: c.newShipment,
         icon: PackagePlus,
-      },
-      { href: "/operations/shipments", label: c.shipments, icon: Truck }
-    );
+      });
+    actions.push({
+      href: "/operations/shipments",
+      label: c.shipments,
+      icon: Truck,
+    });
   }
   if (
-    role &&
-    role !== "viewer" &&
-    (role !== "staff" || offices === undefined)
+    permissionAllowed(subject, "customers", "view") ||
+    (permissions === undefined &&
+      role &&
+      role !== "viewer" &&
+      (role !== "staff" || offices === undefined))
   ) {
     actions.push({
       href: "/operations/customers",
@@ -168,20 +189,26 @@ export function operationActionsForRole(
       icon: Users,
     });
   }
-  if (role === "admin" || role === "office_manager" || role === "accountant") {
+  if (
+    permissionAllowed(subject, "invoices", "view") ||
+    (permissions === undefined &&
+      ["admin", "office_manager", "accountant"].includes(role ?? ""))
+  ) {
     actions.push(
       { href: "/operations/billing", label: c.invoice, icon: FilePlus2 },
       { href: "/operations/finance", label: c.offices, icon: Landmark }
     );
   }
   if (
-    [
-      "admin",
-      "office_manager",
-      "tracking_staff",
-      "supervisor",
-      "viewer",
-    ].includes(role ?? "") ||
+    permissionAllowed(subject, "tracking", "view") ||
+    (permissions === undefined &&
+      [
+        "admin",
+        "office_manager",
+        "tracking_staff",
+        "supervisor",
+        "viewer",
+      ].includes(role ?? "")) ||
     (role === "staff" && canUpdateTracking === true)
   ) {
     actions.push({
@@ -190,7 +217,11 @@ export function operationActionsForRole(
       icon: ClipboardList,
     });
   }
-  if (role === "admin" || role === "office_manager") {
+  if (
+    permissionAllowed(subject, "office_settings", "manage") ||
+    (permissions === undefined &&
+      ["admin", "office_manager"].includes(role ?? ""))
+  ) {
     actions.push({
       href: "/operations/settings",
       label: c.settings,
@@ -218,7 +249,8 @@ export default function OperationsHome() {
     workspace.role,
     c,
     workspace.offices,
-    workspace.canUpdateTracking
+    workspace.canUpdateTracking,
+    workspace.permissions
   );
 
   return (

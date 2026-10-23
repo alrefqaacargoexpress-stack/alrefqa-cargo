@@ -8,6 +8,12 @@ type Copy = Record<Language, string>;
  * never expose another office's data or internal identifiers.
  */
 const reasons: Record<string, Copy> = {
+  permission_denied: {
+    ar: "لا تملك صلاحية تنفيذ هذا التعديل، أو تغيّرت صلاحياتك. مسودتك محفوظة؛ اطلب مراجعة الصلاحيات ثم أعد المحاولة.",
+    en: "You do not have permission for this change, or your permissions changed. Your draft is retained; ask for a permission review and try again.",
+    zh: "您没有执行此更改的权限，或权限已变更。草稿已保留；请申请检查权限后重试。",
+    tr: "Bu değişiklik için yetkiniz yok veya yetkileriniz değişti. Taslağınız korunuyor; yetki kontrolü isteyip tekrar deneyin.",
+  },
   forbidden: {
     ar: "هذا الإجراء ليس ضمن صلاحيات دورك. اطلب من المدير العام تعديل دورك إن لزم.",
     en: "This action is outside your role. Ask the general manager to adjust your role if needed.",
@@ -27,10 +33,10 @@ const reasons: Record<string, Copy> = {
     tr: "Burada tutar veya fiyat girilemez. Kilo fiyatını ofis muhasebecisi hesaplar sayfasından belirler.",
   },
   finance_command_required: {
-    ar: "التعديلات المالية تتم من صفحة حسابات المكتب بواسطة محاسب المكتب فقط.",
-    en: "Financial changes are made from the office accounts page by the office accountant only.",
-    zh: "财务更改只能由办公室会计在办公室账户页面完成。",
-    tr: "Mali değişiklikler yalnızca ofis muhasebecisi tarafından ofis hesapları sayfasından yapılır.",
+    ar: "التعديلات المالية تتم من صفحة حسابات المكتب بواسطة صاحب صلاحية التنفيذ المالي.",
+    en: "Financial changes are made from the office accounts page by someone with financial execution permission.",
+    zh: "财务更改由具有财务操作权限的人员在办公室账户页面完成。",
+    tr: "Mali değişiklikler, mali işlem yetkisine sahip kişi tarafından ofis hesapları sayfasından yapılır.",
   },
   version_conflict: {
     ar: "عدّل موظف آخر هذا السجل قبلك. راجع النسخة الأحدث ثم أعد إدخال تعديلك.",
@@ -211,8 +217,7 @@ export function syncReasonMessage(
   reason: string | null | undefined,
   language: Language
 ): string {
-  const copy =
-    reason && hasSyncReasonCopy(reason) ? reasons[reason] : fallback;
+  const copy = reason && hasSyncReasonCopy(reason) ? reasons[reason] : fallback;
   return copy[language] ?? copy.ar;
 }
 

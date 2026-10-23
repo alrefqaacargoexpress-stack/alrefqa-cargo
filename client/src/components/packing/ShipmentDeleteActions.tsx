@@ -8,11 +8,15 @@ import {
   restoreShipment,
 } from "@shared/shipmentDeletion";
 import type { AppRole, Shipment } from "@shared/operations";
+import { permissionAllowed, type PermissionMap } from "@shared/permissions";
 import type { OfficeId } from "@shared/branches";
+import { compatibilityRoleForAction } from "@/lib/offlineAccess";
 
 type Workspace = {
   role: AppRole | null;
   offices?: OfficeId[] | null;
+  permissions?: PermissionMap | null;
+  canDeleteShipments?: boolean;
   saveShipment: (
     shipment: Shipment,
     label?: string,
@@ -45,11 +49,20 @@ export default function ShipmentDeleteActions({
   const [error, setError] = useState<string | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const busyRef = useRef(false);
-  const allowed = canDeleteShipment(
-    workspace.role,
-    shipment,
-    workspace.offices
-  );
+  const subject = {
+    role: workspace.role,
+    offices: workspace.offices,
+    permissions: workspace.permissions,
+  };
+  const allowed =
+    permissionAllowed(subject, "shipment_delete", "manage") &&
+    Boolean(
+      canDeleteShipment(
+        compatibilityRoleForAction(subject, "shipment_delete", "manage"),
+        shipment,
+        workspace.offices
+      )
+    );
   const disabled = saving || busy || !allowed;
 
   const run = async (
@@ -71,9 +84,7 @@ export default function ShipmentDeleteActions({
         action
       );
       if (!saved) {
-        setError(
-          workspace.lastSaveError?.() ?? workspace.error ?? c.saveError
-        );
+        setError(workspace.lastSaveError?.() ?? workspace.error ?? c.saveError);
         return;
       }
       setConfirmOpen(false);
@@ -134,16 +145,16 @@ export default function ShipmentDeleteActions({
         </span>
       )}
       {confirmOpen && (
-      <ConfirmShipmentDeletionDialog
-        open={confirmOpen}
-        tracking={shipment.tracking}
-        statusLabel={statusLabel}
-        defaultReason={c.shipmentDeleteReason}
-        busy={busy}
-        error={confirmOpen ? error : null}
-        onCancel={() => setConfirmOpen(false)}
-        onConfirm={reason => void run("delete-shipment", reason)}
-      />
+        <ConfirmShipmentDeletionDialog
+          open={confirmOpen}
+          tracking={shipment.tracking}
+          statusLabel={statusLabel}
+          defaultReason={c.shipmentDeleteReason}
+          busy={busy}
+          error={confirmOpen ? error : null}
+          onCancel={() => setConfirmOpen(false)}
+          onConfirm={reason => void run("delete-shipment", reason)}
+        />
       )}
     </div>
   );

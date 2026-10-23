@@ -1,3 +1,4 @@
+import NewPermissionsMatrix from "@/components/offices/newPermissionsMatrix";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useSearch } from "wouter";
 import PackingLayout from "@/components/packing/PackingLayout";
@@ -21,6 +22,13 @@ import {
 } from "@/lib/branchSettingsCopy";
 import WalletMethodsEditor from "@/components/offices/WalletMethodsEditor";
 import { canUseOperations } from "@shared/tracking";
+import {
+  permissionAllowed,
+  permissionsFor,
+  type PermissionMap,
+  type PermissionSubject,
+} from "@shared/permissions";
+import type { AppRole } from "@shared/operations";
 import type {
   OfficeId,
   OfficeMember,
@@ -66,9 +74,36 @@ export default function OfficeSettings() {
     retry: false,
     refetchOnWindowFocus: false,
   });
+  type AccessWithPermissions = {
+    role: AppRole | null;
+    userId: number;
+    offices: OfficeId[] | null;
+    homeOffice: OfficeId | null;
+    canUpdateTracking: boolean;
+    permissions?: PermissionMap | null;
+    delegatedBy?: number | null;
+  };
+  const access = accessQuery.data as AccessWithPermissions | undefined;
+  const permissionScope: PermissionSubject = {
+    role: access?.role ?? workspace.role,
+    offices: access?.offices ?? workspace.offices,
+    homeOffice: access?.homeOffice ?? null,
+    canUpdateTracking: access?.canUpdateTracking ?? false,
+    permissions: access?.permissions ?? null,
+  };
+  const permissionCeiling = permissionsFor(permissionScope);
+  const canReadMemberships = permissionAllowed(
+    permissionScope,
+    "employees",
+    "view"
+  );
+  const canEditMemberships =
+    permissionAllowed(permissionScope, "employees", "manage") &&
+    workspace.online &&
+    !workspace.localOnly;
   const managedOffice: OfficeId | null =
     workspace.role === "office_manager"
-      ? (accessQuery.data?.homeOffice ?? workspace.offices?.[0] ?? null)
+      ? (access?.homeOffice ?? workspace.offices?.[0] ?? null)
       : null;
   const selectableOffices: readonly OfficeId[] =
     workspace.role === "office_manager"
@@ -78,9 +113,7 @@ export default function OfficeSettings() {
       : officeIds;
   const membersQuery = trpc.branches.members.useQuery(undefined, {
     enabled:
-      workspace.role === "admin" &&
-      workspace.online &&
-      Boolean(workspace.userId),
+      canReadMemberships && workspace.online && Boolean(workspace.userId),
     retry: false,
     refetchOnWindowFocus: false,
   });
@@ -144,11 +177,16 @@ export default function OfficeSettings() {
     offices: OfficeId[];
     homeOffice: OfficeId | null;
     canUpdateTracking: boolean;
+    permissions?: PermissionMap;
     expectedVersion: number;
   }): Promise<OfficeMember | null> => {
-    if (workspace.role !== "admin" || !workspace.online) return null;
+    if (!canEditMemberships) return null;
     try {
-      const result = await assignMember.mutateAsync(input);
+      const result = await (
+        assignMember.mutateAsync as unknown as (
+          value: typeof input
+        ) => Promise<OfficeMember>
+      )(input);
       await utils.invalidate();
       return result;
     } catch {
@@ -177,12 +215,11 @@ export default function OfficeSettings() {
     workspace.role === "viewer" ||
     workspace.role === "tracking_staff";
 
-  const canReadNouakchottPayments =
-    workspace.role === "admin" ||
-    (workspace.role === "accountant" &&
-      Boolean(accessQuery.data) &&
-      (accessQuery.data?.offices === null ||
-        accessQuery.data?.offices?.includes("nouakchott") === true));
+  const canReadNouakchottPayments = permissionAllowed(
+    permissionScope,
+    "office_wallets",
+    "view"
+  );
   return (
     <PackingLayout
       title={copy.title}
@@ -190,6 +227,15 @@ export default function OfficeSettings() {
       workspace={workspace}
     >
       <section className="grid gap-5">
+        {(workspace.role === "admin" ||
+          workspace.role === "office_manager") && (
+          <NewPermissionsMatrix
+            value={permissionCeiling}
+            ceiling={permissionCeiling}
+            canEdit={false}
+            showRootPermissions={workspace.role === "admin"}
+          />
+        )}
         <div className="rounded-2xl border border-[#dce4e7] bg-white p-5 shadow-sm">
           <div className="flex flex-wrap items-end justify-between gap-4">
             <div>
@@ -206,6 +252,7 @@ export default function OfficeSettings() {
                 className={packingInputClass}
                 value={selectedOffice}
                 onChange={event => chooseOffice(event.target.value as OfficeId)}
+                disabled={workspace.role === "office_manager"}
               >
                 {selectableOffices.map(officeId => (
                   <option key={officeId} value={officeId}>
@@ -250,17 +297,24 @@ export default function OfficeSettings() {
           ) : (
             <p className="rounded-xl bg-white p-5 text-sm">{copy.noProfile}</p>
           ))}
-        {workspace.role === "admin" && (
+        {canReadMemberships && (
           <OfficeMemberships
             members={membersQuery.data ?? []}
-            canEdit={canEditProfile}
+            actorRole={access?.role ?? workspace.role}
+            actorUserId={
+              access?.userId ??
+              (workspace.userId ? Number(workspace.userId) : null)
+            }
+            managerHomeOffice={managedOffice}
+            permissionCeiling={permissionCeiling}
+            canEdit={canEditMemberships}
             online={workspace.online}
             pending={assignMember.isPending}
             onSave={saveMember}
             onResetPassword={resetMemberPassword}
           />
         )}
-        {workspace.role !== "admin" && (
+        {!canReadMemberships && (
           <p className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-[#52636e]">
             {copy.noMemberAccess}
           </p>

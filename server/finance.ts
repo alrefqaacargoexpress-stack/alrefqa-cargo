@@ -17,6 +17,9 @@ import {
   employeeFinanceOffice,
   canReadFinance,
   canWriteFinance,
+  financeCan,
+  financePermissionForCommand,
+  financePermissionForEntry,
   deriveShipmentReceivables,
   openingBalanceInputSchema,
   shipmentPriceInputSchema,
@@ -30,6 +33,7 @@ import {
 } from "@shared/packing";
 import type { AppRole, Invoice, Shipment } from "@shared/operations";
 import type { OfficeId } from "@shared/branches";
+import type { PermissionMap } from "@shared/permissions";
 import { canReadOfficeRecord } from "@shared/branches";
 import { adjustedInvoiceTotal } from "@shared/finance";
 import { readOfficeScope } from "./branches";
@@ -47,6 +51,8 @@ export type FinanceScope = {
   role: AppRole | null;
   offices: OfficeId[] | null;
   homeOffice?: OfficeId | null;
+  /** Effective permissions are projected by the current office scope. */
+  permissions?: PermissionMap | null;
 };
 export type FinanceActor = Pick<User, "id" | "name">;
 export type FinanceSyncUser = Pick<User, "id" | "name" | "openId" | "role">;
@@ -70,16 +76,30 @@ const hash = (value: unknown) =>
 function actorName(user: FinanceActor) {
   return user.name?.trim() || `user-${user.id}`;
 }
+function permissionSubject(scope: FinanceScope) {
+  return {
+    role: scope.role,
+    offices: scope.offices,
+    homeOffice: scope.homeOffice,
+    permissions: scope.permissions,
+  };
+}
 function assertFinance(scope: FinanceScope) {
-  if (!canReadFinance(scope.role)) throw new Error("finance_forbidden");
-  if (
-    scope.role === "office_manager" &&
-    (!scope.offices || scope.offices.length !== 1)
-  )
+  if (!canReadFinance(permissionSubject(scope)))
     throw new Error("finance_forbidden");
 }
-function assertFinanceWriter(scope: FinanceScope) {
-  if (!canWriteFinance(scope)) throw new Error("finance_forbidden");
+function assertFinanceCommand(
+  scope: FinanceScope,
+  command: FinanceMutationCommand
+) {
+  if (
+    !financeCan(
+      permissionSubject(scope),
+      financePermissionForCommand(command.kind),
+      "manage"
+    )
+  )
+    throw new Error("finance_forbidden");
 }
 function inScope(scope: FinanceScope, office: OfficeId) {
   return (
@@ -168,6 +188,7 @@ export async function financeSnapshot(
     .from(records)
     .where(eq(records.entity, "invoice"))) {
     const invoice = row.data as Invoice;
+    if (!financeCan(permissionSubject(scope), "invoices", "view")) continue;
     if (!canReadOfficeRecord(scope.role, scope.offices, "invoice", invoice))
       continue;
     invoices.push(publicInvoice(row));
@@ -175,7 +196,15 @@ export async function financeSnapshot(
   const entries: FinanceEntry[] = [];
   for (const row of await db.select().from(financeEntries)) {
     const parsed = asEntry(row.data);
-    if (inScope(scope, parsed.officeId)) entries.push(parsed);
+    if (
+      inScope(scope, parsed.officeId) &&
+      financeCan(
+        permissionSubject(scope),
+        financePermissionForEntry(parsed.kind),
+        "view"
+      )
+    )
+      entries.push(parsed);
   }
   const shipments = (
     await db.select().from(records).where(eq(records.entity, "shipment"))
@@ -188,14 +217,22 @@ export async function financeSnapshot(
       (scope.offices?.length === 1 ? scope.offices[0] : null),
     offices: scope.offices,
     lastReadAt: isoNow(),
-    receivables: deriveShipmentReceivables(
-      shipments,
-      scope.offices === null ? null : scope.offices
-    ),
-    shipmentReceivables: deriveShipmentReceivables(
-      shipments,
-      scope.offices === null ? null : scope.offices
-    ),
+    receivables: financeCan(permissionSubject(scope), "shipment_prices", "view")
+      ? deriveShipmentReceivables(
+          shipments,
+          scope.offices === null ? null : scope.offices
+        )
+      : [],
+    shipmentReceivables: financeCan(
+      permissionSubject(scope),
+      "shipment_prices",
+      "view"
+    )
+      ? deriveShipmentReceivables(
+          shipments,
+          scope.offices === null ? null : scope.offices
+        )
+      : [],
   } satisfies FinanceSnapshot;
   return financeSnapshotSchema.parse(snapshot) as FinanceSnapshot;
 }
@@ -606,7 +643,7 @@ async function applyOpeningBalance(
   scope: FinanceScope,
   command: Extract<FinanceMutationCommand, { kind: "opening_balance" }>
 ) {
-  assertFinanceWriter(scope);
+  assertFinanceCommand(scope, command);
   const input = openingBalanceInputSchema.parse(command.payload);
   const office = employeeFinanceOffice(scope, input.officeId);
   if (office !== input.officeId) throw new Error("financial_office_mismatch");
@@ -659,7 +696,7 @@ async function applyShipmentPrice(
   scope: FinanceScope,
   command: Extract<FinanceMutationCommand, { kind: "shipment_price" }>
 ) {
-  assertFinanceWriter(scope);
+  assertFinanceCommand(scope, command);
   const input = shipmentPriceInputSchema.parse(command.payload);
   const found = await shipmentFor(tx, input.shipmentId);
   const shipment = found.shipment;
@@ -713,7 +750,7 @@ export async function applyFinanceCommand(
   scope: FinanceScope,
   command: FinanceMutationCommand
 ) {
-  assertFinanceWriter(scope);
+  assertFinanceCommand(scope, command);
   if (command.kind === "invoice") return applyInvoice(tx, user, scope, command);
   if (command.kind === "expense") return applyExpense(tx, user, scope, command);
   if (command.kind === "customer_movement")
@@ -756,7 +793,7 @@ export async function financeSync(
       // without rolling back an earlier acknowledged command.
       const saved = await db.transaction(async (tx: any) => {
         const scope = fixedScope ?? (await readOfficeScope(tx, user));
-        assertFinanceWriter(scope);
+        assertFinanceCommand(scope, parsed);
         const prior = await tx
           .select()
           .from(financeReceipts)
@@ -778,13 +815,22 @@ export async function financeSync(
             : [];
           if (
             (replayInvoice &&
-              !canReadOfficeRecord(
-                scope.role,
-                scope.offices,
-                "invoice",
-                replayInvoice
-              )) ||
-            replayEntries.some(e => !inScope(scope, e.officeId))
+              (!financeCan(permissionSubject(scope), "invoices", "view") ||
+                !canReadOfficeRecord(
+                  scope.role,
+                  scope.offices,
+                  "invoice",
+                  replayInvoice
+                ))) ||
+            replayEntries.some(
+              e =>
+                !inScope(scope, e.officeId) ||
+                !financeCan(
+                  permissionSubject(scope),
+                  financePermissionForEntry(e.kind),
+                  "view"
+                )
+            )
           )
             throw new Error("finance_forbidden");
           return replay;

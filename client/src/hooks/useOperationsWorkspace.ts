@@ -1,4 +1,10 @@
 import { protectOfficeShipmentFinance } from "@shared/officeFinanceVisibility";
+import {
+  permissionAllowed,
+  permissionMapSchema,
+  canReadAnyFinance,
+  type PermissionMap,
+} from "@shared/permissions";
 import { prepareCustomerAccount } from "@shared/customerAccountCreation";
 import { useEffect, useRef, useState } from "react";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -29,10 +35,15 @@ import {
 import { canonicalPackingShipment, normalizeTracking } from "@shared/packing";
 import { canNoteTracking } from "@shared/tracking";
 import {
+  asPermissionSubject,
   canCreateSourceShipment,
+  canDeleteShipments,
   canEditCustomerAccount,
+  canEditShipments,
   canOpenLocalWorkspace,
+  canSendShipments,
   canStaffSendShipment,
+  compatibilityRoleForAction,
   isNouakchottStaff,
   profileMatchesUser,
 } from "@/lib/offlineAccess";
@@ -51,11 +62,18 @@ type Profile = {
   role: AppRole;
   name?: string;
   offices?: OfficeId[] | null;
+  homeOffice?: OfficeId | null;
+  permissions?: PermissionMap | null;
+  delegatedBy?: number | null;
+  permissionFingerprint?: string | null;
 };
 type AccessResponse = {
   role: AppRole | null;
   offices?: OfficeId[] | null;
-  // Pending server contract: this belongs to OfficeScope/access/member.
+  homeOffice?: OfficeId | null;
+  permissions: PermissionMap;
+  delegatedBy?: number | null;
+  permissionFingerprint?: string | null;
   canUpdateTracking?: boolean;
 };
 const words = {
@@ -145,6 +163,18 @@ function readProfile(): Profile | null {
                 officeIds.includes(office as OfficeId)
               )
             : null,
+          homeOffice: officeIds.includes(value.homeOffice as OfficeId)
+            ? (value.homeOffice as OfficeId)
+            : null,
+          permissions: permissionMapSchema.safeParse(value.permissions).success
+            ? (value.permissions as PermissionMap)
+            : null,
+          delegatedBy:
+            typeof value.delegatedBy === "number" ? value.delegatedBy : null,
+          permissionFingerprint:
+            typeof value.permissionFingerprint === "string"
+              ? value.permissionFingerprint
+              : null,
         }
       : null;
   } catch {
@@ -211,21 +241,39 @@ export function filterStateByAccess(
 function changeAllowed(
   workspace: Workspace,
   change: PendingChange,
-  role: AppRole | null,
-  offices: OfficeId[] | null
+  subject: ReturnType<typeof asPermissionSubject>
 ) {
+  const role = subject.role;
+  const offices = subject.offices ?? null;
   const current = stateCollection(workspace.state, change.entity).find(
     record => record.id === change.recordId
   );
   // A pending upsert must remain in the queue unless both its prior/current
   // scope and its submitted scope are writable. Never disclose blocked labels.
+  const key =
+    change.entity === "account"
+      ? ("customers" as const)
+      : change.entity === "shipment"
+        ? change.action === "delete-shipment" ||
+          change.action === "restore-shipment"
+          ? ("shipment_delete" as const)
+          : ("shipments" as const)
+        : ("invoices" as const);
   return Boolean(
-    canWriteOfficeRecord(
-      role,
-      offices,
-      change.entity,
-      current ?? change.data
-    ) && canWriteOfficeRecord(role, offices, change.entity, change.data)
+    permissionAllowed(subject, key, "manage") &&
+      change.entity !== "invoice" &&
+      canWriteOfficeRecord(
+        compatibilityRoleForAction(subject, key, "manage") ?? role,
+        offices,
+        change.entity,
+        current ?? change.data
+      ) &&
+      canWriteOfficeRecord(
+        compatibilityRoleForAction(subject, key, "manage") ?? role,
+        offices,
+        change.entity,
+        change.data
+      )
   );
 }
 
@@ -257,6 +305,27 @@ export function useOperationsWorkspace() {
     ? (accessData?.offices ??
       (offlineIdentity ? (cachedProfile?.offices ?? null) : null))
     : null;
+  const homeOffice = activeId
+    ? (accessData?.homeOffice ??
+      (offlineIdentity ? (cachedProfile?.homeOffice ?? null) : null))
+    : null;
+  const permissions = activeId
+    ? (accessData?.permissions ??
+      (offlineIdentity ? (cachedProfile?.permissions ?? null) : null))
+    : null;
+  const delegatedBy =
+    accessData?.delegatedBy ??
+    (offlineIdentity ? (cachedProfile?.delegatedBy ?? null) : null);
+  const permissionFingerprint =
+    accessData?.permissionFingerprint ??
+    (offlineIdentity ? (cachedProfile?.permissionFingerprint ?? null) : null);
+  const subject = asPermissionSubject(
+    role,
+    offices,
+    permissions,
+    homeOffice,
+    accessData?.canUpdateTracking
+  );
   const userId = activeId;
   const localOnly = offlineIdentity;
   const snapshot = trpc.operations.snapshot.useQuery(undefined, {
@@ -320,12 +389,25 @@ export function useOperationsWorkspace() {
           role,
           name: me.data?.name ?? "",
           offices: accessData?.offices ?? null,
+          homeOffice: accessData?.homeOffice ?? null,
+          permissions: accessData?.permissions ?? null,
+          delegatedBy: accessData?.delegatedBy ?? null,
+          permissionFingerprint: accessData?.permissionFingerprint ?? null,
         })
       );
     } catch {
       /* no credentials are cached */
     }
-  }, [activeId, role, me.data?.name, accessData?.offices]);
+  }, [
+    activeId,
+    role,
+    me.data?.name,
+    accessData?.offices,
+    accessData?.homeOffice,
+    accessData?.permissions,
+    accessData?.delegatedBy,
+    accessData?.permissionFingerprint,
+  ]);
   useEffect(() => {
     if (!snapshot.data || !activeId || !ref.current) return;
     let stopped = false;
@@ -359,7 +441,7 @@ export function useOperationsWorkspace() {
       !current ||
       !accessReady ||
       busy ||
-      !canEditCustomerAccount(role, offices)
+      !canEditCustomerAccount(subject)
     ) {
       return failSave(
         role && role !== "accountant"
@@ -374,7 +456,7 @@ export function useOperationsWorkspace() {
       const candidate = prepareCustomerAccount(
         account,
         existing,
-        role,
+        compatibilityRoleForAction(subject, "customers", "manage") ?? role,
         offices
       );
       const next = stageChange(
@@ -403,12 +485,14 @@ export function useOperationsWorkspace() {
     if (
       !id ||
       !current ||
-      !canWrite(role, "shipment") ||
-      !canCreateSourceShipment(role, offices) ||
+      !canEditShipments(subject) ||
+      !canCreateSourceShipment(subject) ||
       !accessReady
     ) {
       return failSave(
-        isNouakchottStaff(role, offices) ? "warehouse_scope_forbidden" : "forbidden"
+        isNouakchottStaff(role, offices)
+          ? "warehouse_scope_forbidden"
+          : "forbidden"
       );
     }
     lastSaveErrorRef.current = null;
@@ -420,12 +504,32 @@ export function useOperationsWorkspace() {
       existing?.officeId && !shipment.officeId
         ? { ...shipment, officeId: existing.officeId }
         : shipment;
+    const actionKey =
+      action === "delete-shipment" || action === "restore-shipment"
+        ? ("shipment_delete" as const)
+        : existing && existing.status !== candidate.status
+          ? candidate.status === "في الطريق"
+            ? ("shipment_send" as const)
+            : ("tracking" as const)
+          : ("shipments" as const);
+    if (!permissionAllowed(subject, actionKey, "manage")) {
+      return failSave("forbidden");
+    }
+    const actionRole =
+      compatibilityRoleForAction(subject, actionKey, "manage") ?? role;
     if (
-      !canWriteOfficeRecord(role, offices, "shipment", existing ?? candidate) ||
-      !canWriteOfficeRecord(role, offices, "shipment", candidate)
+      !canWriteOfficeRecord(
+        actionRole,
+        offices,
+        "shipment",
+        existing ?? candidate
+      ) ||
+      !canWriteOfficeRecord(actionRole, offices, "shipment", candidate)
     ) {
       return failSave(
-        (role === "staff" || role === "accountant" || role === "office_manager") &&
+        (role === "staff" ||
+          role === "accountant" ||
+          role === "office_manager") &&
           (!offices || offices.length !== 1)
           ? "employee_single_office_required"
           : "shipment_source_office_mismatch"
@@ -442,12 +546,9 @@ export function useOperationsWorkspace() {
       return failSave("duplicate_tracking");
     }
     try {
-      if (
-        role === "staff" &&
-        !canStaffSendShipment(role, existing?.status, candidate.status)
-      )
+      if (!canStaffSendShipment(subject, existing?.status, candidate.status))
         throw new Error("staff_final_status_forbidden");
-      assertShipmentAction(role, candidate, existing, action);
+      assertShipmentAction(actionRole, candidate, existing, action);
       const safe = canonicalPackingShipment(
         canViewFinance(role)
           ? candidate
@@ -507,7 +608,7 @@ export function useOperationsWorkspace() {
               item.entity === change.entity && item.recordId === change.recordId
           )
       )
-      .filter(change => changeAllowed(current, change, role, offices))
+      .filter(change => changeAllowed(current, change, subject))
       .slice(0, 500);
     if (!batch.length) {
       setNotice(w.blocked);
@@ -608,19 +709,21 @@ export function useOperationsWorkspace() {
     const saved = readProfile();
     if (canOpenLocalWorkspace(saved, activeId, false)) setProfile(saved);
   };
-  const hidden =
-    role === "viewer" || role === "tracking_staff"
-      ? EMPTY_STATE
-      : hiddenState(
-          role === "supervisor"
-            ? {
-                ...(workspace?.state ?? EMPTY_STATE),
-                accounts: [],
-                invoices: [],
-              }
-            : (workspace?.state ?? EMPTY_STATE),
-          canViewFinance(role)
-        );
+  const canViewShipments = permissionAllowed(subject, "shipments", "view");
+  const canViewCustomers = permissionAllowed(subject, "customers", "view");
+  const hidden = hiddenState(
+    canViewShipments || canViewCustomers
+      ? {
+          ...(workspace?.state ?? EMPTY_STATE),
+          accounts: canViewCustomers ? (workspace?.state.accounts ?? []) : [],
+          shipments: canViewShipments ? (workspace?.state.shipments ?? []) : [],
+          invoices: canReadAnyFinance(subject)
+            ? (workspace?.state.invoices ?? [])
+            : [],
+        }
+      : EMPTY_STATE,
+    canReadAnyFinance(subject)
+  );
   const scopedState = accessReady
     ? filterStateByAccess(hidden, role, offices)
     : EMPTY_STATE;
@@ -636,23 +739,24 @@ export function useOperationsWorkspace() {
     userId,
     role,
     offices,
-    canEditShipments:
-      accessReady &&
-      canCreateSourceShipment(role, offices) &&
-      canWrite(role, "shipment"),
-    canEditAccounts: accessReady && canEditCustomerAccount(role, offices),
-    canCreateShipments: accessReady && canCreateSourceShipment(role, offices),
+    canEditShipments: accessReady && canEditShipments(subject),
+    canSendShipments: accessReady && canSendShipments(subject),
+    canDeleteShipments: accessReady && canDeleteShipments(subject),
+    canEditAccounts: accessReady && canEditCustomerAccount(subject),
+    canCreateShipments: accessReady && canCreateSourceShipment(subject),
+    permissions,
+    delegatedBy,
+    permissionFingerprint,
     warehouseOnly: isNouakchottStaff(role, offices),
     // Warehouse staff need the explicit per-employee grant; tracking roles
     // (admin, office manager, supervisor, tracking staff) use their role.
     canUpdateTracking:
       accessReady &&
-      (role === "staff"
-        ? accessData?.canUpdateTracking === true
-        : canNoteTracking(role)),
+      permissionAllowed(subject, "tracking", "manage") &&
+      (role === "staff" ? accessData?.canUpdateTracking === true : true),
     authenticated: Boolean(activeId),
     accessReady,
-    showFinance: accessReady && canViewFinance(role),
+    showFinance: accessReady && canReadAnyFinance(subject),
     online,
     localOnly,
     loading: (online && me.isLoading) || Boolean(activeId && access.isLoading),
@@ -667,7 +771,12 @@ export function useOperationsWorkspace() {
     syncRecords,
     reload,
     openLocal,
-    offlineAvailable: canOpenLocalWorkspace(readProfile(), activeId, online),
+    offlineAvailable: canOpenLocalWorkspace(
+      readProfile(),
+      activeId,
+      online,
+      permissionFingerprint
+    ),
     conflicts,
     resolveConflict,
     busy,

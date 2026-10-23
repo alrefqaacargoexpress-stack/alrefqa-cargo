@@ -19,6 +19,7 @@ import {
   type WarehouseCommand,
 } from "@shared/warehouse";
 import type { OfficeId } from "@shared/branches";
+import { permissionAllowed, type PermissionMap } from "@shared/permissions";
 import { z } from "zod";
 
 export {
@@ -40,6 +41,11 @@ export type WarehouseDb = {
 
 type WarehouseShipment = Shipment & {
   destinationStorage?: DestinationStorageItem[];
+};
+type WarehouseScope = OfficeScope & {
+  /** Added by the fresh OfficeScope contract; undefined keeps legacy behavior. */
+  permissions?: PermissionMap | null;
+  delegatedBy?: AppRole | null;
 };
 const arrivedStatuses = new Set<Shipment["status"]>([
   "وصلت للمكتب",
@@ -64,14 +70,44 @@ function isNouakchottStaff(scope: OfficeScope): boolean {
 }
 /** Shelf assignment: Nouakchott warehouse staff, plus the general manager. */
 function canWriteWarehouse(scope: OfficeScope): boolean {
-  return scope.role === "admin" || isNouakchottStaff(scope);
+  if (scope.role === "admin") return true;
+  const permissions = (scope as WarehouseScope).permissions;
+  const hasCapability = permissionAllowed(
+    {
+      role: scope.role,
+      offices: scope.offices,
+      homeOffice: scope.homeOffice,
+      permissions,
+    },
+    "storage",
+    "manage"
+  );
+  // Physical storage remains a Nouakchott-only operation, even when a manager
+  // delegates the storage capability. The scope is read again inside the TX.
+  return (
+    hasCapability &&
+    scope.offices?.length === 1 &&
+    scope.offices[0] === "nouakchott" &&
+    scope.homeOffice === "nouakchott"
+  );
 }
 function canReadWarehouse(scope: OfficeScope): boolean {
-  return (
-    scope.role === "admin" ||
-    scope.role === "office_manager" ||
-    isNouakchottStaff(scope)
-  );
+  if (scope.role === "admin") return true;
+  const permissions = (scope as WarehouseScope).permissions;
+  // A null/omitted map is the legacy contract. Explicit maps are authoritative:
+  // storage:view can read, while none cannot (including pending local drafts).
+  if (permissions !== undefined && permissions !== null)
+    return permissionAllowed(
+      {
+        role: scope.role,
+        offices: scope.offices,
+        homeOffice: scope.homeOffice,
+        permissions,
+      },
+      "storage",
+      "view"
+    );
+  return scope.role === "office_manager" || isNouakchottStaff(scope);
 }
 function arrivedInNouakchott(shipment: Shipment): boolean {
   if (

@@ -129,7 +129,7 @@ describe("Financial invoice and office rules", () => {
   it("charges the employee home office rather than the issuing office and refuses spoofing", () => {
     const scope = {
       role: "accountant" as const,
-      offices: ["nouakchott", "dubai"] as const,
+      offices: ["nouakchott"] as const,
       homeOffice: "nouakchott" as const,
     };
     expect(

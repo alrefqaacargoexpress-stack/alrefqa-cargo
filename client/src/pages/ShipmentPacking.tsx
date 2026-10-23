@@ -108,7 +108,8 @@ export default function ShipmentPacking() {
   const mruTotals = packingTotalsMRU(packed.packing);
   const canEdit = workspace.canEditShipments && packed.status === "قيد التجهيز";
   const canMarkDelivered =
-    workspace.role !== "staff" && workspace.canEditShipments;
+    workspace.canUpdateTracking && packed.status === "في الطريق";
+  const canSend = workspace.canSendShipments && packed.status === "قيد التجهيز";
   const errorText = (value: unknown) => {
     const code = value instanceof Error ? value.message : "";
     if (code === "carton_empty" || code === "carton_closed")
@@ -209,8 +210,7 @@ export default function ShipmentPacking() {
     }
   };
   const send = async () => {
-    if (!workspace.canEditShipments || packed.status !== "قيد التجهيز")
-      return setError(c.canNotEdit);
+    if (!canSend) return setError(c.canNotEdit);
     if (!window.confirm(c.confirmSend)) return;
     try {
       await save(

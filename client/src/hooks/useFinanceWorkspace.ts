@@ -10,10 +10,16 @@ import {
   canUseFinance,
   canWriteFinance,
   calculateFinanceInvoice,
+  financePermissionForCommand,
   emptyFinanceSnapshot,
   type FinanceCommand,
   type FinanceSyncResult,
 } from "@shared/finance";
+import {
+  canReadAnyFinance,
+  permissionAllowed,
+  type PermissionMap,
+} from "@shared/permissions";
 import {
   loadFinanceWorkspace,
   saveFinanceWorkspace,
@@ -95,7 +101,15 @@ export function useFinanceWorkspace() {
   const base = useOperationsWorkspace();
   const { language } = useLanguage();
   const w = words[language];
-  const permission = canUseFinance(base.role);
+  const subject = {
+    role: base.role,
+    offices: base.offices,
+    homeOffice:
+      (base as { homeOffice?: import("@shared/branches").OfficeId | null })
+        .homeOffice ?? (base.offices?.length === 1 ? base.offices[0] : null),
+    permissions: base.permissions,
+  };
+  const permission = canReadAnyFinance(subject);
   const query = trpc.finance.snapshot.useQuery(
     { clientUserId: base.userId ?? "not-logged-in" },
     {
@@ -206,6 +220,11 @@ export function useFinanceWorkspace() {
   const saveCommand = async (command: FinanceCommand): Promise<boolean> => {
     if (
       !canEdit ||
+      !permissionAllowed(
+        subject,
+        financePermissionForCommand(command.kind),
+        "manage"
+      ) ||
       !base.userId ||
       workspaceOwner.current !== base.userId ||
       !ref.current
@@ -257,7 +276,14 @@ export function useFinanceWorkspace() {
       selectedIds
     ).filter(command => {
       const office = commandOffice(command);
-      return office ? officeAllowed(office) : false;
+      return (
+        Boolean(office && officeAllowed(office)) &&
+        permissionAllowed(
+          subject,
+          financePermissionForCommand(command.kind),
+          "manage"
+        )
+      );
     });
     const batch = available.slice(0, 100);
     if (!batch.length) return null;
@@ -363,6 +389,7 @@ export function useFinanceWorkspace() {
     base,
     loading: base.loading || (query.isLoading && base.online),
     role: base.role,
+    permissions: base.permissions as PermissionMap | null,
     online: base.online,
     homeOffice: snapshot.homeOffice,
     offices: base.offices,

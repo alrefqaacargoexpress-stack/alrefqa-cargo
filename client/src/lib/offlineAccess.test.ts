@@ -1,12 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
+  canDeleteShipments,
+  canEditShipments,
+  canSendShipments,
   canEditCustomerAccount,
   canOpenLocalWorkspace,
   canShowTrackingLink,
   canStaffSendShipment,
   isNouakchottStaff,
+  permissionFingerprint,
   profileMatchesUser,
 } from "./offlineAccess";
+import { blankPermissions } from "@shared/permissions";
 
 describe("offline and role access policies", () => {
   const profile = {
@@ -54,9 +59,33 @@ describe("offline and role access policies", () => {
     );
     expect(canStaffSendShipment("staff", undefined, "في الطريق")).toBe(false);
     expect(canStaffSendShipment("staff", undefined, "مسلّمة")).toBe(false);
-    expect(canStaffSendShipment("staff", "في الطريق", "في الطريق")).toBe(
-      false
-    );
+    expect(canStaffSendShipment("staff", "في الطريق", "في الطريق")).toBe(false);
     expect(canStaffSendShipment("admin", undefined, "مسلّمة")).toBe(true);
+  });
+
+  it("uses explicit grants for custom roles without changing the displayed role", () => {
+    const permissions = blankPermissions();
+    permissions.shipments = "view";
+    permissions.shipment_send = "manage";
+    permissions.shipment_delete = "manage";
+    permissions.customers = "manage";
+    const subject = {
+      role: "viewer" as const,
+      offices: ["dubai"] as const,
+      permissions,
+    };
+    expect(canEditShipments(subject)).toBe(false);
+    expect(canSendShipments(subject)).toBe(true);
+    expect(canDeleteShipments(subject)).toBe(true);
+    expect(canEditCustomerAccount(subject)).toBe(true);
+  });
+
+  it("changes the offline privilege fingerprint when effective grants change", () => {
+    const first = blankPermissions();
+    const second = blankPermissions();
+    second.shipments = "view";
+    expect(permissionFingerprint(first, "admin")).not.toBe(
+      permissionFingerprint(second, "admin")
+    );
   });
 });

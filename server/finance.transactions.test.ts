@@ -15,6 +15,7 @@ import {
   financeReceipts,
 } from "../drizzle/schema";
 import type { FinanceCommand } from "@shared/finance";
+import { blankPermissions } from "@shared/permissions";
 const now = "2026-10-21T12:00:00.000Z";
 const user = {
   id: 7,
@@ -612,7 +613,6 @@ it("sets zero shipment prices only from the source accountant and rejects a fore
 
 it("rejects all financial commands and replay for managers or accountants without one office", async () => {
   for (const invalid of [
-    { role: "admin", offices: null, homeOffice: null },
     {
       role: "office_manager",
       offices: ["nouakchott"],
@@ -640,6 +640,70 @@ it("rejects all financial commands and replay for managers or accountants withou
     expect(db.rows.get(financeReceipts)).toEqual([]);
     expect(db.events).toEqual([]);
   }
+});
+
+it("allows a delegated manager to invoice only when invoices are manage and keeps the real role in audit", async () => {
+  const permissions = blankPermissions();
+  permissions.customers = "view";
+  permissions.invoices = "manage";
+  const managerScope = {
+    role: "office_manager" as const,
+    offices: ["nouakchott" as const],
+    homeOffice: "nouakchott" as const,
+    permissions,
+  };
+  const db = database();
+  seed(db);
+  const command = invoice("delegated-manager-invoice");
+  if (command.kind !== "invoice") throw new Error("invalid fixture");
+  command.payload.chargeKind = "general";
+  command.payload.manualAmount = 10;
+  delete command.payload.shipmentId;
+  command.payload.goodsIds = [];
+  const applied = await financeSync(db, user, managerScope, [command]);
+  expect(applied.conflicts).toEqual([]);
+  expect(applied.applied[0]?.invoice?.finance?.actorId).toBe(user.id);
+  expect(db.events[0]?.actor.role).toBe("office_manager");
+
+  const viewOnly = blankPermissions();
+  viewOnly.customers = "view";
+  viewOnly.invoices = "view";
+  const blockedDb = database();
+  seed(blockedDb);
+  const blocked = await financeSync(
+    blockedDb,
+    user,
+    { ...managerScope, permissions: viewOnly },
+    [{ ...command, id: "delegated-manager-view-only" }]
+  );
+  expect(blocked.applied).toEqual([]);
+  expect(blocked.conflicts[0]?.code).toBe("finance_forbidden");
+});
+
+it("rejects a delegated manager command that escapes its office scope", async () => {
+  const permissions = blankPermissions();
+  permissions.customers = "view";
+  permissions.invoices = "manage";
+  const db = database();
+  seed(db);
+  const command = invoice("delegated-manager-office-escape");
+  if (command.kind !== "invoice") throw new Error("invalid fixture");
+  command.payload.employeeOfficeId = "dubai";
+  command.payload.issuingOfficeId = "dubai";
+  const result = await financeSync(
+    db,
+    user,
+    {
+      role: "office_manager",
+      offices: ["nouakchott"],
+      homeOffice: "nouakchott",
+      permissions,
+    },
+    [command]
+  );
+  expect(result.applied).toEqual([]);
+  expect(result.conflicts[0]?.code).toBe("financial_office_mismatch");
+  expect(db.rows.get(financeReceipts)).toEqual([]);
 });
 
 it("prices an unpriced sent shipment once and keeps the authorized established rate locked", async () => {

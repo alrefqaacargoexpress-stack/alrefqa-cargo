@@ -203,14 +203,8 @@ export default function Tracking() {
     workspace.canUpdateWarehouseStage,
     detail?.status,
   ]);
-  const canCommand =
-    workspace.canSupervise ||
-    workspace.canUpdateWarehouseStage ||
-    (workspace.role !== "staff" && canNoteTracking(workspace.role));
-  const canEditStage =
-    workspace.role === "staff"
-      ? workspace.canUpdateWarehouseStage
-      : canNoteTracking(workspace.role);
+  const canCommand = workspace.canManageTracking;
+  const canEditStage = workspace.canManageTracking;
   useEffect(() => {
     if (detail?.journey) {
       setStage(detail.journey.stage);
@@ -522,6 +516,7 @@ export default function Tracking() {
               timeline={timeline}
               canDetails={workspace.canDetails}
               canSupervise={workspace.canSupervise}
+              canTransfer={workspace.canTransfer}
               canEditStage={canEditStage}
               canCommand={canCommand}
               onBack={closeDetail}
@@ -718,6 +713,7 @@ function DetailView({
   timeline,
   canDetails,
   canSupervise,
+  canTransfer,
   canEditStage,
   canCommand,
   onBack,
@@ -732,6 +728,7 @@ function DetailView({
   timeline: any[];
   canDetails: boolean;
   canSupervise: boolean;
+  canTransfer: boolean;
   canEditStage: boolean;
   canCommand: boolean;
   onBack: () => void;
@@ -804,7 +801,7 @@ function DetailView({
                   {c.createPlan}
                 </button>
               )}
-              {canEditStage && role !== "staff" && (
+              {canEditStage && (
                 <button
                   onClick={() => onModal("note")}
                   className="rounded-xl border border-[#dce4e7] bg-white px-4 py-2 text-sm font-semibold"
@@ -820,7 +817,7 @@ function DetailView({
                   {c.editStage}
                 </button>
               )}
-              {canSupervise && role !== "office_manager" && (
+              {canSupervise && canTransfer && role !== "office_manager" && (
                 <button
                   onClick={() => onModal("transfer")}
                   className="rounded-xl border border-[#dce4e7] bg-white px-4 py-2 text-sm font-semibold"

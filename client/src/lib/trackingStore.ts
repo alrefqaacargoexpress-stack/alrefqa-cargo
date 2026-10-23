@@ -10,6 +10,7 @@ import {
   type TrackingSummary,
 } from "@shared/tracking";
 import type { AppRole, Shipment } from "@shared/operations";
+import { permissionMapSchema, type PermissionMap } from "@shared/permissions";
 
 export type TrackingShipment = Pick<
   Shipment,
@@ -47,6 +48,7 @@ const PROFILE_KEY = "alrefqaa-operations-last-profile-v1";
 const PREFIX = "alrefqaa-tracking-cache-v2-";
 const roles = [
   "admin",
+  "office_manager",
   "staff",
   "accountant",
   "viewer",
@@ -354,6 +356,7 @@ export function readLastTrackingProfile(): {
   userId: string;
   role: AppRole;
   name?: string;
+  permissions?: PermissionMap | null;
 } | null {
   try {
     const value = JSON.parse(
@@ -366,6 +369,12 @@ export function readLastTrackingProfile(): {
           userId: String(value.userId),
           role: value.role as AppRole,
           name: typeof value.name === "string" ? value.name : undefined,
+          permissions:
+            value.permissions === null
+              ? null
+              : permissionMapSchema.safeParse(value.permissions).success
+                ? (value.permissions as PermissionMap)
+                : undefined,
         }
       : null;
   } catch {
@@ -376,6 +385,7 @@ export function writeLastTrackingProfile(profile: {
   userId: string;
   role: AppRole;
   name?: string;
+  permissions?: PermissionMap | null;
 }) {
   storage().setItem(PROFILE_KEY, JSON.stringify(profile));
 }

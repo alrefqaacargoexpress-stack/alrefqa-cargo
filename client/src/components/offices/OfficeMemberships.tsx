@@ -1,14 +1,22 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
 import type { AppRole } from "@shared/operations";
 import type { OfficeId, OfficeMember } from "@shared/branches";
+import {
+  blankPermissions,
+  defaultPermissions,
+  intersectPermissions,
+  permissionKeys,
+  rootOnlyPermissions,
+  type PermissionMap,
+} from "@shared/permissions";
 import { officeIds } from "@/lib/branchSettingsCopy";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { branchSettingsCopyFor, officeName } from "@/lib/branchSettingsCopy";
 import {
   packingInputClass,
   packingPrimaryClass,
-  packingSecondaryClass,
 } from "@/components/packing/PackingPrimitives";
+import NewPermissionsMatrix from "./newPermissionsMatrix";
 
 const assignableRoles = [
   "office_manager",
@@ -19,18 +27,29 @@ const assignableRoles = [
   "supervisor",
 ] as const;
 type AssignableRole = (typeof assignableRoles)[number];
+const managerAssignableRoles = assignableRoles.filter(
+  role => role !== "office_manager"
+);
 const officeManagerOfficeIds: OfficeId[] = ["dubai", "china", "turkey"];
+
+type EditableOfficeMember = OfficeMember & {
+  permissions?: PermissionMap | null;
+  effectivePermissions?: PermissionMap;
+  delegatedBy?: number | null;
+};
 type MemberDraft = {
   role: AssignableRole;
   offices: OfficeId[];
   homeOffice: OfficeId | null;
   canUpdateTracking: boolean;
+  permissions: PermissionMap;
   dirty: boolean;
   version: number;
 };
 
 const roleLabels = {
   ar: {
+    admin: "المدير الجذري",
     office_manager: "مدير مكتب",
     staff: "موظف مستودع",
     accountant: "موظف حسابات",
@@ -39,6 +58,7 @@ const roleLabels = {
     supervisor: "مشرف",
   },
   en: {
+    admin: "Root administrator",
     office_manager: "Office manager",
     staff: "Warehouse employee",
     accountant: "Accounts employee",
@@ -47,6 +67,7 @@ const roleLabels = {
     supervisor: "Supervisor",
   },
   zh: {
+    admin: "根管理员",
     office_manager: "办公室经理",
     staff: "仓库员工",
     accountant: "会计员工",
@@ -55,6 +76,7 @@ const roleLabels = {
     supervisor: "主管",
   },
   tr: {
+    admin: "Kök yönetici",
     office_manager: "Ofis müdürü",
     staff: "Depo çalışanı",
     accountant: "Muhasebe çalışanı",
@@ -69,59 +91,112 @@ const homeOfficeCopy = {
     label: "مكتب الموظف الأساسي",
     none: "حسب المكتب الوحيد / غير محدد",
     hint: "يُسند الدين إلى مكتب الموظف. يجب أن يكون المكتب ضمن المكاتب المحددة.",
-    required:
-      "حدد مكتبًا للموظف قبل منح الصلاحية، ومكتبًا أساسيًا للمحاسب متعدد المكاتب.",
   },
   en: {
     label: "Employee home office",
     none: "Use sole office / not specified",
     hint: "Debt is assigned to the employee's office. It must be one of the checked offices.",
-    required:
-      "Select an office before granting access, and a home office for a multi-office accountant.",
   },
   zh: {
     label: "员工主办公室",
     none: "按唯一办公室 / 未指定",
     hint: "债务归属于员工办公室；该办公室必须在已勾选的办公室中。",
-    required: "授权前必须选择办公室，多办公室会计还需选择主办公室。",
   },
   tr: {
     label: "Çalışanın ana ofisi",
     none: "Tek ofisi kullan / belirtilmemiş",
     hint: "Borç çalışanın ofisine atanır. Seçili ofislerden biri olmalıdır.",
-    required:
-      "Yetki vermeden önce ofis ve çok ofisli muhasebeci için ana ofis seçin.",
+  },
+} as const;
+
+const permissionCopy = {
+  ar: {
+    label: "تحديد أين وصلت الشحنة",
+    hint: "يسمح لمستودع المصدر بتحديث المرحلة التالية فقط، دون حسابات أو تغيير المكتب. نواكشوط للتخزين والرف فقط.",
+    required: "حدد مكتبًا واحدًا للموظف قبل منح الصلاحية.",
+  },
+  en: {
+    label: "Update shipment location",
+    hint: "Source warehouse staff may update the next stage only, with no finance or office transfers. Nouakchott staff manage storage and shelves only.",
+    required: "Assign one office to the employee before granting access.",
+  },
+  zh: {
+    label: "更新货物到达阶段",
+    hint: "始发仓库仅可更新下一阶段，无财务或转移权限。努瓦克肖特员工仅管理仓库和货架。",
+    required: "授权前必须指定一个办公室。",
+  },
+  tr: {
+    label: "Gönderinin konumunu güncelle",
+    hint: "Çıkış deposu yalnızca sonraki aşamayı günceller; finans veya ofis transferi yapamaz. Nuakşot çalışanı sadece depo ve rafı yönetir.",
+    required: "Erişim vermeden önce bir ofis atayın.",
   },
 } as const;
 
 const singleOfficeRole = (role: string) =>
   ["office_manager", "staff", "accountant"].includes(role);
-const permissionCopy = {
-  ar: {
-    label: "تحديد أين وصلت الشحنة",
-    hint: "يسمح لمستودع المصدر بتحديث المرحلة التالية فقط، دون حسابات أو تغيير المكتب. نواكشوط للتخزين والرف فقط.",
-    required: "حدد مكتبًا واحدًا للمستودع أو المحاسب أو مدير المكتب.",
-  },
-  en: {
-    label: "Update shipment location",
-    hint: "Source warehouse staff may update the next stage only, with no finance or office transfers. Nouakchott staff manage storage and shelves only.",
-    required:
-      "Assign one office to a warehouse worker, accountant or office manager.",
-  },
-  zh: {
-    label: "更新货物到达阶段",
-    hint: "始发仓库仅可更新下一阶段，无财务或转移权限。努瓦克肖特员工仅管理仓库和货架。",
-    required: "为仓库员工、会计或办公室经理指定一个办公室。",
-  },
-  tr: {
-    label: "Gönderinin konumunu güncelle",
-    hint: "Çıkış deposu yalnızca sonraki aşamayı günceller; finans veya ofis transferi yapamaz. Nuakşot çalışanı sadece depo ve rafı yönetir.",
-    required: "Depo çalışanı, muhasebeci veya müdür için tek ofis atayın.",
-  },
-} as const;
+const completePermissions = (
+  value: PermissionMap | null | undefined
+): PermissionMap => ({ ...blankPermissions(), ...(value ?? {}) });
+const managerOfficeIds = (home: OfficeId | null | undefined): OfficeId[] =>
+  home && officeManagerOfficeIds.includes(home) ? [home] : [];
+
+function draftFrom(
+  member: EditableOfficeMember,
+  actorRole: AppRole | null,
+  managerHomeOffice: OfficeId | null | undefined,
+  ceiling: PermissionMap
+): MemberDraft {
+  const role = assignableRoles.includes(member.role as AssignableRole)
+    ? (member.role as AssignableRole)
+    : "staff";
+  const allowed =
+    actorRole === "office_manager"
+      ? managerOfficeIds(managerHomeOffice)
+      : [...officeIds];
+  const source = member.offices ? [...member.offices] : [];
+  const offices =
+    role === "office_manager"
+      ? source
+          .filter(office => officeManagerOfficeIds.includes(office))
+          .slice(0, 1)
+      : singleOfficeRole(role)
+        ? source.filter(office => allowed.includes(office)).slice(0, 1)
+        : source.filter(office => allowed.includes(office));
+  const raw =
+    member.permissions ??
+    member.effectivePermissions ??
+    defaultPermissions({
+      role,
+      offices,
+      homeOffice: member.homeOffice,
+      canUpdateTracking: member.canUpdateTracking,
+    });
+  return {
+    role,
+    offices,
+    homeOffice:
+      member.homeOffice && offices.includes(member.homeOffice)
+        ? member.homeOffice
+        : singleOfficeRole(role)
+          ? (offices[0] ?? null)
+          : null,
+    canUpdateTracking: Boolean(
+      member.canUpdateTracking &&
+        role === "staff" &&
+        offices[0] !== "nouakchott"
+    ),
+    permissions: intersectPermissions(completePermissions(raw), ceiling),
+    dirty: false,
+    version: member.version,
+  };
+}
 
 type OfficeMembershipsProps = {
-  members: OfficeMember[];
+  members: EditableOfficeMember[];
+  actorRole?: AppRole | null;
+  actorUserId?: number | null;
+  managerHomeOffice?: OfficeId | null;
+  permissionCeiling?: PermissionMap;
   canEdit: boolean;
   online: boolean;
   pending?: boolean;
@@ -131,6 +206,7 @@ type OfficeMembershipsProps = {
     offices: OfficeId[];
     homeOffice: OfficeId | null;
     canUpdateTracking: boolean;
+    permissions?: PermissionMap;
     expectedVersion: number;
   }) => Promise<OfficeMember | null>;
   onResetPassword: (input: {
@@ -139,40 +215,12 @@ type OfficeMembershipsProps = {
   }) => Promise<boolean>;
 };
 
-function draftFrom(member: OfficeMember): MemberDraft {
-  const role = assignableRoles.includes(member.role as AssignableRole)
-    ? (member.role as AssignableRole)
-    : "staff";
-  const offices = member.offices ? [...member.offices] : [];
-  const normalizedOffices =
-    role === "office_manager"
-      ? offices
-          .filter(office => officeManagerOfficeIds.includes(office))
-          .slice(0, 1)
-      : singleOfficeRole(role)
-        ? offices.slice(0, 1)
-        : offices;
-  return {
-    role,
-    offices: normalizedOffices,
-    homeOffice:
-      member.homeOffice && normalizedOffices.includes(member.homeOffice)
-        ? member.homeOffice
-        : singleOfficeRole(role)
-          ? (normalizedOffices[0] ?? null)
-          : null,
-    canUpdateTracking: Boolean(
-      member.canUpdateTracking &&
-        role === "staff" &&
-        normalizedOffices[0] !== "nouakchott"
-    ),
-    dirty: false,
-    version: member.version,
-  };
-}
-
 export default function OfficeMemberships({
   members,
+  actorRole = "admin",
+  actorUserId = null,
+  managerHomeOffice = null,
+  permissionCeiling = blankPermissions("manage"),
   canEdit,
   online,
   pending = false,
@@ -187,47 +235,68 @@ export default function OfficeMemberships({
   const [temporaryPasswords, setTemporaryPasswords] = useState<
     Record<number, string>
   >({});
+  const availableRoles =
+    actorRole === "office_manager" ? managerAssignableRoles : assignableRoles;
+  const allowedOffices =
+    actorRole === "office_manager"
+      ? managerOfficeIds(managerHomeOffice)
+      : [...officeIds];
 
   useEffect(() => {
     setDrafts(current => {
       const next = { ...current };
       for (const member of members)
         if (!next[member.userId]?.dirty)
-          next[member.userId] = draftFrom(member);
+          next[member.userId] = draftFrom(
+            member,
+            actorRole,
+            managerHomeOffice,
+            permissionCeiling
+          );
       return next;
     });
-  }, [members]);
+  }, [members, actorRole, managerHomeOffice, permissionCeiling]);
 
-  const patch = (member: OfficeMember, value: Partial<MemberDraft>) => {
+  const patch = (member: EditableOfficeMember, value: Partial<MemberDraft>) => {
     setError("");
     setNotice("");
     setDrafts(current => ({
       ...current,
       [member.userId]: {
-        ...(current[member.userId] ?? draftFrom(member)),
+        ...(current[member.userId] ??
+          draftFrom(member, actorRole, managerHomeOffice, permissionCeiling)),
         ...value,
         dirty: true,
       },
     }));
   };
+  const isLocked = (member: EditableOfficeMember) =>
+    member.role === "admin" ||
+    (actorRole === "office_manager" &&
+      (member.userId === actorUserId || member.role === "office_manager"));
 
-  const save = async (member: OfficeMember) => {
-    const draft = drafts[member.userId] ?? draftFrom(member);
-    if (!canEdit || pending || member.role === "admin") return;
+  const save = async (member: EditableOfficeMember) => {
+    const draft =
+      drafts[member.userId] ??
+      draftFrom(member, actorRole, managerHomeOffice, permissionCeiling);
+    if (!canEdit || pending || isLocked(member)) return;
     if (!online) {
       setError(c.onlineRequired);
       return;
     }
-    const validOfficeManagerScope =
+    const validManager =
       draft.role !== "office_manager" ||
       (draft.offices.length === 1 &&
         officeManagerOfficeIds.includes(draft.offices[0]) &&
         draft.homeOffice === draft.offices[0]);
     if (
       !draft.offices.length ||
-      !validOfficeManagerScope ||
+      !validManager ||
       (singleOfficeRole(draft.role) &&
-        (draft.offices.length !== 1 || draft.homeOffice !== draft.offices[0]))
+        (draft.offices.length !== 1 ||
+          draft.homeOffice !== draft.offices[0])) ||
+      (actorRole === "office_manager" &&
+        (draft.offices.length !== 1 || draft.offices[0] !== managerHomeOffice))
     ) {
       setError(permissionCopy[language].required);
       return;
@@ -249,12 +318,18 @@ export default function OfficeMemberships({
             draft.offices[0] !== "nouakchott" &&
             draft.canUpdateTracking
         ),
+        permissions: intersectPermissions(draft.permissions, permissionCeiling),
         expectedVersion: draft.version,
       });
       if (result) {
         setDrafts(current => ({
           ...current,
-          [member.userId]: draftFrom(result),
+          [member.userId]: draftFrom(
+            result as EditableOfficeMember,
+            actorRole,
+            managerHomeOffice,
+            permissionCeiling
+          ),
         }));
         setNotice(c.memberSaved);
       } else setError(c.memberSaveError);
@@ -279,8 +354,13 @@ export default function OfficeMemberships({
       )}
       <div className="mt-5 grid gap-4">
         {members.map(member => {
-          const draft = drafts[member.userId] ?? draftFrom(member);
-          const locked = member.role === "admin";
+          const draft =
+            drafts[member.userId] ??
+            draftFrom(member, actorRole, managerHomeOffice, permissionCeiling);
+          const rootLocked = member.role === "admin";
+          const locked = isLocked(member);
+          const canEditMember = canEdit && !locked;
+          const displayRole = rootLocked ? "admin" : draft.role;
           return (
             <article
               key={member.userId}
@@ -306,9 +386,16 @@ export default function OfficeMemberships({
                   {c.globalLegacy}
                 </p>
               )}
-              {locked && (
+              {(rootLocked ||
+                (actorRole === "office_manager" &&
+                  member.userId === actorUserId)) && (
                 <p className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs font-semibold text-slate-700">
                   {c.rootAdminLocked}
+                </p>
+              )}
+              {member.delegatedBy != null && (
+                <p className="mt-3 text-xs font-semibold text-[#718088]">
+                  {c.membershipsHint} · {member.delegatedBy}
                 </p>
               )}
               <div className="mt-4 grid gap-4 md:grid-cols-[minmax(0,1fr)_2fr]">
@@ -316,8 +403,8 @@ export default function OfficeMemberships({
                   <span>{c.role}</span>
                   <select
                     className={packingInputClass}
-                    value={draft.role}
-                    disabled={!canEdit || locked || pending}
+                    value={displayRole}
+                    disabled={!canEditMember || pending}
                     onChange={event => {
                       const nextRole = event.target.value as AssignableRole;
                       const office =
@@ -343,7 +430,12 @@ export default function OfficeMemberships({
                       });
                     }}
                   >
-                    {assignableRoles.map(role => (
+                    {rootLocked && (
+                      <option value="admin">
+                        {roleLabels[language].admin}
+                      </option>
+                    )}
+                    {availableRoles.map(role => (
                       <option key={role} value={role}>
                         {roleLabels[language][role]}
                       </option>
@@ -357,7 +449,7 @@ export default function OfficeMemberships({
                   <div className="mt-2 grid gap-2 sm:grid-cols-2">
                     {(draft.role === "office_manager"
                       ? officeManagerOfficeIds
-                      : officeIds
+                      : allowedOffices
                     ).map(officeId => (
                       <label
                         key={officeId}
@@ -369,7 +461,7 @@ export default function OfficeMemberships({
                           }
                           name={`member-office-${member.userId}`}
                           checked={draft.offices.includes(officeId)}
-                          disabled={!canEdit || locked || pending}
+                          disabled={!canEditMember || pending}
                           onChange={event =>
                             patch(member, {
                               offices: singleOfficeRole(draft.role)
@@ -406,8 +498,7 @@ export default function OfficeMemberships({
                     type="checkbox"
                     checked={draft.canUpdateTracking}
                     disabled={
-                      !canEdit ||
-                      locked ||
+                      !canEditMember ||
                       pending ||
                       draft.offices.length !== 1 ||
                       draft.offices[0] === "nouakchott"
@@ -430,8 +521,7 @@ export default function OfficeMemberships({
                   className={packingInputClass}
                   value={draft.homeOffice ?? ""}
                   disabled={
-                    !canEdit ||
-                    locked ||
+                    !canEditMember ||
                     pending ||
                     !draft.offices.length ||
                     singleOfficeRole(draft.role)
@@ -457,14 +547,20 @@ export default function OfficeMemberships({
                   {homeOfficeCopy[language].hint}
                 </span>
               </label>
-              {canEdit && (
+              <NewPermissionsMatrix
+                value={draft.permissions}
+                ceiling={permissionCeiling}
+                canEdit={canEditMember}
+                pending={pending}
+                onChange={permissions => patch(member, { permissions })}
+              />
+              {canEditMember && (
                 <div className="mt-4 flex justify-end">
                   <button
                     className={packingPrimaryClass}
                     disabled={
-                      locked ||
-                      !draft.dirty ||
                       pending ||
+                      !draft.dirty ||
                       !online ||
                       !draft.offices.length ||
                       (draft.role === "office_manager" &&
@@ -480,69 +576,21 @@ export default function OfficeMemberships({
                   </button>
                 </div>
               )}
-              {canEdit &&
-                !locked &&
+              {actorRole === "admin" &&
+                canEditMember &&
                 member.accountType === "employee" &&
                 (member.isLocalAccount || Boolean(member.email)) && (
-                  <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3">
-                    <p className="text-sm font-bold text-amber-950">
-                      {c.resetPasswordTitle}
-                    </p>
-                    <p className="mt-1 text-xs leading-5 text-amber-900">
-                      {c.resetPasswordHint}
-                    </p>
-                    <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-                      <input
-                        type="password"
-                        minLength={8}
-                        maxLength={128}
-                        value={temporaryPasswords[member.userId] ?? ""}
-                        onChange={event =>
-                          setTemporaryPasswords(current => ({
-                            ...current,
-                            [member.userId]: event.target.value,
-                          }))
-                        }
-                        placeholder={c.temporaryPassword}
-                        className={packingInputClass}
-                        dir="ltr"
-                      />
-                      <button
-                        type="button"
-                        className={packingSecondaryClass}
-                        disabled={
-                          pending ||
-                          !online ||
-                          (temporaryPasswords[member.userId] ?? "").length < 8
-                        }
-                        onClick={async () => {
-                          setError("");
-                          setNotice("");
-                          const password =
-                            temporaryPasswords[member.userId] ?? "";
-                          if (
-                            !window.confirm(
-                              `${c.resetPasswordConfirm} ${member.name || member.email}?`
-                            )
-                          )
-                            return;
-                          const ok = await onResetPassword({
-                            userId: member.userId,
-                            temporaryPassword: password,
-                          });
-                          if (ok) {
-                            setTemporaryPasswords(current => ({
-                              ...current,
-                              [member.userId]: "",
-                            }));
-                            setNotice(c.resetPasswordSuccess);
-                          } else setError(c.resetPasswordError);
-                        }}
-                      >
-                        {c.resetPassword}
-                      </button>
-                    </div>
-                  </div>
+                  <PasswordReset
+                    member={member}
+                    pending={pending}
+                    online={online}
+                    copy={c}
+                    onResetPassword={onResetPassword}
+                    setError={setError}
+                    setNotice={setNotice}
+                    temporaryPasswords={temporaryPasswords}
+                    setTemporaryPasswords={setTemporaryPasswords}
+                  />
                 )}
             </article>
           );
@@ -573,5 +621,87 @@ export default function OfficeMemberships({
   );
 }
 
-export type { AssignableRole };
-export type { AppRole };
+function PasswordReset({
+  member,
+  pending,
+  online,
+  copy,
+  onResetPassword,
+  setError,
+  setNotice,
+  temporaryPasswords,
+  setTemporaryPasswords,
+}: {
+  member: EditableOfficeMember;
+  pending: boolean;
+  online: boolean;
+  copy: ReturnType<typeof branchSettingsCopyFor>;
+  onResetPassword: (input: {
+    userId: number;
+    temporaryPassword: string;
+  }) => Promise<boolean>;
+  setError: (value: string) => void;
+  setNotice: (value: string) => void;
+  temporaryPasswords: Record<number, string>;
+  setTemporaryPasswords: Dispatch<SetStateAction<Record<number, string>>>;
+}) {
+  const password = temporaryPasswords[member.userId] ?? "";
+  return (
+    <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3">
+      <p className="text-sm font-bold text-amber-950">
+        {copy.resetPasswordTitle}
+      </p>
+      <p className="mt-1 text-xs leading-5 text-amber-900">
+        {copy.resetPasswordHint}
+      </p>
+      <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+        <input
+          type="password"
+          minLength={8}
+          maxLength={128}
+          value={password}
+          onChange={event =>
+            setTemporaryPasswords(current => ({
+              ...current,
+              [member.userId]: event.target.value,
+            }))
+          }
+          placeholder={copy.temporaryPassword}
+          className={packingInputClass}
+          dir="ltr"
+        />
+        <button
+          type="button"
+          className="rounded-xl border border-[#dce4e7] bg-white px-4 py-2 text-sm font-bold text-[#243f52]"
+          disabled={pending || !online || password.length < 8}
+          onClick={async () => {
+            setError("");
+            setNotice("");
+            if (
+              !window.confirm(
+                `${copy.resetPasswordConfirm} ${member.name || member.email}?`
+              )
+            )
+              return;
+            const ok = await onResetPassword({
+              userId: member.userId,
+              temporaryPassword: password,
+            });
+            if (ok) {
+              setTemporaryPasswords(current => ({
+                ...current,
+                [member.userId]: "",
+              }));
+              setNotice(copy.resetPasswordSuccess);
+            } else setError(copy.resetPasswordError);
+          }}
+        >
+          {copy.resetPassword}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+export type { AssignableRole, EditableOfficeMember };
+export { assignableRoles, permissionKeys };

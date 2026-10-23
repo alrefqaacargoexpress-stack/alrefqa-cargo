@@ -5,6 +5,11 @@ import {
 } from "@shared/finance";
 import type { Invoice, Shipment, AppRole } from "@shared/operations";
 import type { OfficeId } from "@shared/branches";
+import {
+  permissionAllowed,
+  type PermissionKey,
+  type PermissionMap,
+} from "@shared/permissions";
 
 export type FinanceLanguage = "ar" | "en" | "zh" | "tr";
 export type InvoicePaymentOption =
@@ -229,7 +234,8 @@ export const financeInvoiceCopy: Record<FinanceLanguage, FinanceInvoiceCopy> = {
     knownHomeOffice: "مكتبك الأساسي المعروف",
     officeRequired: "اختر مكتبًا ماليًا",
     walletMethod: "طريقة المحفظة",
-    walletNouakchottOnly: "المحافظ الإلكترونية (Bankily وMasrvi وSedad وغيرها) متاحة لمكتب نواكشوط فقط. في هذا المكتب استخدم الصندوق النقدي أو حساب العميل.",
+    walletNouakchottOnly:
+      "المحافظ الإلكترونية (Bankily وMasrvi وSedad وغيرها) متاحة لمكتب نواكشوط فقط. في هذا المكتب استخدم الصندوق النقدي أو حساب العميل.",
     reference: "مرجع السداد (اختياري)",
     saveDraft: "حفظ المسودة",
     saving: "جارٍ الحفظ…",
@@ -315,7 +321,8 @@ export const financeInvoiceCopy: Record<FinanceLanguage, FinanceInvoiceCopy> = {
     knownHomeOffice: "Known home office",
     officeRequired: "Choose a financial office",
     walletMethod: "Wallet method",
-    walletNouakchottOnly: "E-wallets (Bankily, Masrvi, Sedad, etc.) are available at the Nouakchott office only. Here, use the cash box or the customer account.",
+    walletNouakchottOnly:
+      "E-wallets (Bankily, Masrvi, Sedad, etc.) are available at the Nouakchott office only. Here, use the cash box or the customer account.",
     reference: "Payment reference (optional)",
     saveDraft: "Save draft",
     saving: "Saving…",
@@ -400,7 +407,8 @@ export const financeInvoiceCopy: Record<FinanceLanguage, FinanceInvoiceCopy> = {
     knownHomeOffice: "已知主办公室",
     officeRequired: "选择财务办公室",
     walletMethod: "钱包方式",
-    walletNouakchottOnly: "电子钱包（Bankily、Masrvi、Sedad 等）仅限努瓦克肖特办公室使用。本办公室请使用现金箱或客户账户。",
+    walletNouakchottOnly:
+      "电子钱包（Bankily、Masrvi、Sedad 等）仅限努瓦克肖特办公室使用。本办公室请使用现金箱或客户账户。",
     reference: "付款参考（可选）",
     saveDraft: "保存草稿",
     saving: "保存中…",
@@ -486,7 +494,8 @@ export const financeInvoiceCopy: Record<FinanceLanguage, FinanceInvoiceCopy> = {
     knownHomeOffice: "Bilinen ana ofis",
     officeRequired: "Mali ofis seçin",
     walletMethod: "Cüzdan yöntemi",
-    walletNouakchottOnly: "E-cüzdanlar (Bankily, Masrvi, Sedad vb.) yalnızca Nouakchott ofisinde kullanılabilir. Burada kasa veya müşteri hesabını kullanın.",
+    walletNouakchottOnly:
+      "E-cüzdanlar (Bankily, Masrvi, Sedad vb.) yalnızca Nouakchott ofisinde kullanılabilir. Burada kasa veya müşteri hesabını kullanın.",
     reference: "Ödeme referansı (isteğe bağlı)",
     saveDraft: "Taslağı kaydet",
     saving: "Kaydediliyor…",
@@ -539,13 +548,23 @@ export function invoiceCopyFor(language: Language): FinanceInvoiceCopy {
 export function canWriteFinanceUi(
   role: AppRole | null | undefined,
   offices: readonly OfficeId[] | null,
-  homeOffice: OfficeId | null | undefined
+  homeOffice: OfficeId | null | undefined,
+  permissions?: PermissionMap | null,
+  key: PermissionKey = "invoices"
 ) {
-  return (
-    role === "accountant" &&
-    offices?.length === 1 &&
-    Boolean(homeOffice) &&
-    offices[0] === homeOffice
+  if (
+    !permissionAllowed(
+      { role: role ?? null, offices, homeOffice, permissions },
+      key,
+      "manage"
+    )
+  )
+    return false;
+  // Root may choose the requested office in the command; all employee writes remain
+  // tied to their single effective financial office.
+  if (role === "admin" && offices === null) return true;
+  return Boolean(
+    offices?.length === 1 && homeOffice && offices[0] === homeOffice
   );
 }
 

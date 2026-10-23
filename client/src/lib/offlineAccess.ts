@@ -1,13 +1,64 @@
+import {
+  permissionActionRole,
+  permissionAllowed,
+  permissionRank,
+  permissionsFor,
+  type PermissionKey,
+  type PermissionLevel,
+  type PermissionMap,
+  type PermissionSubject,
+} from "@shared/permissions";
 import type { AppRole } from "@shared/operations";
 import type { OfficeId } from "@shared/branches";
 
 export type CachedAccessProfile = {
   userId: string;
-  role: AppRole;
-  offices?: readonly OfficeId[] | null;
+  /** The real role remains descriptive and is never replaced by a custom role. */
+  role: AppRole | null;
+  offices?: OfficeId[] | null;
+  homeOffice?: OfficeId | null;
+  permissions?: PermissionMap | null;
+  delegatedBy?: number | null;
+  /** Server supplied value; a changed fingerprint invalidates cached privilege. */
+  permissionFingerprint?: string | null;
 };
 
-/** A cached role is descriptive only; it is never an authentication proof. */
+export type ClientAccessSubject = PermissionSubject & {
+  role: AppRole | null;
+  offices?: OfficeId[] | null;
+  homeOffice?: OfficeId | null;
+  permissions?: PermissionMap | null;
+};
+
+export function asPermissionSubject(
+  roleOrSubject: AppRole | null | ClientAccessSubject,
+  offices?: OfficeId[] | null,
+  permissions?: PermissionMap | null,
+  homeOffice?: OfficeId | null,
+  canUpdateTracking?: boolean
+): ClientAccessSubject {
+  if (typeof roleOrSubject === "object" && roleOrSubject !== null)
+    return roleOrSubject;
+  return {
+    role: roleOrSubject,
+    offices,
+    permissions,
+    homeOffice,
+    canUpdateTracking,
+  };
+}
+
+/** Stable, non-secret cache key for the effective permission state. */
+export function permissionFingerprint(
+  permissions: PermissionMap | null | undefined,
+  delegatedBy?: number | null
+) {
+  const effective = permissionsFor({ role: null, permissions });
+  return `${Object.entries(effective)
+    .map(([key, level]) => `${key}:${level}`)
+    .join("|")}::${delegatedBy ?? ""}`;
+}
+
 export function profileMatchesUser(
   profile: CachedAccessProfile | null | undefined,
   authenticatedUserId: string | null | undefined
@@ -19,54 +70,138 @@ export function profileMatchesUser(
   );
 }
 
-export function canOpenLocalWorkspace(
+export function cachedProfileUsable(
   profile: CachedAccessProfile | null | undefined,
   authenticatedUserId: string | null | undefined,
-  online: boolean
-) {
-  return !online && profileMatchesUser(profile, authenticatedUserId);
-}
-
-export function isNouakchottStaff(
-  role: AppRole | null,
-  offices: OfficeId[] | null
+  expectedFingerprint?: string | null
 ) {
   return (
-    role === "staff" && offices?.length === 1 && offices[0] === "nouakchott"
+    profileMatchesUser(profile, authenticatedUserId) &&
+    (!expectedFingerprint ||
+      !profile?.permissionFingerprint ||
+      profile.permissionFingerprint === expectedFingerprint)
   );
 }
 
-export function sourceOffices(offices: OfficeId[] | null) {
-  return (offices ?? ["dubai", "turkey", "china"]).filter(
-    office => office !== "nouakchott"
+export function canOpenLocalWorkspace(
+  profile: CachedAccessProfile | null | undefined,
+  authenticatedUserId: string | null | undefined,
+  online: boolean,
+  expectedFingerprint?: string | null
+) {
+  return (
+    !online &&
+    cachedProfileUsable(profile, authenticatedUserId, expectedFingerprint)
+  );
+}
+
+export function subjectPermission(
+  roleOrSubject: AppRole | null | ClientAccessSubject,
+  key: PermissionKey,
+  level: PermissionLevel = "view",
+  offices?: OfficeId[] | null,
+  permissions?: PermissionMap | null
+) {
+  return permissionAllowed(
+    asPermissionSubject(roleOrSubject, offices, permissions),
+    key,
+    level
+  );
+}
+
+export function isNouakchottStaff(
+  roleOrSubject: AppRole | null | ClientAccessSubject,
+  offices?: OfficeId[] | null,
+  permissions?: PermissionMap | null
+) {
+  const subject = asPermissionSubject(roleOrSubject, offices, permissions);
+  return (
+    subject.role === "staff" &&
+    subject.offices?.length === 1 &&
+    subject.offices[0] === "nouakchott"
   );
 }
 
 export function canEditCustomerAccount(
-  role: AppRole | null,
-  offices: OfficeId[] | null
+  roleOrSubject: AppRole | null | ClientAccessSubject,
+  offices?: OfficeId[] | null,
+  permissions?: PermissionMap | null
 ) {
-  // Customer account writes belong to an accountant assigned to exactly one office.
-  return role === "accountant" && offices !== null && offices.length === 1;
+  const subject = asPermissionSubject(roleOrSubject, offices, permissions);
+  // Explicit customers.manage grants may be assigned to a non-accountant. The
+  // one-office rule is retained for employee compatibility, while the local
+  // compatibility role is only used by strict business helpers.
+  return Boolean(
+    subject.offices?.length === 1 &&
+      permissionAllowed(subject, "customers", "manage") &&
+      permissionActionRole(subject, "customers", "manage")
+  );
 }
 
 export function canCreateSourceShipment(
-  role: AppRole | null,
-  offices: OfficeId[] | null
+  roleOrSubject: AppRole | null | ClientAccessSubject,
+  offices?: OfficeId[] | null,
+  permissions?: PermissionMap | null
 ) {
-  if (isNouakchottStaff(role, offices)) return false;
-  return role === "admin" || role === "office_manager" || role === "staff";
+  const subject = asPermissionSubject(roleOrSubject, offices, permissions);
+  if (isNouakchottStaff(subject)) return false;
+  return permissionAllowed(subject, "shipments", "manage");
+}
+
+export function canEditShipments(
+  roleOrSubject: AppRole | null | ClientAccessSubject,
+  offices?: OfficeId[] | null,
+  permissions?: PermissionMap | null
+) {
+  const subject = asPermissionSubject(roleOrSubject, offices, permissions);
+  return permissionAllowed(subject, "shipments", "manage");
+}
+
+export function canSendShipments(
+  roleOrSubject: AppRole | null | ClientAccessSubject,
+  offices?: OfficeId[] | null,
+  permissions?: PermissionMap | null
+) {
+  const subject = asPermissionSubject(roleOrSubject, offices, permissions);
+  return permissionAllowed(subject, "shipment_send", "manage");
+}
+
+export function canDeleteShipments(
+  roleOrSubject: AppRole | null | ClientAccessSubject,
+  offices?: OfficeId[] | null,
+  permissions?: PermissionMap | null
+) {
+  const subject = asPermissionSubject(roleOrSubject, offices, permissions);
+  return permissionAllowed(subject, "shipment_delete", "manage");
+}
+
+export function canViewShipments(
+  roleOrSubject: AppRole | null | ClientAccessSubject,
+  offices?: OfficeId[] | null,
+  permissions?: PermissionMap | null
+) {
+  const subject = asPermissionSubject(roleOrSubject, offices, permissions);
+  return permissionAllowed(subject, "shipments", "view");
 }
 
 export function canStaffSendShipment(
-  role: AppRole | null,
+  roleOrSubject: AppRole | null | ClientAccessSubject,
   fromStatus: string | undefined,
-  toStatus: string | undefined
+  toStatus: string | undefined,
+  offices?: OfficeId[] | null,
+  permissions?: PermissionMap | null
 ) {
-  if (role !== "staff") return true;
-  // A warehouse employee may open a new shipment in preparation, keep editing
-  // goods while it stays in preparation, and send it once. Arrival, delivery
-  // and any other stage change stay with tracking commands on the server.
+  const subject = asPermissionSubject(roleOrSubject, offices, permissions);
+  const needsSend = toStatus === "في الطريق";
+  if (
+    needsSend &&
+    subject.permissions &&
+    !permissionAllowed(subject, "shipment_send", "manage")
+  )
+    return false;
+  if (subject.role !== "staff") return true;
+  // A warehouse employee may open and fill a shipment in preparation, and
+  // send it once. Other stage changes remain tracking commands.
   if (fromStatus === undefined) return toStatus === "قيد التجهيز";
   if (fromStatus === toStatus) return fromStatus === "قيد التجهيز";
   return fromStatus === "قيد التجهيز" && toStatus === "في الطريق";
@@ -75,3 +210,30 @@ export function canStaffSendShipment(
 export function canShowTrackingLink(canUpdateTracking: boolean) {
   return canUpdateTracking === true;
 }
+
+export function compatibilityRoleForAction(
+  roleOrSubject: AppRole | null | ClientAccessSubject,
+  key: PermissionKey,
+  level: PermissionLevel = "view",
+  offices?: OfficeId[] | null,
+  permissions?: PermissionMap | null
+) {
+  return permissionActionRole(
+    asPermissionSubject(roleOrSubject, offices, permissions),
+    key,
+    level
+  );
+}
+
+export function permissionLevel(
+  roleOrSubject: AppRole | null | ClientAccessSubject,
+  key: PermissionKey,
+  offices?: OfficeId[] | null,
+  permissions?: PermissionMap | null
+) {
+  return permissionsFor(
+    asPermissionSubject(roleOrSubject, offices, permissions)
+  )[key];
+}
+
+export { permissionRank };

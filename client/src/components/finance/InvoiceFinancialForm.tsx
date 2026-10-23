@@ -39,6 +39,7 @@ type Workspace = {
   offices: OfficeId[] | null;
   canEdit: boolean;
   role?: import("@shared/operations").AppRole | null;
+  permissions?: import("@shared/permissions").PermissionMap | null;
   online: boolean;
   saveCommand: (command: FinanceCommand) => Promise<boolean>;
   syncCommands?: (commandIds: string[]) => Promise<unknown>;
@@ -74,8 +75,12 @@ export default function InvoiceFinancialForm({
   const shipments = workspace.base.state.shipments;
   const homeOffice = workspace.homeOffice;
   const canWrite =
-    canWriteFinanceUi(workspace.role, workspace.offices, homeOffice) &&
-    workspace.canEdit;
+    canWriteFinanceUi(
+      workspace.role,
+      workspace.offices,
+      homeOffice,
+      workspace.permissions
+    ) && workspace.canEdit;
   const [accountQuery, setAccountQuery] = useState("");
   const [accountId, setAccountId] = useState("");
   const [paymentMode, setPaymentMode] =

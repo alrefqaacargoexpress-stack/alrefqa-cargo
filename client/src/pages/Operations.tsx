@@ -56,6 +56,13 @@ import type {
 } from "@shared/operations";
 import { APP_ROLES, canViewFinance, canWrite } from "@shared/operations";
 import {
+  permissionAllowed,
+  permissionMapSchema,
+  canReadAnyFinance,
+  type PermissionMap,
+} from "@shared/permissions";
+import { compatibilityRoleForAction } from "@/lib/offlineAccess";
+import {
   operationsCopy,
   type OperationsLanguage,
   type OperationsCopy,
@@ -89,8 +96,17 @@ type OfflineProfile = {
   name: string;
   role: AppRole | null;
   offices?: OfficeId[] | null;
+  permissions?: PermissionMap | null;
+  permissionFingerprint?: string | null;
+  delegatedBy?: string | null;
 };
-type AccessResponse = { role: AppRole | null; offices?: OfficeId[] | null };
+type AccessResponse = {
+  role: AppRole | null;
+  offices?: OfficeId[] | null;
+  permissions: PermissionMap;
+  permissionFingerprint?: string | null;
+  delegatedBy?: string | null;
+};
 const MAX_MONEY = 999999999;
 const ROLE_VALUES: AppRole[] = [...APP_ROLES];
 const OFFLINE_PROFILE_KEY = "alrefqaa-operations-last-profile-v1";
@@ -365,7 +381,21 @@ export default function Operations() {
   const effectiveOffices: OfficeId[] | null = offlineMode
     ? (offlineUser?.offices ?? null)
     : (accessData?.offices ?? null);
-  const showFinance = canViewFinance(effectiveRole);
+  const effectivePermissions = offlineMode
+    ? (offlineUser?.permissions ?? null)
+    : (accessData?.permissions ?? null);
+  const subject = {
+    role: effectiveRole,
+    offices: effectiveOffices,
+    permissions: effectivePermissions,
+  };
+  const showFinance = canReadAnyFinance(subject);
+  const canImportAccounts =
+    permissionAllowed(subject, "excel", "manage") &&
+    permissionAllowed(subject, "customers", "manage");
+  const canExportAccounts =
+    permissionAllowed(subject, "excel", "view") &&
+    permissionAllowed(subject, "customers", "view");
   const officeOptions = allowedOfficeOptions(effectiveOffices);
 
   useEffect(() => {
@@ -435,6 +465,9 @@ export default function Operations() {
           name: me.data?.name ?? me.data?.email ?? "",
           role: accessData.role,
           offices: accessData.offices ?? null,
+          permissions: accessData.permissions,
+          permissionFingerprint: accessData.permissionFingerprint ?? null,
+          delegatedBy: accessData.delegatedBy ?? null,
         } satisfies OfflineProfile)
       );
     } catch {
@@ -474,10 +507,16 @@ export default function Operations() {
   }, [snapshot.data, userId]);
 
   const rawState = workspace?.state ?? emptyState;
-  const globallyHiddenState =
-    effectiveRole === "supervisor"
-      ? { ...displayState(rawState, showFinance), accounts: [], invoices: [] }
-      : displayState(rawState, showFinance);
+  const globallyHiddenState = {
+    ...displayState(rawState, showFinance),
+    accounts: permissionAllowed(subject, "customers", "view")
+      ? displayState(rawState, showFinance).accounts
+      : [],
+    shipments: permissionAllowed(subject, "shipments", "view")
+      ? displayState(rawState, showFinance).shipments
+      : [],
+    invoices: showFinance ? displayState(rawState, showFinance).invoices : [],
+  };
   const state = accessReady
     ? filterStateByOffice(
         globallyHiddenState,
@@ -507,14 +546,28 @@ export default function Operations() {
     const current =
       collection.find(record => record.id === change.recordId) ?? change.data;
     return (
+      change.entity !== "invoice" &&
+      permissionAllowed(
+        subject,
+        change.entity === "account" ? "customers" : "shipments",
+        "manage"
+      ) &&
       canWriteOfficeRecord(
-        effectiveRole,
+        compatibilityRoleForAction(
+          subject,
+          change.entity === "account" ? "customers" : "shipments",
+          "manage"
+        ) ?? effectiveRole,
         effectiveOffices,
         change.entity,
         current
       ) &&
       canWriteOfficeRecord(
-        effectiveRole,
+        compatibilityRoleForAction(
+          subject,
+          change.entity === "account" ? "customers" : "shipments",
+          "manage"
+        ) ?? effectiveRole,
         effectiveOffices,
         change.entity,
         change.data
@@ -535,7 +588,12 @@ export default function Operations() {
       !effectiveUserId ||
       !current ||
       !accessReady ||
-      !canWrite(effectiveRole, entity)
+      entity === "invoice" ||
+      !permissionAllowed(
+        subject,
+        entity === "account" ? "customers" : "shipments",
+        "manage"
+      )
     ) {
       notify(c.accessDenied, "error");
       return false;
@@ -553,12 +611,25 @@ export default function Operations() {
         : data;
     if (
       !canWriteOfficeRecord(
-        effectiveRole,
+        compatibilityRoleForAction(
+          subject,
+          entity === "account" ? "customers" : "shipments",
+          "manage"
+        ) ?? effectiveRole,
         effectiveOffices,
         entity,
         existing ?? candidate
       ) ||
-      !canWriteOfficeRecord(effectiveRole, effectiveOffices, entity, candidate)
+      !canWriteOfficeRecord(
+        compatibilityRoleForAction(
+          subject,
+          entity === "account" ? "customers" : "shipments",
+          "manage"
+        ) ?? effectiveRole,
+        effectiveOffices,
+        entity,
+        candidate
+      )
     ) {
       notify(c.accessDenied, "error");
       return false;
@@ -690,12 +761,7 @@ export default function Operations() {
   };
   const handleImportFile = async (file?: File) => {
     const current = workspaceRef.current;
-    if (
-      !file ||
-      !current ||
-      !effectiveUserId ||
-      !canWrite(effectiveRole, "account")
-    )
+    if (!file || !current || !effectiveUserId || !canImportAccounts)
       return notify(c.accessDenied, "error");
     try {
       setImportPreview(
@@ -715,12 +781,7 @@ export default function Operations() {
   };
   const confirmImport = async () => {
     const current = workspaceRef.current;
-    if (
-      !importPreview ||
-      !current ||
-      !effectiveUserId ||
-      !canWrite(effectiveRole, "account")
-    ) {
+    if (!importPreview || !current || !effectiveUserId || !canImportAccounts) {
       notify(c.accessDenied, "error");
       return;
     }
@@ -742,7 +803,13 @@ export default function Operations() {
     );
     const safeRows = scopedRows
       .filter(row =>
-        canWriteOfficeRecord(effectiveRole, effectiveOffices, "account", row)
+        canWriteOfficeRecord(
+          compatibilityRoleForAction(subject, "customers", "manage") ??
+            effectiveRole,
+          effectiveOffices,
+          "account",
+          row
+        )
       )
       .map(row => (showFinance ? row : { ...row, balance: 0 }));
     if (safeRows.length !== scopedRows.length) notify(c.accessDenied, "error");
@@ -1059,7 +1126,7 @@ export default function Operations() {
                   setEditing(null);
                   setModal("account");
                 }}
-                disabled={!canWrite(effectiveRole, "account")}
+                disabled={!canImportAccounts}
                 className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold disabled:opacity-40"
               >
                 <Plus size={15} />
@@ -1170,7 +1237,7 @@ export default function Operations() {
                   setModal("shipment");
                 }
               }}
-              canEdit={canWrite(effectiveRole, "shipment")}
+              canEdit={permissionAllowed(subject, "shipments", "manage")}
               showFinance={showFinance}
               language={language}
             />
@@ -1187,7 +1254,7 @@ export default function Operations() {
                 setEditing(item);
                 setModal("account");
               }}
-              canEdit={canWrite(effectiveRole, "account")}
+              canEdit={permissionAllowed(subject, "customers", "manage")}
               language={language}
               onImport={() => inputRef.current?.click()}
               onExport={() =>
@@ -1221,7 +1288,7 @@ export default function Operations() {
                 setEditing(item);
                 setModal("invoice");
               }}
-              canEdit={canWrite(effectiveRole, "invoice")}
+              canEdit={false}
               language={language}
             />
           )}

@@ -1,3 +1,4 @@
+import { defaultPermissions, type PermissionMap } from "@shared/permissions";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { users, memberRoles, records } from "../drizzle/schema";
 import { appRouter } from "./routers";
@@ -5,6 +6,7 @@ const state = vi.hoisted(() => ({
   offices: ["dubai"] as string[] | null,
   homeOffice: "dubai" as string | null,
   transaction: vi.fn(),
+  permissions: null as PermissionMap | null,
 }));
 const officeAccount = (office: string) => ({
   entity: "account",
@@ -38,33 +40,38 @@ const rows = [
   },
 ];
 vi.mock("./db", () => ({
-  getDb: async () => ({
-    select: () => ({
-      from: (table: unknown) => {
-        const data =
-          table === memberRoles
-            ? [
-                {
-                  role: "office_manager",
-                  offices: state.offices,
-                  homeOffice: state.homeOffice,
-                  version: 1,
-                },
-              ]
-            : table === records
-              ? rows
-              : [];
-        const builder: any = {
-          where: () => builder,
-          limit: () => Promise.resolve(data),
-          then: (resolve: any, reject: any) =>
-            Promise.resolve(data).then(resolve, reject),
-        };
-        return builder;
-      },
-    }),
-    transaction: state.transaction,
-  }),
+  getDb: async () => {
+    const db = {
+      select: () => ({
+        from: (table: unknown) => {
+          const data =
+            table === memberRoles
+              ? [
+                  {
+                    role: "office_manager",
+                    offices: state.offices,
+                    homeOffice: state.homeOffice,
+                    version: 1,
+                    permissions: state.permissions,
+                  },
+                ]
+              : table === records
+                ? rows
+                : [];
+          const builder: any = {
+            where: () => builder,
+            limit: () => Promise.resolve(data),
+            then: (resolve: any, reject: any) =>
+              Promise.resolve(data).then(resolve, reject),
+          };
+          return builder;
+        },
+      }),
+      transaction: state.transaction,
+    };
+    state.transaction.mockImplementation(async (callback: any) => callback(db));
+    return db;
+  },
 }));
 function caller() {
   return appRouter.createCaller({
@@ -87,6 +94,7 @@ beforeEach(() => {
   state.offices = ["dubai"];
   state.homeOffice = "dubai";
   state.transaction.mockClear();
+  state.permissions = null;
 });
 describe("Office manager API enforcement", () => {
   it("exposes only own office records, not cargo from another origin passing through it", async () => {
@@ -102,7 +110,7 @@ describe("Office manager API enforcement", () => {
     });
   });
   it("fails closed for null, multiple or unsupported office assignments", async () => {
-    for (const offices of [null, [], ["dubai", "china"], ["nouakchott"]]) {
+    for (const offices of [null, [], ["dubai", "china"], ["unknown"]]) {
       state.offices = offices;
       state.homeOffice = offices?.[0] ?? null;
       expect(await caller().operations.access()).toMatchObject({
@@ -112,7 +120,11 @@ describe("Office manager API enforcement", () => {
       expect((await caller().operations.snapshot()).accounts).toEqual([]);
     }
   });
-  it("cannot list or reassign employee privileges", async () => {
+  it("cannot list or reassign employee privileges after management is revoked", async () => {
+    state.permissions = {
+      ...defaultPermissions({ role: "office_manager", offices: ["dubai"] }),
+      employees: "none",
+    };
     await expect(caller().branches.members()).rejects.toMatchObject({
       code: "FORBIDDEN",
     });
@@ -128,7 +140,7 @@ describe("Office manager API enforcement", () => {
         expectedVersion: 1,
       })
     ).rejects.toMatchObject({ code: "FORBIDDEN" });
-    expect(state.transaction).not.toHaveBeenCalled();
+    expect(state.transaction).toHaveBeenCalledTimes(1);
   });
   it("cannot reset another account's password or enroll itself as general manager", async () => {
     await expect(

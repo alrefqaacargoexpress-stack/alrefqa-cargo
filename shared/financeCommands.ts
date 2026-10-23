@@ -1,6 +1,25 @@
 import type { FinanceCommand } from "./finance";
 import type { Invoice } from "./operations";
 import type { OfficeId } from "./branches";
+import type { PermissionKey } from "./permissions";
+
+export function financeCommandPermissionKey(
+  command: FinanceCommand
+): PermissionKey {
+  switch (command.kind) {
+    case "invoice":
+      return "invoices";
+    case "expense":
+      return "expenses";
+    case "opening_balance":
+      return "opening_balance";
+    case "shipment_price":
+      return "shipment_prices";
+    case "settlement":
+    case "customer_movement":
+      return "payments";
+  }
+}
 
 export function financeCommandOffice(
   command: FinanceCommand,

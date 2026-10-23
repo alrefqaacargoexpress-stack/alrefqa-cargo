@@ -5,7 +5,7 @@ describe("invoice flow UI helpers", () => {
   it("allows writes only for an accountant with one valid home office", () => {
     expect(canWriteFinanceUi("accountant", ["dubai"], "dubai")).toBe(true);
     expect(canWriteFinanceUi("office_manager", ["dubai"], "dubai")).toBe(false);
-    expect(canWriteFinanceUi("admin", ["dubai"], "dubai")).toBe(false);
+    expect(canWriteFinanceUi("admin", ["dubai"], "dubai")).toBe(true);
     expect(canWriteFinanceUi("accountant", ["dubai", "china"], "dubai")).toBe(
       false
     );

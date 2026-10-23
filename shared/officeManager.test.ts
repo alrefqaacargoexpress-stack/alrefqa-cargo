@@ -32,7 +32,7 @@ const cargo = {
 } as Shipment;
 describe("Office manager boundaries", () => {
   it("requires exactly one supported office assigned by the general manager", () => {
-    for (const office of ["dubai", "turkey", "china"])
+    for (const office of ["dubai", "turkey", "china", "nouakchott"])
       expect(
         officeMembershipSchema.safeParse({
           ...assignment,
@@ -40,7 +40,7 @@ describe("Office manager boundaries", () => {
           homeOffice: office,
         }).success
       ).toBe(true);
-    for (const offices of [[], ["nouakchott"], ["dubai", "china"]])
+    for (const offices of [[], ["dubai", "china"]])
       expect(
         officeMembershipSchema.safeParse({
           ...assignment,

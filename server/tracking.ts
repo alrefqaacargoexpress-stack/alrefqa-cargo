@@ -12,7 +12,16 @@ import type { AppRole, Shipment } from "@shared/operations";
 import { canonicalPackingShipment, packingTotals } from "@shared/packing";
 import type { User } from "../drizzle/schema";
 
-export type TrackingActor = { id: number; name: string; role: AppRole };
+export type TrackingActor = {
+  id: number;
+  name: string;
+  /** The real application role; preserve this value in audit records. */
+  role: AppRole;
+  /** Optional compatibility role derived from an explicit capability grant. */
+  authorizationRole?: AppRole | null;
+  /** Alias accepted by callers that label the preserved role explicitly. */
+  actualRole?: AppRole;
+};
 export type TrackingMutation = { shipment: Shipment; action: string };
 
 export function parseTrackingRequest(input: unknown): TrackingRequest {
@@ -26,9 +35,19 @@ export function trackingReceiptKey(requestId: string): string {
 
 export function actorFromUser(
   user: Pick<User, "id" | "name">,
-  role: AppRole
+  role: AppRole,
+  authorizationRole?: AppRole | null
 ): TrackingActor {
-  return { id: user.id, name: user.name?.trim() || `user-${user.id}`, role };
+  const actor: TrackingActor = {
+    id: user.id,
+    name: user.name?.trim() || `user-${user.id}`,
+    role,
+  };
+  if (authorizationRole && authorizationRole !== role) {
+    actor.authorizationRole = authorizationRole;
+    actor.actualRole = role;
+  }
+  return actor;
 }
 
 function inferredBranch(
@@ -77,7 +96,8 @@ export function applyTrackingCommand(
   now = new Date().toISOString()
 ): TrackingMutation {
   const parsed = trackingCommandSchema.parse(command);
-  assertTrackingCommand(actor.role, current, parsed);
+  const commandRole = actor.authorizationRole ?? actor.actualRole ?? actor.role;
+  assertTrackingCommand(commandRole, current, parsed);
   const next = structuredClone(current);
   const currentJourney = current.journey;
 

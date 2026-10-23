@@ -8,6 +8,7 @@ import CustomerAccountList from "@/components/customers/CustomerAccountList";
 import { useFinanceWorkspace } from "@/hooks/useFinanceWorkspace";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { customerAccountCopyFor } from "@/lib/customerAccountCopy";
+import { compatibilityRoleForAction } from "@/lib/offlineAccess";
 
 type AccountBase = ReturnType<typeof useFinanceWorkspace>["base"] & {
   saveRecord?: (
@@ -70,6 +71,22 @@ export default function Customers() {
     base.role === "accountant" &&
     base.offices !== null &&
     base.offices.length === 0;
+  const formBase = useMemo(
+    () => ({
+      ...base,
+      role:
+        compatibilityRoleForAction(
+          {
+            role: base.role,
+            offices: base.offices,
+            permissions: base.permissions,
+          },
+          "customers",
+          "manage"
+        ) ?? base.role,
+    }),
+    [base]
+  );
   const visibleAccounts = useMemo(
     () =>
       office
@@ -104,7 +121,7 @@ export default function Customers() {
         )}
         <CustomerAccountForm
           key={`${base.userId ?? "local"}:${office ?? ""}`}
-          base={base}
+          base={formBase}
           homeOffice={workspace.homeOffice}
           initialOpen={query.get("new") === "1"}
           initialOffice={office}

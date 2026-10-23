@@ -1,3 +1,12 @@
+import {
+  permissionsFor,
+  defaultPermissions,
+  blankPermissions,
+  intersectPermissions,
+  permissionAllowed,
+  canReadAnyFinance,
+  type PermissionMap,
+} from "@shared/permissions";
 import { protectOfficeShipmentFinance } from "@shared/officeFinanceVisibility";
 import { createHash } from "node:crypto";
 import {
@@ -50,6 +59,9 @@ export type OfficeScope = {
   homeOffice: OfficeId | null;
   membershipVersion: number;
   canUpdateTracking?: boolean;
+  permissions?: PermissionMap;
+  permissionsCustomized?: boolean;
+  delegatedBy?: number | null;
 };
 export const officeProfileUpdateSchema = officeProfileSchema.safeExtend({
   expectedVersion: z.number().int().nonnegative(),
@@ -82,7 +94,8 @@ export function rootAdmin(user: Pick<User, "openId" | "role">): boolean {
 
 export async function readOfficeScope(
   db: any,
-  user: Pick<User, "id" | "openId" | "role">
+  user: Pick<User, "id" | "openId" | "role">,
+  visited = new Set<number>()
 ): Promise<OfficeScope> {
   const rows = await db
     .select()
@@ -91,7 +104,6 @@ export async function readOfficeScope(
     .limit(1);
   const membership = rows[0] as typeof memberRoles.$inferSelect | undefined;
   const role = roleForUser(user, membership?.role ?? null);
-  // Root admins remain global even if a stale member row exists.
   if (role === "admin" || rootAdmin(user))
     return {
       role: "admin",
@@ -99,48 +111,80 @@ export async function readOfficeScope(
       homeOffice: null,
       membershipVersion: membership?.version ?? 0,
       canUpdateTracking: true,
+      permissions: blankPermissions("manage"),
+      permissionsCustomized: true,
+      delegatedBy: null,
     };
-  const offices = membership?.offices;
-  if (role === "office_manager" || role === "staff" || role === "accountant") {
-    const valid =
-      Array.isArray(offices) &&
-      offices.length === 1 &&
-      officeIds.includes(offices[0]) &&
-      (role !== "office_manager" || offices[0] !== "nouakchott") &&
-      (!membership?.homeOffice || membership.homeOffice === offices[0]);
-    return {
-      role,
-      offices: valid ? [offices[0] as OfficeId] : [],
-      homeOffice: valid ? (offices[0] as OfficeId) : null,
-      membershipVersion: membership?.version ?? 0,
-      canUpdateTracking:
-        role === "office_manager" ||
-        Boolean(
-          valid &&
-            role === "staff" &&
-            offices[0] !== "nouakchott" &&
-            membership?.canUpdateTracking
-        ),
-    };
-  }
-  return {
+  const rawOffices = membership?.offices;
+  let offices = Array.isArray(rawOffices)
+    ? (rawOffices.filter((id: any) => officeIds.includes(id)) as OfficeId[])
+    : [];
+  if (
+    ["office_manager", "staff", "accountant"].includes(role ?? "") &&
+    (offices.length !== 1 ||
+      (membership?.homeOffice && membership.homeOffice !== offices[0]))
+  )
+    offices = [];
+  const homeOffice =
+    membership?.homeOffice &&
+    offices.includes(membership.homeOffice as OfficeId)
+      ? (membership.homeOffice as OfficeId)
+      : offices.length === 1
+        ? offices[0]
+        : null;
+  const scope: OfficeScope = {
     role,
-    offices:
-      offices === null || offices === undefined
-        ? []
-        : Array.isArray(offices)
-          ? (offices as OfficeId[])
-          : [],
-    homeOffice:
-      membership?.homeOffice &&
-      officeIds.includes(membership.homeOffice as OfficeId)
-        ? (membership.homeOffice as OfficeId)
-        : Array.isArray(offices) && offices.length === 1
-          ? (offices[0] as OfficeId)
-          : null,
+    offices,
+    homeOffice,
     membershipVersion: membership?.version ?? 0,
-    canUpdateTracking: role === "tracking_staff" || role === "supervisor",
+    canUpdateTracking:
+      role === "office_manager" ||
+      role === "supervisor" ||
+      role === "tracking_staff" ||
+      Boolean(
+        role === "staff" &&
+          offices.length === 1 &&
+          offices[0] !== "nouakchott" &&
+          membership?.canUpdateTracking
+      ),
+    permissionsCustomized: Boolean(
+      membership?.permissions || membership?.delegatedBy
+    ),
+    delegatedBy: membership?.delegatedBy ?? null,
   };
+  scope.permissions = permissionsFor({
+    ...scope,
+    permissions: membership?.permissions ?? null,
+  });
+  if (scope.delegatedBy) {
+    if (
+      visited.has(user.id) ||
+      visited.size >= 3 ||
+      scope.delegatedBy === user.id
+    )
+      scope.permissions = blankPermissions();
+    else {
+      visited.add(user.id);
+      const grantors = await db
+        .select()
+        .from(users)
+        .where(eq(users.id, scope.delegatedBy))
+        .limit(1);
+      if (!grantors[0]) scope.permissions = blankPermissions();
+      else {
+        const grantor = await readOfficeScope(db, grantors[0], visited);
+        scope.permissions =
+          grantor.role === "office_manager" &&
+          grantor.offices?.length === 1 &&
+          offices.length === 1 &&
+          grantor.offices[0] === offices[0]
+            ? intersectPermissions(scope.permissions, permissionsFor(grantor))
+            : blankPermissions();
+      }
+    }
+  }
+  scope.canUpdateTracking = permissionAllowed(scope, "tracking", "manage");
+  return scope;
 }
 
 export function officeIsAssigned(
@@ -279,6 +323,15 @@ export function memberFromRow(row: any): OfficeMember {
         ? (row.homeOffice as OfficeId)
         : null,
     canUpdateTracking: Boolean(row.canUpdateTracking),
+    permissions: row.permissions ?? null,
+    effectivePermissions: permissionsFor({
+      role,
+      offices: row.offices,
+      canUpdateTracking: row.canUpdateTracking,
+      permissions: row.permissions,
+    }),
+    permissionsCustomized: Boolean(row.permissions || row.delegatedBy),
+    delegatedBy: row.delegatedBy ?? null,
     version: row.version ?? 0,
   };
 }
@@ -299,6 +352,8 @@ export async function listMembers(db: any): Promise<OfficeMember[]> {
       offices: memberRoles.offices,
       homeOffice: memberRoles.homeOffice,
       canUpdateTracking: memberRoles.canUpdateTracking,
+      permissions: memberRoles.permissions,
+      delegatedBy: memberRoles.delegatedBy,
       version: memberRoles.version,
     })
     .from(users)
@@ -453,11 +508,17 @@ export async function confirmArrival(
   scope: OfficeScope,
   input: z.infer<typeof confirmArrivalSchema>
 ) {
-  if (!canConfirmOfficeArrival(scope.role, scope.offices))
+  if (
+    !permissionAllowed(scope, "arrival", "manage") ||
+    (scope.role !== "admin" && !scope.offices?.includes("nouakchott"))
+  )
     throw branchForbidden("Nouakchott warehouse arrival is restricted");
   return db.transaction(async (tx: any) => {
     scope = await readOfficeScope(tx, user);
-    if (!canConfirmOfficeArrival(scope.role, scope.offices))
+    if (
+      !permissionAllowed(scope, "arrival", "manage") ||
+      (scope.role !== "admin" && !scope.offices?.includes("nouakchott"))
+    )
       throw branchForbidden("Nouakchott assignment required");
     const payloadHash = createHash("sha256")
       .update(JSON.stringify(input))

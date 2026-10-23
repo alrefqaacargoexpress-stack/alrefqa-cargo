@@ -16,6 +16,7 @@ import {
   shipmentReports,
 } from "@shared/packing";
 import type { Shipment } from "@shared/operations";
+import { permissionAllowed } from "@shared/permissions";
 import { copyFor } from "@/lib/packingCopy";
 import {
   PackingScopeBadge,
@@ -143,6 +144,15 @@ export default function Reports() {
   const [filter, setFilter] = useState<ReportFilter>("all");
   const [scope, setScope] = useState<"all" | "shared">("all");
   const state = workspace.state;
+  const canViewReports = permissionAllowed(
+    {
+      role: workspace.role,
+      offices: workspace.offices,
+      permissions: workspace.permissions,
+    },
+    "reports",
+    "view"
+  );
   const now = useMemo(() => new Date(), []);
   const scopedShipments = useMemo(
     () =>
@@ -204,6 +214,11 @@ export default function Reports() {
       workspace={workspace}
     >
       <div dir={dir} className="space-y-6">
+        {!canViewReports && !workspace.loading && (
+          <div className="rounded-2xl border border-slate-200 bg-white p-6 text-sm text-slate-600">
+            {t.noRows}
+          </div>
+        )}
         {workspace.loading && (
           <div className="rounded-2xl border border-slate-200 bg-white p-6 text-sm text-slate-600">
             {t.loading}
@@ -214,79 +229,89 @@ export default function Reports() {
             {t.error} {workspace.error}
           </div>
         )}
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <p className="text-sm text-slate-500">{t.savedLocal}</p>
-          <div className="flex rounded-xl border border-slate-200 bg-white p-1 text-sm">
-            <button
-              onClick={() => setScope("all")}
-              className={`rounded-lg px-3 py-2 font-semibold ${scope === "all" ? "bg-sky-950 text-white" : "text-slate-600"}`}
-            >
-              {t.allSources}
-            </button>
-            <button
-              onClick={() => setScope("shared")}
-              className={`rounded-lg px-3 py-2 font-semibold ${scope === "shared" ? "bg-sky-950 text-white" : "text-slate-600"}`}
-            >
-              {t.sharedOnly}
-            </button>
-          </div>
-        </div>
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          {metrics.map(metric => (
-            <button
-              key={metric.id}
-              onClick={() => setFilter(metric.id)}
-              className={`rounded-2xl border bg-white p-5 text-start transition hover:border-sky-300 ${filter === metric.id ? "border-sky-700 ring-2 ring-sky-100" : "border-slate-200"}`}
-            >
-              <metric.icon size={19} className="text-sky-800" />
-              <div className="mt-4 text-xs text-slate-500">{metric.label}</div>
-              <div className="mt-1 text-2xl font-bold">
-                {numberText(metric.value)}
-              </div>
-            </button>
-          ))}
-        </div>
-        <div className="grid gap-4 sm:grid-cols-3">
-          <Stat label={t.open} value={report.open} />
-          <Stat label={t.unknownDate} value={report.unknownDate} />
-          <Stat label={copyFor(language).pending} value={report.pending} />
-          <Stat
-            label={`${t.shared} / ${t.local}`}
-            value={`${numberText(report.shared)} / ${numberText(report.local)}`}
-          />
-        </div>
-        <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
-            <div>
-              <h2 className="font-bold">
-                {filter === "all"
-                  ? t.all
-                  : metrics.find(metric => metric.id === filter)?.label}
-              </h2>
-              <p className="mt-1 text-xs text-slate-500">
-                {numberText(rows.length)} {t.shipments}
-              </p>
+        {canViewReports && (
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm text-slate-500">{t.savedLocal}</p>
+            <div className="flex rounded-xl border border-slate-200 bg-white p-1 text-sm">
+              <button
+                onClick={() => setScope("all")}
+                className={`rounded-lg px-3 py-2 font-semibold ${scope === "all" ? "bg-sky-950 text-white" : "text-slate-600"}`}
+              >
+                {t.allSources}
+              </button>
+              <button
+                onClick={() => setScope("shared")}
+                className={`rounded-lg px-3 py-2 font-semibold ${scope === "shared" ? "bg-sky-950 text-white" : "text-slate-600"}`}
+              >
+                {t.sharedOnly}
+              </button>
             </div>
-            <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold">
-              {scope === "shared" ? t.shared : t.allSources}
-            </span>
           </div>
-          <div className="divide-y divide-slate-100">
-            {rows.map(shipment => (
-              <ReportRow
-                key={shipment.id}
-                shipment={shipment}
-                t={t}
-                language={language}
+        )}
+        {canViewReports && (
+          <>
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+              {metrics.map(metric => (
+                <button
+                  key={metric.id}
+                  onClick={() => setFilter(metric.id)}
+                  className={`rounded-2xl border bg-white p-5 text-start transition hover:border-sky-300 ${filter === metric.id ? "border-sky-700 ring-2 ring-sky-100" : "border-slate-200"}`}
+                >
+                  <metric.icon size={19} className="text-sky-800" />
+                  <div className="mt-4 text-xs text-slate-500">
+                    {metric.label}
+                  </div>
+                  <div className="mt-1 text-2xl font-bold">
+                    {numberText(metric.value)}
+                  </div>
+                </button>
+              ))}
+            </div>
+            <div className="grid gap-4 sm:grid-cols-3">
+              <Stat label={t.open} value={report.open} />
+              <Stat label={t.unknownDate} value={report.unknownDate} />
+              <Stat label={copyFor(language).pending} value={report.pending} />
+              <Stat
+                label={`${t.shared} / ${t.local}`}
+                value={`${numberText(report.shared)} / ${numberText(report.local)}`}
               />
-            ))}
-            {rows.length === 0 && (
-              <div className="p-10 text-center text-sm text-slate-500">
-                {t.noRows}
+            </div>
+          </>
+        )}
+        {canViewReports && (
+          <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
+              <div>
+                <h2 className="font-bold">
+                  {filter === "all"
+                    ? t.all
+                    : metrics.find(metric => metric.id === filter)?.label}
+                </h2>
+                <p className="mt-1 text-xs text-slate-500">
+                  {numberText(rows.length)} {t.shipments}
+                </p>
               </div>
-            )}
-          </div>
-        </section>
+              <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold">
+                {scope === "shared" ? t.shared : t.allSources}
+              </span>
+            </div>
+            <div className="divide-y divide-slate-100">
+              {rows.map(shipment => (
+                <ReportRow
+                  key={shipment.id}
+                  shipment={shipment}
+                  t={t}
+                  language={language}
+                />
+              ))}
+              {rows.length === 0 && (
+                <div className="p-10 text-center text-sm text-slate-500">
+                  {t.noRows}
+                </div>
+              )}
+            </div>
+          </section>
+        )}
       </div>
     </PackingLayout>
   );

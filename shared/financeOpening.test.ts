@@ -47,7 +47,7 @@ describe("opening balance and source receivables contracts", () => {
         offices: null,
         homeOffice: null,
       })
-    ).toBe(false);
+    ).toBe(true);
     expect(
       canWriteFinance({
         role: "office_manager",

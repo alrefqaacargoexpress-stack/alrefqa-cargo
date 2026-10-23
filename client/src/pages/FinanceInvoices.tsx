@@ -10,6 +10,7 @@ import PackingLayout from "@/components/packing/PackingLayout";
 import FinanceExcelPanel from "@/components/finance/FinanceExcelPanel";
 import InvoiceFinancialForm from "@/components/finance/InvoiceFinancialForm";
 import { canWriteFinanceUi, invoiceCopyFor } from "@/lib/financeInvoiceCopy";
+import { canReadAnyFinance } from "@shared/permissions";
 import { trpc } from "@/lib/trpc";
 import {
   formatLocalNumber,
@@ -54,7 +55,8 @@ function InvoiceTable({
     canWriteFinanceUi(
       workspace.role,
       workspace.offices,
-      workspace.homeOffice
+      workspace.homeOffice,
+      workspace.permissions
     ) && workspace.canEdit;
   const wallet = trpc.office.public.useQuery(undefined, {
     enabled: workspace.homeOffice === "nouakchott",
@@ -435,15 +437,18 @@ export default function FinanceInvoices() {
       )
     : undefined;
   const selectiveSync = (workspace as SelectiveFinanceWorkspace).syncCommands;
-  const canSee =
-    workspace.role === "admin" ||
-    workspace.role === "accountant" ||
-    workspace.role === "office_manager";
+  const canSee = canReadAnyFinance({
+    role: workspace.role,
+    offices: workspace.offices,
+    homeOffice: workspace.homeOffice,
+    permissions: workspace.permissions,
+  });
   const canWrite =
     canWriteFinanceUi(
       workspace.role,
       workspace.offices,
-      workspace.homeOffice
+      workspace.homeOffice,
+      workspace.permissions
     ) && workspace.canEdit;
   const shell = workspace.base;
   const officeRows = useMemo(

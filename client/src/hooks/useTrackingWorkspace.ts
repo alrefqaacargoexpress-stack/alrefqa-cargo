@@ -24,6 +24,11 @@ import {
   type TrackingCommand,
 } from "@shared/tracking";
 import type { AppRole, Shipment } from "@shared/operations";
+import {
+  actionRole,
+  permissionAllowed,
+  type PermissionMap,
+} from "@shared/permissions";
 
 const api = trpc as unknown as {
   tracking: {
@@ -70,6 +75,27 @@ export function useTrackingWorkspace(
     refetchOnWindowFocus: false,
   });
   const serverRole = activeId ? (access.data?.role ?? null) : null;
+  const accessPermissions = (
+    access.data as { permissions?: PermissionMap | null } | undefined
+  )?.permissions;
+  const accessOffices = access.data?.offices ?? null;
+  const accessHomeOffice = access.data?.homeOffice ?? null;
+  const permissionSubject = {
+    role: serverRole,
+    offices: accessOffices,
+    homeOffice: accessHomeOffice,
+    permissions: accessPermissions,
+  };
+  const canReadTracking = permissionAllowed(
+    permissionSubject,
+    "tracking",
+    "view"
+  );
+  const canManageTracking = permissionAllowed(
+    permissionSubject,
+    "tracking",
+    "manage"
+  );
   const [offlineOpen, setOfflineOpen] = useState(false);
   const [online, setOnline] = useState(
     () => typeof navigator === "undefined" || navigator.onLine
@@ -85,15 +111,14 @@ export function useTrackingWorkspace(
   const userId = activeId;
   const role = serverRole;
   const offline = !activeId;
-  const authorized = Boolean(userId && role);
+  const authorized = Boolean(userId && role && canReadTracking);
   const canUpdateWarehouseStage = Boolean(
     role === "staff" &&
-      activeId &&
-      access.data?.canUpdateTracking &&
-      access.data.offices?.length === 1 &&
-      access.data.homeOffice !== "nouakchott"
+      canManageTracking &&
+      access.data?.offices?.length === 1 &&
+      access.data?.homeOffice !== "nouakchott"
   );
-  const listEnabled = Boolean(activeId && role);
+  const listEnabled = Boolean(activeId && role && canReadTracking);
   const listQuery = api.tracking.list.useQuery(
     { search: search.trim() || undefined },
     { enabled: listEnabled, retry: false, refetchOnWindowFocus: false }
@@ -102,7 +127,11 @@ export function useTrackingWorkspace(
     { shipmentId: selectedId ?? "" },
     {
       enabled: Boolean(
-        activeId && role && selectedId && canTrackingDetails(role)
+        activeId &&
+          role &&
+          selectedId &&
+          canReadTracking &&
+          canTrackingDetails(role)
       ),
       retry: false,
       refetchOnWindowFocus: false,
@@ -111,7 +140,12 @@ export function useTrackingWorkspace(
   const auditQuery = api.tracking.audit.useQuery(
     { shipmentId: selectedId ?? undefined, afterId: auditAfterId },
     {
-      enabled: Boolean(activeId && selectedId && canSuperviseTracking(role)),
+      enabled: Boolean(
+        activeId &&
+          selectedId &&
+          canSuperviseTracking(role) &&
+          canManageTracking
+      ),
       retry: false,
       refetchOnWindowFocus: false,
     }
@@ -148,11 +182,12 @@ export function useTrackingWorkspace(
         userId: activeId,
         role: serverRole,
         name: me.data.name ?? "",
+        permissions: accessPermissions ?? null,
       });
     } catch {
       /* live access remains authoritative */
     }
-  }, [activeId, serverRole, me.data]);
+  }, [activeId, serverRole, me.data, accessPermissions]);
   useEffect(() => {
     if (!userId || !role || !listQuery.data) return;
     try {
@@ -227,18 +262,22 @@ export function useTrackingWorkspace(
       : null;
   const queue = useCallback(
     async (shipmentId: string, command: TrackingCommand) => {
+      if (role === "staff" && !canManageTracking) {
+        setNotice("tracking_forbidden");
+        return false;
+      }
       if (
-        role === "staff" &&
-        (!canUpdateWarehouseStage || command.type !== "stage")
+        !userId ||
+        !role ||
+        !canReadTracking ||
+        !canManageTracking ||
+        !canTrackingDetails(role) ||
+        role === "viewer"
       ) {
         setNotice("tracking_forbidden");
         return false;
       }
-      if (!userId || !role || !canTrackingDetails(role) || role === "viewer") {
-        setNotice("tracking_forbidden");
-        return false;
-      }
-      if (command.type === "plan" && !canSuperviseTracking(role)) {
+      if (command.type === "plan" && !canManageTracking) {
         setNotice("tracking_forbidden");
         return false;
       }
@@ -253,7 +292,7 @@ export function useTrackingWorkspace(
         setNotice("tracking_forbidden");
         return false;
       }
-      if (command.type === "note" && !canNoteTracking(role)) {
+      if (command.type === "note" && !canManageTracking) {
         setNotice("tracking_forbidden");
         return false;
       }
@@ -270,7 +309,13 @@ export function useTrackingWorkspace(
       }
       if (shipment) {
         try {
-          assertTrackingCommand(role, shipment as unknown as Shipment, command);
+          const commandRole =
+            actionRole(permissionSubject, "tracking", "manage") ?? role;
+          assertTrackingCommand(
+            commandRole,
+            shipment as unknown as Shipment,
+            command
+          );
         } catch (error) {
           setNotice(
             error instanceof Error ? error.message : "tracking_forbidden"
@@ -290,7 +335,19 @@ export function useTrackingWorkspace(
         return false;
       }
     },
-    [cache, detail, role, selectedId, userId, canUpdateWarehouseStage]
+    [
+      cache,
+      detail,
+      role,
+      selectedId,
+      userId,
+      canUpdateWarehouseStage,
+      canReadTracking,
+      canManageTracking,
+      accessPermissions,
+      accessOffices,
+      accessHomeOffice,
+    ]
   );
   const share = useCallback(async () => {
     if (
@@ -298,7 +355,8 @@ export function useTrackingWorkspace(
       !serverRole ||
       !online ||
       !cache?.pending.length ||
-      !canTrackingDetails(serverRole)
+      !canTrackingDetails(serverRole) ||
+      !canManageTracking
     )
       return { applied: 0, stopped: false };
     const ownerRole = serverRole;
@@ -329,7 +387,7 @@ export function useTrackingWorkspace(
     }
     setNotice("tracking_synced");
     return { applied, stopped: false };
-  }, [activeId, serverRole, online, cache, commit]);
+  }, [activeId, serverRole, online, cache, commit, canManageTracking]);
   return {
     language,
     me,
@@ -340,6 +398,9 @@ export function useTrackingWorkspace(
     online,
     offline,
     authorized,
+    permissions: accessPermissions ?? null,
+    canReadTracking,
+    canManageTracking,
     canUpdateWarehouseStage,
     offlineCandidate:
       activeId && candidate?.userId === activeId ? candidate : null,
@@ -364,15 +425,20 @@ export function useTrackingWorkspace(
     notice,
     cacheError,
     canExport: canExportTracking(role),
-    canSupervise: canSuperviseTracking(role),
-    canDetails: canTrackingDetails(role),
+    canSupervise:
+      canManageTracking &&
+      (canSuperviseTracking(role) ||
+        (accessPermissions !== undefined && accessPermissions !== null)),
+    canTransfer: role === "admin" || role === "supervisor",
+    canDetails: canReadTracking && canTrackingDetails(role),
     queue,
     share,
     sharing: Boolean(commit.isPending),
     refresh: () => {
       void listQuery.refetch();
       if (selectedId) void detailQuery.refetch();
-      if (canSuperviseTracking(role)) void auditQuery.refetch();
+      if (canSuperviseTracking(role) && canManageTracking)
+        void auditQuery.refetch();
     },
   };
 }

@@ -128,8 +128,10 @@ describe("Server-side role isolation", () => {
         officeId: "dubai" as const,
       },
     };
-    await expect(
-      caller().operations.sync({ changes: [change] })
-    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    const result = await caller().operations.sync({ changes: [change] });
+    expect(result.applied).toEqual([]);
+    expect(result.conflicts).toEqual([
+      { changeId: change.id, reason: "permission_denied", current: null },
+    ]);
   });
 });

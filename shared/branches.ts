@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { permissionMapSchema, type PermissionMap } from "./permissions";
 import {
   publicShippingRatesSchema,
   nouakchottSourceRatesSchema,
@@ -143,6 +144,7 @@ export const officeMembershipSchema = z
     role: z.enum(assignedRoles),
     homeOffice: officeIdSchema.nullable().optional(),
     canUpdateTracking: z.boolean().optional(),
+    permissions: permissionMapSchema.optional(),
     expectedVersion: z.number().int().nonnegative(),
   })
   .strict()
@@ -171,7 +173,7 @@ export const officeMembershipSchema = z
     v =>
       v.role !== "office_manager" ||
       (v.offices.length === 1 &&
-        ["dubai", "china", "turkey"].includes(v.offices[0]) &&
+        officeIds.includes(v.offices[0]) &&
         (!v.homeOffice || v.homeOffice === v.offices[0])),
     {
       message: "office_manager_single_source_office_required",
@@ -188,6 +190,10 @@ export type OfficeMember = {
   offices: OfficeId[] | null;
   homeOffice?: OfficeId | null;
   canUpdateTracking?: boolean;
+  permissions?: PermissionMap | null;
+  effectivePermissions?: PermissionMap;
+  permissionsCustomized?: boolean;
+  delegatedBy?: number | null;
   version: number;
 };
 export function defaultOfficeProfile(

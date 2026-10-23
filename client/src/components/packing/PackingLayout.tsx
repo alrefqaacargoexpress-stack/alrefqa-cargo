@@ -17,6 +17,7 @@ import { startLogin } from "@/const";
 import { downloadLocalArchive } from "@/lib/offlineStore";
 import { copyFor } from "@/lib/packingCopy";
 import { canUseOperations } from "@shared/tracking";
+import { permissionAllowed } from "@shared/permissions";
 import {
   PackingScopeBadge,
   packingPrimaryClass,
@@ -41,6 +42,19 @@ export default function PackingLayout({
   const [, navigate] = useLocation();
   const [notice, setNotice] = useState<string | null>(null);
   const offlineCandidate = !workspace.online && workspace.offlineAvailable;
+  const subject = {
+    role: workspace.role,
+    offices: workspace.offices,
+    permissions: workspace.permissions,
+  };
+  const canViewShipments = permissionAllowed(subject, "shipments", "view");
+  const canViewCustomers = permissionAllowed(subject, "customers", "view");
+  const canViewInvoices = permissionAllowed(subject, "invoices", "view");
+  const canManageSettings = permissionAllowed(
+    subject,
+    "office_settings",
+    "manage"
+  );
   const routeLinks = [
     { href: "/", label: <Home size={15} />, text: c.title },
     {
@@ -48,7 +62,7 @@ export default function PackingLayout({
       label: <ShieldAlert size={15} />,
       text: c.operations,
     },
-    ...(!workspace.warehouseOnly
+    ...(!workspace.warehouseOnly && canViewShipments
       ? [
           {
             href: "/operations/shipments",
@@ -71,12 +85,10 @@ export default function PackingLayout({
           },
         ]
       : []),
-    ...(!workspace.warehouseOnly
+    ...(!workspace.warehouseOnly && canViewCustomers
       ? [{ href: "/operations/customers", label: null, text: c.customers }]
       : []),
-    ...(workspace.role === "admin" ||
-    workspace.role === "accountant" ||
-    workspace.role === "office_manager"
+    ...(canViewInvoices
       ? [
           {
             href: "/operations/billing",
@@ -179,7 +191,12 @@ export default function PackingLayout({
       );
     if (workspace.role === null && !workspace.localOnly)
       return <StatePanel title={c.noAccess} detail={c.noPermission} />;
-    if (!canUseOperations(workspace.role))
+    if (
+      !canUseOperations(workspace.role) &&
+      !canViewShipments &&
+      !canViewCustomers &&
+      !permissionAllowed(subject, "tracking", "view")
+    )
       return (
         <StatePanel
           title={c.noAccess}
@@ -407,8 +424,7 @@ export default function PackingLayout({
                 >
                   {c.reports}
                 </Link>
-                {(workspace.role === "admin" ||
-                  workspace.role === "office_manager") && (
+                {canManageSettings && (
                   <Link
                     href="/operations/settings"
                     className={packingSecondaryClass}

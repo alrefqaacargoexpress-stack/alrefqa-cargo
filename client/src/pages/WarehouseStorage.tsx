@@ -18,6 +18,8 @@ import {
 import { useOperationsWorkspace } from "@/hooks/useOperationsWorkspace";
 import type { Shipment } from "@shared/operations";
 import type { DestinationStorageItem } from "@shared/warehouse";
+import type { OfficeId } from "@shared/branches";
+import { permissionAllowed, type PermissionMap } from "@shared/permissions";
 
 type WarehouseApi = {
   snapshot: {
@@ -68,6 +70,27 @@ export default function WarehouseStorage() {
   const c = warehouseCopy(language);
   const workspace = useOperationsWorkspace();
   const userId = workspace.userId;
+  const permissionAccess = workspace as typeof workspace & {
+    permissions?: PermissionMap | null;
+    homeOffice?: OfficeId | null;
+  };
+  const explicitPermissions = permissionAccess.permissions != null;
+  const permissionSubject = {
+    role: workspace.role,
+    offices: workspace.offices,
+    homeOffice: permissionAccess.homeOffice,
+    permissions: permissionAccess.permissions,
+  };
+  const legacyStorageView =
+    workspace.role === "admin" ||
+    workspace.role === "office_manager" ||
+    workspace.warehouseOnly;
+  const canStorageView = explicitPermissions
+    ? permissionAllowed(permissionSubject, "storage", "view")
+    : legacyStorageView;
+  const canStorageManage = explicitPermissions
+    ? permissionAllowed(permissionSubject, "storage", "manage")
+    : workspace.warehouseOnly;
   const [online, setOnline] = useState(
     typeof navigator === "undefined" ? false : navigator.onLine
   );
@@ -77,7 +100,7 @@ export default function WarehouseStorage() {
   const [error, setError] = useState<string | null>(null);
   const realSession = Boolean(userId && !workspace.localOnly);
   const snapshot = api.snapshot.useQuery(undefined, {
-    enabled: realSession,
+    enabled: realSession && canStorageView,
     retry: false,
     refetchOnWindowFocus: false,
   });
@@ -128,7 +151,7 @@ export default function WarehouseStorage() {
     );
 
   const saveDraft = (row: GoodRow, warehouse: string, shelf: string) => {
-    if (!userId || workspace.localOnly) {
+    if (!userId || workspace.localOnly || !canStorageManage) {
       setNotice(c.login);
       return;
     }
@@ -152,7 +175,14 @@ export default function WarehouseStorage() {
     }
   };
   const share = async () => {
-    if (!userId || workspace.localOnly || !online || !drafts.length) return;
+    if (
+      !userId ||
+      workspace.localOnly ||
+      !online ||
+      !drafts.length ||
+      !canStorageManage
+    )
+      return;
     let accepted = 0;
     // Each accepted shelf assignment bumps the shipment version. Later goods of
     // the same shipment are rebased only from the exact version this batch
@@ -240,7 +270,8 @@ export default function WarehouseStorage() {
               !online ||
               !drafts.length ||
               commit.isPending ||
-              !snapshot.data?.canEdit
+              !snapshot.data?.canEdit ||
+              !canStorageManage
             }
             className="min-h-11 rounded-xl bg-[#092d50] px-4 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-50"
           >
@@ -265,7 +296,7 @@ export default function WarehouseStorage() {
                 row={row}
                 draft={draftFor(row)}
                 copy={c}
-                canEdit={Boolean(snapshot.data?.canEdit)}
+                canEdit={Boolean(snapshot.data?.canEdit && canStorageManage)}
                 onSave={saveDraft}
               />
             ))}

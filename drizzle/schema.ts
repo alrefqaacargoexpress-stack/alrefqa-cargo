@@ -10,6 +10,7 @@ import {
   uniqueIndex,
 } from "drizzle-orm/mysql-core";
 
+import type { PermissionMap } from "../shared/permissions";
 /** Core user table backing auth flow. */
 export const users = mysqlTable("users", {
   id: int("id").autoincrement().primaryKey(),
@@ -81,6 +82,8 @@ export const memberRoles = mysqlTable(
     homeOffice: varchar("homeOffice", { length: 32 }),
     /** Explicit opt-in for source-warehouse stage updates; never grants financial access. */
     canUpdateTracking: boolean("canUpdateTracking").notNull().default(false),
+    permissions: json("permissions").$type<PermissionMap>(),
+    delegatedBy: int("delegatedBy"),
     /** Optimistic-concurrency version for admin membership edits. */
     version: int("version").notNull().default(0),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
