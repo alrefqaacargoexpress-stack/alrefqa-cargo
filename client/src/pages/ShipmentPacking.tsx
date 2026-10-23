@@ -110,6 +110,14 @@ export default function ShipmentPacking() {
   const canMarkDelivered =
     workspace.canUpdateTracking && packed.status === "في الطريق";
   const canSend = workspace.canSendShipments && packed.status === "قيد التجهيز";
+  const openCartonsWithGoods = packed.packing.cartons.filter(
+    carton => !carton.closed && carton.goods.some(goods => !goods.deleted)
+  );
+  const hasGoods = packed.packing.cartons.some(carton =>
+    carton.goods.some(goods => !goods.deleted)
+  );
+  const sendReady =
+    canSend && hasGoods && openCartonsWithGoods.length === 0;
   const errorText = (value: unknown) => {
     const code = value instanceof Error ? value.message : "";
     if (code === "carton_empty" || code === "carton_closed")
@@ -211,6 +219,9 @@ export default function ShipmentPacking() {
   };
   const send = async () => {
     if (!canSend) return setError(c.canNotEdit);
+    if (!hasGoods) return setError(c.noGoods);
+    if (openCartonsWithGoods.length > 0)
+      return setError(c.sendBlocked);
     if (!window.confirm(c.confirmSend)) return;
     try {
       await save(
@@ -498,13 +509,18 @@ export default function ShipmentPacking() {
       <div className="mt-5 flex flex-wrap gap-3">
         {packed.status === "قيد التجهيز" && (
           <button
-            disabled={!workspace.canEditShipments || saving}
+            disabled={!sendReady || saving}
             onClick={() => void send()}
             className={`${packingPrimaryClass} gap-2`}
           >
             <Send size={16} />
             {c.sendShipment}
           </button>
+        )}
+        {packed.status === "قيد التجهيز" && canSend && !sendReady && (
+          <p className="basis-full rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-900">
+            {!hasGoods ? c.noGoods : c.sendBlocked}
+          </p>
         )}
         {packed.status === "في الطريق" && canMarkDelivered && (
           <button

@@ -384,6 +384,23 @@ export function prepareRecordForWrite(
     result = { ...result, officeId: current.officeId } as EntityRecord;
   if ("tracking" in result) {
     const oldShipment = current && "tracking" in current ? current : null;
+    // Sending is a shipment invariant, not a role-specific shortcut. A
+    // delegated office manager or warehouse employee must close every carton
+    // containing goods before the status can become in transit.
+    if (
+      oldShipment &&
+      oldShipment.status === "قيد التجهيز" &&
+      result.status === "في الطريق" &&
+      action !== "delete-shipment" &&
+      (!result.packing?.cartons.some(carton =>
+        carton.goods.some(goods => !goods.deleted)
+      ) ||
+        result.packing?.cartons.some(
+          carton =>
+            !carton.closed && carton.goods.some(goods => !goods.deleted)
+        ))
+    )
+      throw new Error("close_carton_first");
     const officeReceiptStatus =
       result.status === "وصلت للمكتب" || result.status === "جاهزة للتسليم";
     const alreadyReceived =

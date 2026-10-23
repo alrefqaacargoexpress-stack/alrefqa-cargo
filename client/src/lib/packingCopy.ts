@@ -44,6 +44,7 @@ export interface PackingCopy extends Record<string, string> {
   inTransit: string;
   delivered: string;
   sendShipment: string;
+  sendBlocked: string;
   markDelivered: string;
   customers: string;
   reports: string;
@@ -201,6 +202,7 @@ const common: PackingCopy = {
   inTransit: "",
   delivered: "",
   sendShipment: "",
+  sendBlocked: "",
   markDelivered: "",
   customers: "",
   reports: "",
@@ -361,6 +363,7 @@ export const packingCopy: Record<PackingLanguage, PackingCopy> = {
     inTransit: "في الطريق",
     delivered: "مسلّمة",
     sendShipment: "إرسال الشحنة",
+    sendBlocked: "أغلق الكراتين المفتوحة التي تحتوي على بضاعة قبل الإرسال.",
     markDelivered: "تسجيل التسليم",
     customers: "العملاء",
     reports: "التقارير",
@@ -526,6 +529,7 @@ export const packingCopy: Record<PackingLanguage, PackingCopy> = {
     inTransit: "In transit",
     delivered: "Delivered",
     sendShipment: "Send shipment",
+    sendBlocked: "Close every open carton containing goods before sending.",
     markDelivered: "Mark delivered",
     customers: "Customers",
     reports: "Reports",
@@ -691,6 +695,7 @@ export const packingCopy: Record<PackingLanguage, PackingCopy> = {
     inTransit: "运输中",
     delivered: "已交付",
     sendShipment: "发送货运",
+    sendBlocked: "发送前请关闭所有装有货物的打开纸箱。",
     markDelivered: "标记已交付",
     customers: "客户",
     reports: "报告",
@@ -853,6 +858,7 @@ export const packingCopy: Record<PackingLanguage, PackingCopy> = {
     inTransit: "Yolda",
     delivered: "Teslim edildi",
     sendShipment: "Gönderiyi gönder",
+    sendBlocked: "Göndermeden önce mal bulunan tüm açık kolileri kapatın.",
     markDelivered: "Teslim edildi işaretle",
     customers: "Müşteriler",
     reports: "Raporlar",
