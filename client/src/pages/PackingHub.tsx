@@ -206,7 +206,7 @@ export default function PackingHub() {
         `${c.createShipment}: ${cleanTracking}`
       );
       if (!saved) {
-        setFormError(workspace.error ?? c.saveError);
+        setFormError(workspace.lastSaveError?.() ?? workspace.error ?? c.saveError);
         return;
       }
       setMessage(c.created);

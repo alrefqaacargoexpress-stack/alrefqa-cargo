@@ -124,7 +124,7 @@ export default function ShipmentPacking() {
     try {
       const ok = await workspace.saveShipment(next, label);
       if (ok) setError(null);
-      else setError(workspace.error ?? c.saveError);
+      else setError(workspace.lastSaveError?.() ?? workspace.error ?? c.saveError);
       return ok;
     } finally {
       savingRef.current = false;

@@ -300,7 +300,7 @@ export function prepareRecordForWrite(
         !(
           old.status === "قيد التجهيز" &&
           next.status === "في الطريق" &&
-          !old.journey
+          (!old.journey || old.journey.stage === "preparing")
         )
       )
         throw new Error("tracking_command_required");
@@ -339,9 +339,16 @@ export function prepareRecordForWrite(
         result.status === "مسلّمة" &&
         oldShipment.journey.stage === "arrived_office" &&
         (role === "admin" || role === "office_manager");
+      // Sending from the packing screen after a preparation plan was started
+      // keeps the journey at "preparing"; the next tracking command advances it.
+      const sendFromPreparation =
+        oldShipment.status === "قيد التجهيز" &&
+        result.status === "في الطريق" &&
+        oldShipment.journey.stage === "preparing";
       if (
         result.status !== oldShipment.status &&
         !deliveredCorrection &&
+        !sendFromPreparation &&
         result.status !== stageStatus
       )
         throw new Error("tracking_command_required");

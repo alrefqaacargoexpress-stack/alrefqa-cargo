@@ -176,11 +176,16 @@ export default function Tracking() {
     if (workspace.canSupervise) return [...stageIds];
     if (workspace.role === "staff" && !workspace.canUpdateWarehouseStage)
       return [];
-    if (!currentJourney)
-      return workspace.canUpdateWarehouseStage &&
-        detail?.status === "قيد التجهيز"
-        ? ["preparing" as TrackingStage]
+    if (!currentJourney) {
+      if (detail?.status === "قيد التجهيز")
+        return workspace.canUpdateWarehouseStage
+          ? ["preparing" as TrackingStage]
+          : [];
+      // Sent from packing without a plan: the next stage starts the journey.
+      return detail?.status === "في الطريق" && canNoteTracking(workspace.role)
+        ? ["dubai_airport" as TrackingStage]
         : [];
+    }
     if (!canNoteTracking(workspace.role)) return [];
     const next = stageIds[stageIds.indexOf(currentJourney.stage) + 1];
     return next &&

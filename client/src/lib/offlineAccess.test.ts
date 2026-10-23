@@ -46,4 +46,17 @@ describe("offline and role access policies", () => {
     expect(canStaffSendShipment("staff", "في الطريق", "مسلّمة")).toBe(false);
     expect(canShowTrackingLink(false)).toBe(false);
   });
+
+  it("lets a source warehouse create and fill a shipment in preparation", () => {
+    expect(canStaffSendShipment("staff", undefined, "قيد التجهيز")).toBe(true);
+    expect(canStaffSendShipment("staff", "قيد التجهيز", "قيد التجهيز")).toBe(
+      true
+    );
+    expect(canStaffSendShipment("staff", undefined, "في الطريق")).toBe(false);
+    expect(canStaffSendShipment("staff", undefined, "مسلّمة")).toBe(false);
+    expect(canStaffSendShipment("staff", "في الطريق", "في الطريق")).toBe(
+      false
+    );
+    expect(canStaffSendShipment("admin", undefined, "مسلّمة")).toBe(true);
+  });
 });

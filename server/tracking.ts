@@ -123,6 +123,25 @@ export function applyTrackingCommand(
     journeySchema.parse(next.journey);
     return { shipment: next, action: "tracking_stage" };
   }
+  if (
+    !currentJourney &&
+    parsed.type === "stage" &&
+    current.status === "في الطريق" &&
+    parsed.stage !== "preparing"
+  ) {
+    requireSendable(current);
+    next.journey = {
+      stage: parsed.stage,
+      branch: inferredBranch(current),
+      startedAt: now,
+      expectedDays: 9,
+      updatedAt: now,
+      notes: [noteFor({ type: "note", text: parsed.reason }, actor, now)],
+    };
+    next.status = stageShipmentStatus(parsed.stage);
+    journeySchema.parse(next.journey);
+    return { shipment: next, action: "tracking_stage" };
+  }
   if (!currentJourney) throw new Error("tracking_plan_required");
   if (parsed.type === "stage") {
     if (parsed.stage !== "preparing") requireSendable(current);

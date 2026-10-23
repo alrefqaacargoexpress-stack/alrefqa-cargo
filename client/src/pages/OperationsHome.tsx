@@ -181,8 +181,8 @@ export function operationActionsForRole(
       "tracking_staff",
       "supervisor",
       "viewer",
-    ].includes(role ?? "") &&
-    canUpdateTracking !== false
+    ].includes(role ?? "") ||
+    (role === "staff" && canUpdateTracking === true)
   ) {
     actions.push({
       href: "/operations/tracking",
@@ -306,12 +306,12 @@ export function OperationsWarehouse() {
       <section className="rounded-3xl border border-[#dce4e7] bg-white p-6 shadow-sm">
         <p className="text-sm text-[#52636e]">
           {language === "ar"
-            ? "تُعرض السجلات الحالية للقراءة فقط. يظهر رابط التتبع فقط عند منح canUpdateTracking."
+            ? "تُعرض السجلات الحالية للقراءة فقط. يظهر رابط التتبع فقط إذا منحك المدير العام صلاحية تحديد أين وصلت الشحنة."
             : language === "en"
-              ? "Current records are read-only. Tracking appears only when canUpdateTracking is granted."
+              ? "Current records are read-only. Tracking appears only if the general manager grants the shipment-stage permission."
               : language === "zh"
-                ? "当前记录为只读。只有授予 canUpdateTracking 时才显示追踪。"
-                : "Mevcut kayıtlar salt okunurdur. Takip yalnızca canUpdateTracking verilirse görünür."}
+                ? "当前记录为只读。只有总经理授予货运阶段权限时才显示追踪。"
+                : "Mevcut kayıtlar salt okunurdur. Takip yalnızca genel müdür gönderi aşaması yetkisi verirse görünür."}
         </p>
       </section>
     </PackingLayout>

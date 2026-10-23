@@ -123,6 +123,17 @@ export function canExportTracking(role: AppRole | null) {
 export function canUseOperations(role: AppRole | null) {
   return Boolean(role && role !== "viewer" && role !== "tracking_staff");
 }
+/**
+ * A shipment sent from the packing screen has no journey yet. It is treated as
+ * having just left preparation, so the first authorized stage update starts the
+ * journey at the next stage instead of leaving the shipment untrackable.
+ */
+export function effectiveJourneyStage(
+  shipment: Pick<Shipment, "journey" | "status">
+): TrackingStage | null {
+  if (shipment.journey) return shipment.journey.stage;
+  return shipment.status === "في الطريق" ? "preparing" : null;
+}
 export function assertTrackingCommand(
   role: AppRole | null,
   shipment: Shipment,
@@ -143,22 +154,27 @@ export function assertTrackingCommand(
     if (role !== "admin") throw new Error("tracking_forbidden");
     return;
   }
+  const currentStage = effectiveJourneyStage(shipment);
   if (command.type === "note") {
     if (!canNoteTracking(role)) throw new Error("tracking_forbidden");
   } else if (!canSuperviseTracking(role)) {
     if (
       command.type !== "stage" ||
       !canNoteTracking(role) ||
-      !shipment.journey ||
+      !currentStage ||
       stageIds.indexOf(command.stage) !==
-        stageIds.indexOf(shipment.journey.stage) + 1 ||
+        stageIds.indexOf(currentStage) + 1 ||
       !(role === "staff" ? warehouseStageTargets : staffStageTargets).includes(
         command.stage
       )
     )
       throw new Error("tracking_forbidden");
   }
-  if (command.type !== "plan" && !shipment.journey)
+  if (
+    command.type !== "plan" &&
+    !shipment.journey &&
+    !(command.type === "stage" && currentStage)
+  )
     throw new Error("tracking_plan_required");
 }
 export function stageShipmentStatus(stage: TrackingStage): Shipment["status"] {

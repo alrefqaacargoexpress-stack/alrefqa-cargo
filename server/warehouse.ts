@@ -62,6 +62,10 @@ function isNouakchottStaff(scope: OfficeScope): boolean {
     scope.homeOffice === "nouakchott"
   );
 }
+/** Shelf assignment: Nouakchott warehouse staff, plus the general manager. */
+function canWriteWarehouse(scope: OfficeScope): boolean {
+  return scope.role === "admin" || isNouakchottStaff(scope);
+}
 function canReadWarehouse(scope: OfficeScope): boolean {
   return (
     scope.role === "admin" ||
@@ -144,7 +148,7 @@ export async function readWarehouseSnapshot(
     if (!recordVisible(scope, "shipment", shipment)) return [];
     return [warehousePublicShipment(shipment, scope.role, scope.offices)];
   });
-  return { shipments, canEdit: isNouakchottStaff(scope) };
+  return { shipments, canEdit: canWriteWarehouse(scope) };
 }
 
 function payloadHash(input: WarehouseCommand): string {
@@ -182,7 +186,7 @@ export async function commitWarehouseStorage(
   if (!db.transaction) throw new Error("warehouse_transaction_required");
   return db.transaction(async tx => {
     const scope = await readOfficeScope(tx, user);
-    if (!isNouakchottStaff(scope))
+    if (!canWriteWarehouse(scope))
       forbidden("warehouse_staff_nouakchott_required");
     const key = receiptKey(input.requestId);
     const hash = payloadHash(input);

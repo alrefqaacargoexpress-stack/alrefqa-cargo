@@ -171,9 +171,21 @@ describe("Nouakchott storage transaction isolation", () => {
       commitWarehouseStorage(data.db, user, { ...command, shelf: "Changed" })
     ).rejects.toMatchObject({ code: "CONFLICT" });
   });
-  it("rejects managers, accountants, a different office and a revoked assignment", async () => {
+  it("lets the general manager assign a shelf, like Nouakchott warehouse staff", async () => {
+    scope = {
+      role: "admin",
+      offices: null,
+      homeOffice: null,
+      membershipVersion: 1,
+    } as OfficeScope;
+    const data = database();
+    const saved = await commitWarehouseStorage(data.db, user, command);
+    expect(saved.version).toBe(2);
+    expect(data.writes()).toBe(1);
+  });
+  it("rejects office managers, accountants, a different office and a revoked assignment", async () => {
     for (const next of [
-      { role: "admin", offices: null, homeOffice: null },
+      { role: "office_manager", offices: ["dubai"], homeOffice: "dubai" },
       { role: "accountant", offices: ["nouakchott"], homeOffice: "nouakchott" },
       { role: "staff", offices: ["dubai"], homeOffice: "dubai" },
       { role: "staff", offices: [], homeOffice: null },

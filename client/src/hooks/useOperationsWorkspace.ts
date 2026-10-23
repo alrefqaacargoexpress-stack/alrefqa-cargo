@@ -37,6 +37,7 @@ import {
   profileMatchesUser,
 } from "@/lib/offlineAccess";
 import { assertShipmentAction } from "@shared/shipmentDeletion";
+import { reasonFromError, syncReasonMessage } from "@/lib/syncReasonCopy";
 import {
   canReadOfficeRecord,
   canWriteOfficeRecord,
@@ -273,6 +274,15 @@ export function useOperationsWorkspace() {
   const [notice, setNotice] = useState<string | null>(null);
   const [conflicts, setConflicts] = useState<SyncResult["conflicts"]>([]);
   const [busy, setBusy] = useState(false);
+  // Synchronous mirror of the latest save failure so forms can show the exact
+  // reason immediately after an awaited save returns false.
+  const lastSaveErrorRef = useRef<string | null>(null);
+  const failSave = (reason: string) => {
+    const message = syncReasonMessage(reason, language);
+    lastSaveErrorRef.current = message;
+    setNotice(message);
+    return false as const;
+  };
   useEffect(() => {
     const on = () => setOnline(true),
       off = () => setOnline(false);
@@ -351,9 +361,13 @@ export function useOperationsWorkspace() {
       busy ||
       !canEditCustomerAccount(role, offices)
     ) {
-      setNotice(w.access);
-      return false;
+      return failSave(
+        role && role !== "accountant"
+          ? "finance_command_required"
+          : "employee_single_office_required"
+      );
     }
+    lastSaveErrorRef.current = null;
     try {
       const existing =
         current.state.accounts.find(item => item.id === account.id) ?? null;
@@ -375,9 +389,8 @@ export function useOperationsWorkspace() {
       setWorkspace(next);
       setNotice(w.saved);
       return true;
-    } catch {
-      setNotice(w.saveError);
-      return false;
+    } catch (error) {
+      return failSave(reasonFromError(error));
     }
   };
   const saveShipment = async (
@@ -394,9 +407,11 @@ export function useOperationsWorkspace() {
       !canCreateSourceShipment(role, offices) ||
       !accessReady
     ) {
-      setNotice(w.access);
-      return false;
+      return failSave(
+        isNouakchottStaff(role, offices) ? "warehouse_scope_forbidden" : "forbidden"
+      );
     }
+    lastSaveErrorRef.current = null;
     const existing =
       current.state.shipments.find(s => s.id === shipment.id) ?? null;
     // Preserve an existing operational owner when a legacy editor omits it;
@@ -409,8 +424,12 @@ export function useOperationsWorkspace() {
       !canWriteOfficeRecord(role, offices, "shipment", existing ?? candidate) ||
       !canWriteOfficeRecord(role, offices, "shipment", candidate)
     ) {
-      setNotice(w.access);
-      return false;
+      return failSave(
+        (role === "staff" || role === "accountant" || role === "office_manager") &&
+          (!offices || offices.length !== 1)
+          ? "employee_single_office_required"
+          : "shipment_source_office_mismatch"
+      );
     }
     if (
       current.state.shipments.some(
@@ -420,8 +439,7 @@ export function useOperationsWorkspace() {
             normalizeTracking(candidate.tracking)
       )
     ) {
-      setNotice(w.duplicate);
-      return false;
+      return failSave("duplicate_tracking");
     }
     try {
       if (
@@ -462,9 +480,8 @@ export function useOperationsWorkspace() {
       setWorkspace(next);
       setNotice(w.saved);
       return true;
-    } catch {
-      setNotice(w.saveError);
-      return false;
+    } catch (error) {
+      return failSave(reasonFromError(error));
     }
   };
   const runSync = async (
@@ -626,10 +643,13 @@ export function useOperationsWorkspace() {
     canEditAccounts: accessReady && canEditCustomerAccount(role, offices),
     canCreateShipments: accessReady && canCreateSourceShipment(role, offices),
     warehouseOnly: isNouakchottStaff(role, offices),
+    // Warehouse staff need the explicit per-employee grant; tracking roles
+    // (admin, office manager, supervisor, tracking staff) use their role.
     canUpdateTracking:
       accessReady &&
-      (accessData?.canUpdateTracking === true ||
-        (accessData?.canUpdateTracking === undefined && canNoteTracking(role))),
+      (role === "staff"
+        ? accessData?.canUpdateTracking === true
+        : canNoteTracking(role)),
     authenticated: Boolean(activeId),
     accessReady,
     showFinance: accessReady && canViewFinance(role),
@@ -642,6 +662,7 @@ export function useOperationsWorkspace() {
     snapshotError: snapshot.error?.message ?? null,
     saveRecord,
     saveShipment,
+    lastSaveError: () => lastSaveErrorRef.current,
     sync,
     syncRecords,
     reload,

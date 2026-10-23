@@ -63,10 +63,13 @@ export function canStaffSendShipment(
   fromStatus: string | undefined,
   toStatus: string | undefined
 ) {
-  return (
-    role !== "staff" ||
-    (fromStatus === "قيد التجهيز" && toStatus === "في الطريق")
-  );
+  if (role !== "staff") return true;
+  // A warehouse employee may open a new shipment in preparation, keep editing
+  // goods while it stays in preparation, and send it once. Arrival, delivery
+  // and any other stage change stay with tracking commands on the server.
+  if (fromStatus === undefined) return toStatus === "قيد التجهيز";
+  if (fromStatus === toStatus) return fromStatus === "قيد التجهيز";
+  return fromStatus === "قيد التجهيز" && toStatus === "في الطريق";
 }
 
 export function canShowTrackingLink(canUpdateTracking: boolean) {

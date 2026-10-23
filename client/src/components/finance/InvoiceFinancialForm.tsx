@@ -112,7 +112,8 @@ export default function InvoiceFinancialForm({
   }, [accounts, initialCustomerId, homeOffice]);
 
   const wallet = trpc.office.public.useQuery(undefined, {
-    enabled: paymentMode === "wallet" && homeOffice === "nouakchott",
+    // Load wallets up front so the option can appear; only Nouakchott uses them.
+    enabled: homeOffice === "nouakchott",
     retry: false,
     refetchOnWindowFocus: false,
   });
@@ -428,7 +429,15 @@ export default function InvoiceFinancialForm({
             )}
           </div>
         </PackingField>
-        <PackingField label={c.paymentMode} required>
+        <PackingField
+          label={c.paymentMode}
+          required
+          hint={
+            homeOffice && homeOffice !== "nouakchott"
+              ? c.walletNouakchottOnly
+              : undefined
+          }
+        >
           <select
             className={inputClass}
             value={paymentMode}

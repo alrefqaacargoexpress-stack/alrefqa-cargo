@@ -25,7 +25,9 @@ type WarehouseApi = {
   };
   commit: {
     useMutation: () => {
-      mutateAsync: (input: PendingWarehouseLocation) => Promise<unknown>;
+      mutateAsync: (
+        input: Omit<PendingWarehouseLocation, "createdAt">
+      ) => Promise<{ version: number }>;
       isPending: boolean;
     };
   };
@@ -152,9 +154,27 @@ export default function WarehouseStorage() {
   const share = async () => {
     if (!userId || workspace.localOnly || !online || !drafts.length) return;
     let accepted = 0;
+    // Each accepted shelf assignment bumps the shipment version. Later goods of
+    // the same shipment are rebased only from the exact version this batch
+    // consumed, so a newer edit by another employee still raises a conflict.
+    const advanced = new Map<string, { from: number; to: number }>();
     for (const draft of [...drafts]) {
+      const step = advanced.get(draft.shipmentId);
+      const rebased = Boolean(step && draft.expectedVersion === step.from);
+      const expectedVersion = rebased ? step!.to : draft.expectedVersion;
       try {
-        await commit.mutateAsync(draft);
+        const result = await commit.mutateAsync({
+          requestId: rebased ? crypto.randomUUID() : draft.requestId,
+          shipmentId: draft.shipmentId,
+          goodsId: draft.goodsId,
+          warehouse: draft.warehouse,
+          shelf: draft.shelf,
+          expectedVersion,
+        });
+        advanced.set(draft.shipmentId, {
+          from: rebased ? step!.from : expectedVersion,
+          to: result.version,
+        });
         const next = removeWarehouseLocation(userId, draft.requestId);
         setDrafts(next.pending);
         accepted++;
@@ -245,6 +265,7 @@ export default function WarehouseStorage() {
                 row={row}
                 draft={draftFor(row)}
                 copy={c}
+                canEdit={Boolean(snapshot.data?.canEdit)}
                 onSave={saveDraft}
               />
             ))}
@@ -258,11 +279,13 @@ function LocationCard({
   row,
   draft,
   copy: c,
+  canEdit,
   onSave,
 }: {
   row: GoodRow;
   draft?: PendingWarehouseLocation;
   copy: ReturnType<typeof warehouseCopy>;
+  canEdit: boolean;
   onSave: (row: GoodRow, warehouse: string, shelf: string) => void;
 }) {
   const [warehouse, setWarehouse] = useState(
@@ -294,26 +317,30 @@ function LocationCard({
           {c.warehouse}
           <input
             value={warehouse}
+            disabled={!canEdit}
             onChange={event => setWarehouse(event.target.value)}
-            className="min-h-10 rounded-lg border border-[#cbd9de] px-2 text-sm"
+            className="min-h-10 rounded-lg border border-[#cbd9de] px-2 text-sm disabled:bg-slate-50"
           />
         </label>
         <label className="grid gap-1 text-xs font-bold">
           {c.shelf}
           <input
             value={shelf}
+            disabled={!canEdit}
             onChange={event => setShelf(event.target.value)}
-            className="min-h-10 rounded-lg border border-[#cbd9de] px-2 text-sm"
+            className="min-h-10 rounded-lg border border-[#cbd9de] px-2 text-sm disabled:bg-slate-50"
           />
         </label>
       </div>
-      <button
-        type="button"
-        onClick={() => onSave(row, warehouse, shelf)}
-        className="mt-3 rounded-lg border border-[#2e6280] px-3 py-2 text-xs font-black text-[#2e6280]"
-      >
-        {c.save}
-      </button>
+      {canEdit && (
+        <button
+          type="button"
+          onClick={() => onSave(row, warehouse, shelf)}
+          className="mt-3 rounded-lg border border-[#2e6280] px-3 py-2 text-xs font-black text-[#2e6280]"
+        >
+          {c.save}
+        </button>
+      )}
     </article>
   );
 }
