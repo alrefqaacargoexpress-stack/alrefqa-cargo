@@ -116,6 +116,22 @@ export default function PackingLayout({
           },
         ]
       : []),
+    ...(["admin", "office_manager"].includes(workspace.role ?? "") ||
+    permissionAllowed(subject, "office_settings", "view") ||
+    permissionAllowed(subject, "employees", "view")
+      ? [
+          {
+            href: "/operations/settings",
+            label: <ShieldAlert size={15} />,
+            text: {
+              ar: "الصلاحيات وإعدادات المكتب",
+              en: "Permissions and office settings",
+              zh: "权限和办公室设置",
+              tr: "Yetkiler ve ofis ayarları",
+            }[language],
+          },
+        ]
+      : []),
     {
       href: "/account/security",
       label: <ShieldAlert size={15} />,

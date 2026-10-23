@@ -98,6 +98,7 @@ export default function OfficeSettings() {
     "view"
   );
   const canEditMemberships =
+    ["admin", "office_manager"].includes(permissionScope.role ?? "") &&
     permissionAllowed(permissionScope, "employees", "manage") &&
     workspace.online &&
     !workspace.localOnly;
