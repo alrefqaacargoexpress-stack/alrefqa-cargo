@@ -495,9 +495,14 @@ export async function lookupPublicTracking(
         shipment,
         parsed
       );
-      return publicTrackingResultSchema.parse(
+      const augmented = publicTrackingResultSchema.parse(
         publicTrackingProjection(shipment, parsed, row.updatedAt, paymentStatus)
       );
+      if (!augmented.found) return augmented;
+      const { augmentPublicTrackingTimeline } = await import(
+        "./customerTracking"
+      );
+      return augmentPublicTrackingTimeline(db, augmented, keyedRecordId);
     }
   }
 
@@ -521,7 +526,7 @@ export async function lookupPublicTracking(
     scope: "shared",
   } as Shipment;
   const paymentStatus = await derivePublicPaymentStatus(db, shipment, parsed);
-  return publicTrackingResultSchema.parse(
+  const augmented = publicTrackingResultSchema.parse(
     publicTrackingProjection(
       shipment,
       parsed,
@@ -529,6 +534,9 @@ export async function lookupPublicTracking(
       paymentStatus
     )
   );
+  if (!augmented.found || !fallbackId) return augmented;
+  const { augmentPublicTrackingTimeline } = await import("./customerTracking");
+  return augmentPublicTrackingTimeline(db, augmented, fallbackId);
 }
 
 function sha256(value: string): string {

@@ -54,6 +54,9 @@ function fakeDb(input: {
         where() {
           return builder;
         },
+        orderBy() {
+          return builder;
+        },
         limit() {
           if (selectCalls === 1) return Promise.resolve(input.keyRows ?? []);
           recordsReads += 1;
@@ -88,6 +91,9 @@ function paymentDb(input: {
           return builder;
         },
         where() {
+          return builder;
+        },
+        orderBy() {
           return builder;
         },
         limit() {

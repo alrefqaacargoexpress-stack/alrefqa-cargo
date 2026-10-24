@@ -17,6 +17,10 @@
       "title": "بوابة متابعة شحنتك"
     },
     {
+      "path": "/my-shipments",
+      "title": "شحناتي"
+    },
+    {
       "path": "/operations",
       "title": "مركز عمليات الرفكة"
     },

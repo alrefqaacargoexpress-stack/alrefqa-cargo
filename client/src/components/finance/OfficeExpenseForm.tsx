@@ -4,6 +4,8 @@ import { financeCurrencies } from "@shared/finance";
 import type { OfficeId } from "@shared/branches";
 import type { AppRole } from "@shared/operations";
 import type { PermissionMap } from "@shared/permissions";
+import { permissionAllowed } from "@shared/permissions";
+import { sourceCurrency } from "@shared/packing";
 import { ownerOffice } from "@shared/branches";
 import type { Shipment } from "@shared/operations";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -47,6 +49,8 @@ export function createExpenseCommand(input: {
   date: string;
   description: string;
   shipmentId?: string;
+  referenceKey?: string;
+  costReference?: string;
 }): FinanceCommand {
   const commandId = uuid();
   return {
@@ -63,6 +67,12 @@ export function createExpenseCommand(input: {
       description: input.description.trim(),
       ...(input.category === "shipment_cost" && input.shipmentId
         ? { shipmentId: input.shipmentId }
+        : {}),
+      ...(input.referenceKey?.trim() || input.costReference?.trim()
+        ? {
+            referenceKey: (input.referenceKey ?? input.costReference)!.trim(),
+            costReference: (input.costReference ?? input.referenceKey)!.trim(),
+          }
         : {}),
     },
   };
@@ -88,19 +98,33 @@ export default function OfficeExpenseForm({
     allowedOffices.length === 1 &&
     Boolean(officeForWrite) &&
     allowedOffices[0] === officeForWrite;
-  const canWrite =
+  const canManageExpenses =
     canEdit &&
-    singleOfficeScope &&
+    (role === "admin" || singleOfficeScope) &&
     canWriteFinanceUi(
       role,
-      allowedOffices,
+      role === "admin" ? null : allowedOffices,
       officeForWrite,
       permissions,
       "expenses"
     );
+  const permissionSubject = {
+    role: role ?? null,
+    offices: allowedOffices,
+    homeOffice: officeForWrite,
+    permissions,
+  };
+  const canPostSourceCost = permissionAllowed(
+    permissionSubject,
+    "shipment_cost",
+    "manage"
+  );
+  const canWrite =
+    canManageExpenses ||
+    (canEdit && (role === "admin" || singleOfficeScope) && canPostSourceCost);
   const [category, setCategory] = useState<
     "daily_expense" | "monthly_expense" | "shipment_cost"
-  >("daily_expense");
+  >(canManageExpenses ? "daily_expense" : "shipment_cost");
   const [officeId, setOfficeId] = useState<OfficeId>(
     initialOffice && allowedOffices.includes(initialOffice)
       ? initialOffice
@@ -111,6 +135,7 @@ export default function OfficeExpenseForm({
   const [date, setDate] = useState(today);
   const [description, setDescription] = useState("");
   const [shipmentId, setShipmentId] = useState("");
+  const [referenceKey, setReferenceKey] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -130,12 +155,22 @@ export default function OfficeExpenseForm({
       ),
     [officeId, shipments]
   );
+  const selectedShipment = officeShipments.find(
+    shipment => shipment.id === shipmentId
+  );
+  const shipmentCurrency = selectedShipment?.packing?.source
+    ? (sourceCurrency[selectedShipment.packing.source] as FinanceCurrency)
+    : undefined;
 
   useEffect(() => {
     if (category !== "shipment_cost") setShipmentId("");
     else if (!officeShipments.some(shipment => shipment.id === shipmentId))
       setShipmentId(officeShipments[0]?.id ?? "");
   }, [category, officeShipments, shipmentId]);
+  useEffect(() => {
+    if (category === "shipment_cost" && shipmentCurrency)
+      setCurrency(shipmentCurrency);
+  }, [category, shipmentCurrency]);
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -154,6 +189,21 @@ export default function OfficeExpenseForm({
       setError(c.shipmentRequired);
       return;
     }
+    if (
+      category === "shipment_cost" &&
+      shipmentCurrency &&
+      currency !== shipmentCurrency
+    ) {
+      setError(c.currencyMismatch ?? c.invalidAmount);
+      return;
+    }
+    if (
+      (category === "shipment_cost" && !canPostSourceCost) ||
+      (category !== "shipment_cost" && !canManageExpenses)
+    ) {
+      setError(c.permissionDenied ?? c.required);
+      return;
+    }
     if (!canWrite || pending || busy) return;
     const command = createExpenseCommand({
       officeId,
@@ -163,6 +213,12 @@ export default function OfficeExpenseForm({
       date,
       description,
       ...(category === "shipment_cost" ? { shipmentId } : {}),
+      ...(referenceKey.trim()
+        ? {
+            referenceKey: referenceKey.trim(),
+            costReference: referenceKey.trim(),
+          }
+        : {}),
     });
     setBusy(true);
     try {
@@ -170,6 +226,7 @@ export default function OfficeExpenseForm({
       if (saved) {
         setAmount("");
         setDescription("");
+        setReferenceKey("");
         setShipmentId("");
         setDate(today());
         setNotice(c.saved);
@@ -196,18 +253,23 @@ export default function OfficeExpenseForm({
               className={packingInputClass}
               value={category}
               disabled={disabled}
-              onChange={event =>
+              onChange={event => {
+                const next = event.target.value as
+                  | "daily_expense"
+                  | "monthly_expense"
+                  | "shipment_cost";
                 setCategory(
-                  event.target.value as
-                    | "daily_expense"
-                    | "monthly_expense"
-                    | "shipment_cost"
-                )
-              }
+                  next === "shipment_cost" && !canPostSourceCost
+                    ? "daily_expense"
+                    : next
+                );
+              }}
             >
               <option value="daily_expense">{c.dailyExpense}</option>
               <option value="monthly_expense">{c.monthlyExpenses}</option>
-              <option value="shipment_cost">{c.shipmentCost}</option>
+              <option value="shipment_cost" disabled={!canPostSourceCost}>
+                {c.shipmentCost}
+              </option>
             </select>
           </PackingField>
           <PackingField label={c.office} required>
@@ -292,6 +354,20 @@ export default function OfficeExpenseForm({
             onChange={event => setDescription(event.target.value)}
           />
         </PackingField>
+        <details className="rounded-xl border border-[#edf1f1] bg-[#fbfcfb] p-3">
+          <summary className="cursor-pointer text-sm font-bold text-[#52636e]">
+            {c.costReference}
+          </summary>
+          <p className="mt-2 text-xs text-[#718088]">{c.costReferenceHint}</p>
+          <input
+            className={`${packingInputClass} mt-3`}
+            value={referenceKey}
+            disabled={disabled}
+            maxLength={128}
+            onChange={event => setReferenceKey(event.target.value)}
+            placeholder={c.costReferenceManual}
+          />
+        </details>
         {error && (
           <p
             role="alert"

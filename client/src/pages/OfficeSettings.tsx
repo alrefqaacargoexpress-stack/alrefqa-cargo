@@ -1,5 +1,5 @@
 import NewPermissionsMatrix from "@/components/offices/newPermissionsMatrix";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ComponentType } from "react";
 import { Link, useLocation, useSearch } from "wouter";
 import PackingLayout from "@/components/packing/PackingLayout";
 import {
@@ -23,6 +23,7 @@ import {
 import WalletMethodsEditor from "@/components/offices/WalletMethodsEditor";
 import { canUseOperations } from "@shared/tracking";
 import {
+  blankPermissions,
   permissionAllowed,
   permissionsFor,
   type PermissionMap,
@@ -35,6 +36,17 @@ import type {
   OfficeProfile,
   VersionedOfficeProfile,
 } from "@shared/branches";
+
+type WalletMethodsEditorProps = {
+  workspace: ReturnType<typeof useOperationsWorkspace>;
+  officeId: OfficeId;
+  canRead: boolean;
+  canEdit: boolean;
+  /** Compatibility with the pre-migration wallet component. */
+  allowed?: boolean;
+};
+const OfficeWalletEditor =
+  WalletMethodsEditor as unknown as ComponentType<WalletMethodsEditorProps>;
 
 export default function OfficeSettings() {
   const { language } = useLanguage();
@@ -81,6 +93,8 @@ export default function OfficeSettings() {
     homeOffice: OfficeId | null;
     canUpdateTracking: boolean;
     permissions?: PermissionMap | null;
+    delegationCeiling?: PermissionMap;
+    delegationPolicyConfigured?: boolean;
     delegatedBy?: number | null;
   };
   const access = accessQuery.data as AccessWithPermissions | undefined;
@@ -91,7 +105,13 @@ export default function OfficeSettings() {
     canUpdateTracking: access?.canUpdateTracking ?? false,
     permissions: access?.permissions ?? null,
   };
-  const permissionCeiling = permissionsFor(permissionScope);
+  const ownPermissions = permissionsFor(permissionScope);
+  const permissionCeiling =
+    permissionScope.role === "office_manager"
+      ? access?.delegationPolicyConfigured
+        ? (access.delegationCeiling ?? blankPermissions())
+        : ownPermissions
+      : ownPermissions;
   const canReadMemberships = permissionAllowed(
     permissionScope,
     "employees",
@@ -103,15 +123,21 @@ export default function OfficeSettings() {
     workspace.online &&
     !workspace.localOnly;
   const managedOffice: OfficeId | null =
-    workspace.role === "office_manager"
+    permissionScope.role === "office_manager"
       ? (access?.homeOffice ?? workspace.offices?.[0] ?? null)
       : null;
   const selectableOffices: readonly OfficeId[] =
-    workspace.role === "office_manager"
+    permissionScope.role === "admin"
+      ? officeIds
+      : permissionScope.role === "office_manager"
       ? managedOffice
         ? [managedOffice]
         : []
-      : officeIds;
+      : permissionScope.role === "general_accountant"
+        ? (access?.offices ?? workspace.offices ?? [])
+        : access?.homeOffice ?? workspace.offices?.[0]
+          ? [(access?.homeOffice ?? workspace.offices?.[0]) as OfficeId]
+          : [];
   const membersQuery = trpc.branches.members.useQuery(undefined, {
     enabled:
       canReadMemberships && workspace.online && Boolean(workspace.userId),
@@ -229,19 +255,17 @@ export default function OfficeSettings() {
       return false;
     }
   };
-  const roleCanSeeProfile =
-    workspace.role === "admin" ||
-    workspace.role === "office_manager" ||
-    workspace.role === "accountant" ||
-    workspace.role === "staff" ||
-    workspace.role === "supervisor" ||
-    workspace.role === "viewer" ||
-    workspace.role === "tracking_staff";
+  const roleCanSeeProfile = canOpenSettings;
 
-  const canReadNouakchottPayments = permissionAllowed(
+  const canReadOfficeWallets = permissionAllowed(
     permissionScope,
     "office_wallets",
     "view"
+  );
+  const canManageOfficeWallets = permissionAllowed(
+    permissionScope,
+    "office_wallets",
+    "manage"
   );
   return (
     <PackingLayout
@@ -250,13 +274,13 @@ export default function OfficeSettings() {
       workspace={workspace}
     >
       <section className="grid gap-5">
-        {(workspace.role === "admin" ||
-          workspace.role === "office_manager") && (
+        {(permissionScope.role === "admin" ||
+          permissionScope.role === "office_manager") && (
           <NewPermissionsMatrix
-            value={permissionCeiling}
-            ceiling={permissionCeiling}
+            value={ownPermissions}
+            ceiling={ownPermissions}
             canEdit={false}
-            showRootPermissions={workspace.role === "admin"}
+            showRootPermissions={permissionScope.role === "admin"}
           />
         )}
         <div className="rounded-2xl border border-[#dce4e7] bg-white p-5 shadow-sm">
@@ -275,7 +299,7 @@ export default function OfficeSettings() {
                 className={packingInputClass}
                 value={selectedOffice}
                 onChange={event => chooseOffice(event.target.value as OfficeId)}
-                disabled={workspace.role === "office_manager"}
+                disabled={permissionScope.role === "office_manager"}
               >
                 {selectableOffices.map(officeId => (
                   <option key={officeId} value={officeId}>
@@ -330,6 +354,7 @@ export default function OfficeSettings() {
             }
             managerHomeOffice={managedOffice}
             permissionCeiling={permissionCeiling}
+            actorPermissions={ownPermissions}
             canEdit={canEditMemberships}
             online={workspace.online}
             pending={assignMember.isPending}
@@ -343,10 +368,13 @@ export default function OfficeSettings() {
             {copy.noMemberAccess}
           </p>
         )}
-        {selectedOffice === "nouakchott" && (
-          <WalletMethodsEditor
+        {canReadOfficeWallets && (
+          <OfficeWalletEditor
             workspace={workspace}
-            allowed={canReadNouakchottPayments}
+            officeId={selectedOffice}
+            canRead={canReadOfficeWallets}
+            canEdit={canManageOfficeWallets}
+            allowed={canReadOfficeWallets}
           />
         )}
         <p className="text-xs text-[#718088]">

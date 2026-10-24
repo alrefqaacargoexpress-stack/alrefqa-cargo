@@ -7,6 +7,7 @@ import {
   intersectPermissions,
   permissionAllowed,
   permissionKeys,
+  permissionRank,
   rootOnlyPermissions,
   type PermissionMap,
 } from "@shared/permissions";
@@ -28,10 +29,11 @@ const assignableRoles = [
   "general_accountant",
   "cashier",
   "viewer",
-  "tracking_staff",
   "supervisor",
 ] as const;
 type AssignableRole = (typeof assignableRoles)[number];
+type LegacyRole = "tracking_staff";
+type DraftRole = AssignableRole | LegacyRole;
 const managerAssignableRoles = assignableRoles.filter(
   role => role !== "office_manager"
 );
@@ -48,12 +50,14 @@ type EditableOfficeMember = OfficeMember & {
   delegatedBy?: number | null;
 };
 type MemberDraft = {
-  role: AssignableRole;
+  role: DraftRole;
   offices: OfficeId[];
   homeOffice: OfficeId | null;
   canUpdateTracking: boolean;
   permissions: PermissionMap;
   permissionsMode: "automatic" | "manual";
+  delegationPermissions: PermissionMap;
+  delegationPermissionsDirty: boolean;
   dirty: boolean;
   version: number;
 };
@@ -211,6 +215,17 @@ const roleOfficeIds = (role: string, allowed: readonly OfficeId[]) => {
     return allowed.filter(office => office === "nouakchott");
   return [...allowed];
 };
+const permissionRole = (role: DraftRole): AssignableRole =>
+  role === "tracking_staff" ? "staff" : role;
+export const permissionsWithinCeiling = (
+  requested: PermissionMap,
+  ceiling: PermissionMap
+) =>
+  permissionKeys.every(key =>
+    rootOnlyPermissions.includes(key)
+      ? requested[key] === "none"
+      : permissionRank(requested[key]) <= permissionRank(ceiling[key])
+  );
 
 export function automaticPermissionPreview(
   role: AssignableRole,
@@ -227,15 +242,13 @@ export function automaticPermissionPreview(
     homeOffice,
     canUpdateTracking,
   });
-  const retained = retainedPermissions
-    ? completePermissions(retainedPermissions)
-    : null;
-  const intended = retained
-    ? previousRole === role
-      ? retained
-      : intersectPermissions(retained, defaults)
-    : defaults;
-  return intersectPermissions(intended, ceiling);
+  // A role change cannot silently lift an old explicit denial. Same-role
+  // automatic saves omit the map and leave its stored customization intact.
+  const constrained =
+    retainedPermissions && previousRole && previousRole !== role
+      ? intersectPermissions(defaults, completePermissions(retainedPermissions))
+      : defaults;
+  return intersectPermissions(constrained, ceiling);
 }
 
 export function permissionPayloadForSave(draft: {
@@ -245,15 +258,33 @@ export function permissionPayloadForSave(draft: {
   return draft.permissionsMode === "manual" ? draft.permissions : undefined;
 }
 
+export function delegationPayloadForSave(draft: {
+  role: DraftRole;
+  actorRole: AppRole | null;
+  delegationPermissions: PermissionMap;
+  delegationPermissionsDirty: boolean;
+}): PermissionMap | undefined {
+  return draft.actorRole === "admin" &&
+    draft.role === "office_manager" &&
+    draft.delegationPermissionsDirty
+    ? draft.delegationPermissions
+    : undefined;
+}
+
 function draftFrom(
   member: EditableOfficeMember,
   actorRole: AppRole | null,
   managerHomeOffice: OfficeId | null | undefined,
   ceiling: PermissionMap
 ): MemberDraft {
-  const role = assignableRoles.includes(member.role as AssignableRole)
-    ? (member.role as AssignableRole)
-    : "staff";
+  const role: DraftRole =
+    member.role === "tracking_staff"
+      ? "tracking_staff"
+      : assignableRoles.includes(member.role as AssignableRole)
+        ? (member.role as AssignableRole)
+        : "staff";
+  const previewRole: AssignableRole =
+    role === "tracking_staff" ? "staff" : role;
   const allowed =
     actorRole === "office_manager"
       ? managerOfficeIds(managerHomeOffice)
@@ -269,20 +300,16 @@ function draftFrom(
             .filter(office => roleOfficeIds(role, allowed).includes(office))
             .slice(0, 1)
         : source.filter(office => allowed.includes(office));
-  const hasCustomizedPermissions = Boolean(member.permissionsCustomized);
   const raw = automaticPermissionPreview(
-    role,
+    previewRole,
     offices,
     member.homeOffice && offices.includes(member.homeOffice)
       ? member.homeOffice
       : null,
     Boolean(member.canUpdateTracking),
     ceiling,
-    member.permissions ??
-      (hasCustomizedPermissions
-        ? (member.effectivePermissions ?? blankPermissions())
-        : null),
-    member.role
+    undefined,
+    undefined
   );
   return {
     role,
@@ -300,6 +327,10 @@ function draftFrom(
     ),
     permissions: completePermissions(raw),
     permissionsMode: "automatic",
+    delegationPermissions: completePermissions(
+      member.effectiveDelegationCeiling ?? blankPermissions()
+    ),
+    delegationPermissionsDirty: false,
     dirty: false,
     version: member.version,
   };
@@ -311,6 +342,7 @@ type OfficeMembershipsProps = {
   actorUserId?: number | null;
   managerHomeOffice?: OfficeId | null;
   permissionCeiling?: PermissionMap;
+  actorPermissions?: PermissionMap;
   canEdit: boolean;
   online: boolean;
   pending?: boolean;
@@ -321,6 +353,7 @@ type OfficeMembershipsProps = {
     homeOffice: OfficeId | null;
     canUpdateTracking: boolean;
     permissions?: PermissionMap;
+    delegationPermissions?: PermissionMap;
     expectedVersion: number;
   }) => Promise<OfficeMember | null>;
   onResetPassword: (input: {
@@ -341,6 +374,7 @@ export default function OfficeMemberships({
   actorUserId = null,
   managerHomeOffice = null,
   permissionCeiling = blankPermissions("manage"),
+  actorPermissions = permissionCeiling,
   canEdit,
   online,
   pending = false,
@@ -372,7 +406,7 @@ export default function OfficeMemberships({
         actorRole === "office_manager"
           ? managerOfficeIds(managerHomeOffice)
           : officeIds,
-      permissions: permissionCeiling,
+      permissions: actorPermissions,
     },
     "employee_disable",
     "manage"
@@ -408,8 +442,9 @@ export default function OfficeMemberships({
   };
   const isLocked = (member: EditableOfficeMember) =>
     member.role === "admin" ||
-    (actorRole === "office_manager" &&
-      (member.userId === actorUserId || member.role === "office_manager"));
+    member.userId === actorUserId ||
+    member.role === "tracking_staff" ||
+    (actorRole === "office_manager" && member.role === "office_manager");
   const canDisableMember = (member: EditableOfficeMember) =>
     canEdit &&
     canDisablePermission &&
@@ -460,7 +495,13 @@ export default function OfficeMemberships({
     const draft =
       drafts[member.userId] ??
       draftFrom(member, actorRole, managerHomeOffice, permissionCeiling);
-    if (!canEdit || pending || isLocked(member)) return;
+    if (
+      !canEdit ||
+      pending ||
+      isLocked(member) ||
+      draft.role === "tracking_staff"
+    )
+      return;
     if (!online) {
       setError(c.onlineRequired);
       return;
@@ -482,9 +523,22 @@ export default function OfficeMemberships({
       setError(permissionCopy[language].required);
       return;
     }
+    if (!permissionsWithinCeiling(draft.permissions, permissionCeiling)) {
+      setError(permissionCopy[language].required);
+      return;
+    }
+    const delegationPermissions = delegationPayloadForSave({
+      role: draft.role,
+      actorRole,
+      delegationPermissions: draft.delegationPermissions,
+      delegationPermissionsDirty: draft.delegationPermissionsDirty,
+    });
+    const delegationConfirm = delegationPermissions
+      ? `\n\n${c.delegationGrantConfirm}`
+      : "";
     if (
       !window.confirm(
-        `${c.saveMember}\n${member.name || member.email}\n${c.role}: ${roleLabels[language][draft.role]}\n${c.offices}: ${draft.offices.map(id => officeName(language, id)).join(", ") || c.noOfficeAccess}\n\n${c.confirm}?`
+        `${c.saveMember}\n${member.name || member.email}\n${c.role}: ${roleLabels[language][draft.role]}\n${c.offices}: ${draft.offices.map(id => officeName(language, id)).join(", ") || c.noOfficeAccess}${delegationConfirm}\n\n${c.confirm}?`
       )
     )
       return;
@@ -502,6 +556,7 @@ export default function OfficeMemberships({
         ...(permissionPayloadForSave(draft)
           ? { permissions: permissionPayloadForSave(draft) }
           : {}),
+        ...(delegationPermissions ? { delegationPermissions } : {}),
         expectedVersion: draft.version,
       });
       if (result) {
@@ -541,8 +596,9 @@ export default function OfficeMemberships({
             drafts[member.userId] ??
             draftFrom(member, actorRole, managerHomeOffice, permissionCeiling);
           const rootLocked = member.role === "admin";
+          const legacyRole = member.role === "tracking_staff";
           const locked = isLocked(member);
-          const canEditMember = canEdit && !locked;
+          const canEditMember = canEdit && !locked && !legacyRole;
           const disableDraft = disableDrafts[member.userId] ?? {
             open: true,
             confirmation: "",
@@ -574,11 +630,14 @@ export default function OfficeMemberships({
                   {c.globalLegacy}
                 </p>
               )}
-              {(rootLocked ||
-                (actorRole === "office_manager" &&
-                  member.userId === actorUserId)) && (
+              {(rootLocked || member.userId === actorUserId) && (
                 <p className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs font-semibold text-slate-700">
                   {c.rootAdminLocked}
+                </p>
+              )}
+              {legacyRole && (
+                <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-semibold text-amber-950">
+                  {c.deprecatedRole}
                 </p>
               )}
               {member.delegatedBy != null && (
@@ -592,7 +651,7 @@ export default function OfficeMemberships({
                   <select
                     className={packingInputClass}
                     value={displayRole}
-                    disabled={!canEditMember || pending}
+                    disabled={!canEditMember || pending || legacyRole}
                     onChange={event => {
                       const nextRole = event.target.value as AssignableRole;
                       const roleOffices = roleOfficeIds(
@@ -638,11 +697,17 @@ export default function OfficeMemberships({
                         {roleLabels[language].admin}
                       </option>
                     )}
-                    {availableRoles.map(role => (
-                      <option key={role} value={role}>
-                        {roleLabels[language][role]}
+                    {legacyRole && (
+                      <option value="tracking_staff">
+                        {roleLabels[language].tracking_staff}
                       </option>
-                    ))}
+                    )}
+                    {!legacyRole &&
+                      availableRoles.map(role => (
+                        <option key={role} value={role}>
+                          {roleLabels[language][role]}
+                        </option>
+                      ))}
                   </select>
                 </label>
                 <fieldset>
@@ -683,7 +748,7 @@ export default function OfficeMemberships({
                                   ? draft.canUpdateTracking
                                   : false,
                               permissions: automaticPermissionPreview(
-                                draft.role,
+                                permissionRole(draft.role),
                                 singleOfficeRole(draft.role)
                                   ? [officeId]
                                   : event.target.checked
@@ -778,7 +843,7 @@ export default function OfficeMemberships({
                         patch(member, {
                           canUpdateTracking: nextTracking,
                           permissions: automaticPermissionPreview(
-                            draft.role,
+                            permissionRole(draft.role),
                             draft.offices,
                             draft.homeOffice,
                             nextTracking,
@@ -810,6 +875,33 @@ export default function OfficeMemberships({
                     })
                   }
                 />
+                {actorRole === "admin" &&
+                  draft.role === "office_manager" &&
+                  !rootLocked && (
+                    <details className="mt-4 rounded-2xl border border-[#dce4e7] bg-white p-4">
+                      <summary className="cursor-pointer text-sm font-black text-[#243f52]">
+                        {c.delegationTitle}
+                      </summary>
+                      <p className="mt-2 text-xs leading-5 text-[#718088]">
+                        {c.delegationHint} {c.delegationNotExecution}
+                      </p>
+                      <NewPermissionsMatrix
+                        value={draft.delegationPermissions}
+                        ceiling={blankPermissions("manage")}
+                        canEdit={canEditMember}
+                        pending={pending}
+                        excludeRootOnly
+                        title={c.delegationTitle}
+                        hint={c.delegationNotExecution}
+                        onChange={delegationPermissions =>
+                          patch(member, {
+                            delegationPermissions,
+                            delegationPermissionsDirty: true,
+                          })
+                        }
+                      />
+                    </details>
+                  )}
               </details>
               {canEditMember && (
                 <div className="mt-4 flex justify-end">

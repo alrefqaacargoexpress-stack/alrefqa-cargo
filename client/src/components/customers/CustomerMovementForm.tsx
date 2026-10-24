@@ -6,6 +6,7 @@ import {
   type FinanceCurrency,
 } from "@shared/finance";
 import { officeNames, type OfficeId } from "@shared/branches";
+import { sourceCurrency } from "@shared/packing";
 import { trpc } from "@/lib/trpc";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { customerAccountCopyFor } from "@/lib/customerAccountCopy";
@@ -39,7 +40,11 @@ export default function CustomerMovementForm({
   const c = customerAccountCopyFor(language);
   const [direction, setDirection] = useState<"credit" | "debit">("credit");
   const [amount, setAmount] = useState("");
-  const [currency, setCurrency] = useState<FinanceCurrency>("MRU");
+  const [currency, setCurrency] = useState<FinanceCurrency>(
+    officeId === "nouakchott"
+      ? "MRU"
+      : (sourceCurrency[officeId] as FinanceCurrency)
+  );
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [description, setDescription] = useState("");
   const [paymentMode, setPaymentMode] = useState<"cash" | "wallet">("cash");
@@ -47,13 +52,16 @@ export default function CustomerMovementForm({
   const [reference, setReference] = useState("");
   const [saving, setSaving] = useState(false);
   const [pending, setPending] = useState<FinanceCommand | null>(null);
-  const wallet = trpc.office.public.useQuery(undefined, {
-    enabled: paymentMode === "wallet",
-    retry: false,
-    refetchOnWindowFocus: false,
-  });
+  const wallet = trpc.office.get.useQuery(
+    { officeId },
+    {
+      enabled: paymentMode === "wallet",
+      retry: false,
+      refetchOnWindowFocus: false,
+    }
+  );
   const methods = (wallet.data?.methods ?? []).filter(
-    method => method.id !== "cash"
+    method => method.id !== "cash" && method.enabled
   );
   const reset = () => {
     setPending(null);
@@ -81,7 +89,7 @@ export default function CustomerMovementForm({
         ...(paymentMode === "wallet" && selected
           ? {
               payment: {
-                office: "nouakchott",
+                office: officeId,
                 methodId: selected.id,
                 methodLabel: selected.label,
                 ...(reference.trim() ? { reference: reference.trim() } : {}),

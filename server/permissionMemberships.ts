@@ -15,6 +15,7 @@ import {
 import {
   memberRoles,
   permissionDelegations,
+  officeDelegationPolicies,
   users,
   type User,
 } from "../drizzle/schema";
@@ -54,6 +55,7 @@ export async function visiblePermissionMembers(db: any, user: User) {
       return {
         ...member,
         effectivePermissions: effective?.permissions ?? blankPermissions(),
+        effectiveDelegationCeiling: effective?.delegationCeiling,
         permissionsCustomized: effective?.permissionsCustomized ?? false,
       };
     })
@@ -68,8 +70,19 @@ export async function assignPermissionMembership(
   // sync/import code and tests. Keep the mutation boundary authoritative.
   input = officeMembershipSchema.parse(input);
   return db.transaction(async (tx: any) => {
+    await tx
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.id, user.id))
+      .limit(1)
+      .for("update");
     if (await isEmployeeDisabled(tx, user.id)) forbidden("employee_disabled");
-    const scope = await readOfficeScope(tx, user);
+    const scope = await readOfficeScope(tx, user, new Set(), true);
+    if (
+      input.delegationPermissions !== undefined &&
+      (scope.role !== "admin" || input.role !== "office_manager")
+    )
+      forbidden("delegation_policy_root_manager_only");
     if (
       !permissionAllowed(scope, "employees", "manage") ||
       !["admin", "office_manager"].includes(scope.role ?? "")
@@ -138,10 +151,11 @@ export async function assignPermissionMembership(
         message: "home_office_outside_scope",
       });
     const canUpdateTracking = Boolean(
-      ["staff", "source_warehouse"].includes(input.role) &&
-        input.offices.length === 1 &&
-        input.offices[0] !== "nouakchott" &&
-        (input.canUpdateTracking ?? old?.canUpdateTracking)
+      input.role === "source_warehouse" ||
+        (input.role === "staff" &&
+          input.offices.length === 1 &&
+          input.offices[0] !== "nouakchott" &&
+          (input.canUpdateTracking ?? old?.canUpdateTracking))
     );
     const automaticDefaults =
       input.permissions === undefined &&
@@ -170,11 +184,17 @@ export async function assignPermissionMembership(
     };
     if (rootOnlyPermissions.some(key => requested[key] !== "none"))
       forbidden("global_permission_not_delegable");
-    if (scope.role === "office_manager" && automaticDefaults)
-      requested = intersectPermissions(requested, permissionsFor(scope));
+    const managerCeiling =
+      scope.role === "office_manager"
+        ? scope.delegationPolicyConfigured
+          ? (scope.delegationCeiling ?? blankPermissions())
+          : permissionsFor(scope)
+        : null;
+    if (managerCeiling && automaticDefaults)
+      requested = intersectPermissions(requested, managerCeiling);
     if (
       scope.role === "office_manager" &&
-      !withinPermissionCeiling(requested, permissionsFor(scope))
+      !withinPermissionCeiling(requested, managerCeiling ?? blankPermissions())
     )
       forbidden("permission_exceeds_manager_ceiling");
     const delegatedBy = scope.role === "office_manager" ? user.id : null;
@@ -195,6 +215,39 @@ export async function assignPermissionMembership(
         .where(eq(memberRoles.userId, input.userId));
     else
       await tx.insert(memberRoles).values({ userId: input.userId, ...values });
+    if (input.delegationPermissions !== undefined) {
+      const delegation = {
+        ...blankPermissions(),
+        ...input.delegationPermissions,
+      };
+      if (rootOnlyPermissions.some(key => delegation[key] !== "none"))
+        forbidden("global_permission_not_delegable");
+      const priorPolicies = await tx
+        .select()
+        .from(officeDelegationPolicies)
+        .where(eq(officeDelegationPolicies.managerUserId, input.userId));
+      const policyVersion =
+        Math.max(
+          0,
+          ...(priorPolicies as any[])
+            .filter(
+              row =>
+                row.managerUserId === input.userId &&
+                row.officeId === homeOffice
+            )
+            .map(row => Number(row.policyVersion) || 0)
+        ) + 1;
+      await tx.insert(officeDelegationPolicies).values({
+        id: `office-delegation:${input.userId}:${homeOffice}:${policyVersion}`,
+        managerUserId: input.userId,
+        officeId: homeOffice,
+        managerMembershipVersion: version,
+        policyVersion,
+        permissions: delegation,
+        enabled: true,
+        actorId: user.id,
+      });
+    }
     await tx
       .update(permissionDelegations)
       .set({ status: "revoked", revokedAt: new Date() })
@@ -253,6 +306,10 @@ export async function assignPermissionMembership(
         offices: input.offices,
         permissions: requested,
       }),
+      effectiveDelegationCeiling:
+        input.role === "office_manager" && input.delegationPermissions
+          ? { ...blankPermissions(), ...input.delegationPermissions }
+          : undefined,
       permissionsCustomized: true,
     };
   });

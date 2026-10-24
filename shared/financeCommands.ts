@@ -10,7 +10,9 @@ export function financeCommandPermissionKey(
     case "invoice":
       return "invoices";
     case "expense":
-      return "expenses";
+      return command.payload.category === "shipment_cost"
+        ? "shipment_cost"
+        : "expenses";
     case "opening_balance":
       return "opening_balance";
     case "shipment_price":

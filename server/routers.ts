@@ -1,4 +1,6 @@
 import { dutyRouter, endDutyForLogout } from "./duty";
+import { customerTrackingRouter } from "./customerTracking";
+
 import {
   shipmentSettlementRouter,
   assertFrozenShipmentComponents,
@@ -60,9 +62,12 @@ import type {
   Shipment,
   SyncResult,
 } from "@shared/operations";
-import { officeMembershipSchema, canWriteOfficeRecord } from "@shared/branches";
+import {
+  officeMembershipSchema,
+  canWriteOfficeRecord,
+  officeIdSchema,
+} from "@shared/branches";
 import { canViewFinance, canWrite, EMPTY_STATE } from "@shared/operations";
-import { officeSettingsSchema } from "@shared/office";
 import {
   memberRoles,
   localSessions,
@@ -70,7 +75,6 @@ import {
   records,
   syncReceipts,
   users,
-  officeSettings,
   shipmentTariffSnapshots,
 } from "../drizzle/schema";
 import { getSessionCookieOptions } from "./_core/cookies";
@@ -129,11 +133,8 @@ import {
 } from "./tracking";
 import {
   canonicalInvoicePayment,
-  officeUpdateSchema,
-  publicOfficeSettings,
+  officeRouter,
   readOfficeSettings,
-  sameOfficeMethods,
-  settingsWithVersion,
 } from "./office";
 import { emptyState } from "./operations";
 import {
@@ -229,6 +230,7 @@ function trackingError(error: unknown): never {
 
 export const appRouter = router({
   system: systemRouter,
+  customerTracking: customerTrackingRouter,
   publicTracking: router({
     lookup: publicProcedure
       .input(publicTrackingInputSchema)
@@ -551,6 +553,8 @@ export const appRouter = router({
         canUpdateTracking: Boolean(scope.canUpdateTracking),
         membershipVersion: scope.membershipVersion,
         permissions: scope.permissions,
+        delegationCeiling: scope.delegationCeiling,
+        delegationPolicyConfigured: scope.delegationPolicyConfigured,
         permissionsCustomized: scope.permissionsCustomized,
         delegatedBy: scope.delegatedBy,
         permissionFingerprint: createHash("sha256")
@@ -656,12 +660,6 @@ export const appRouter = router({
           const role = scope.role;
           if (!role) throw forbidden();
           const retired = await loadLifecycle(tx);
-          const office =
-            role === "admin" ||
-            (role === "accountant" &&
-              (scope.offices === null || scope.offices.includes("nouakchott")))
-              ? await readOfficeSettings(tx)
-              : null;
           for (const rawChange of input.changes) {
             const change = parseChange(rawChange);
             if (
@@ -924,35 +922,32 @@ export const appRouter = router({
                 let candidate: EntityRecord = change.data as EntityRecord;
                 if (
                   change.entity === "invoice" &&
-                  (candidate as any).payment &&
-                  !office
-                )
-                  throw new Error("payment_office_scope_forbidden");
-                if (
-                  change.entity === "invoice" &&
-                  (candidate as any).payment &&
-                  (candidate as any).officeId &&
-                  (candidate as any).officeId !== "nouakchott"
-                )
-                  throw new Error("payment_office_mismatch");
-                if (
-                  change.entity === "invoice" &&
-                  office &&
                   (candidate as any).payment !== undefined
                 ) {
                   const currentInvoice = current
                     ? (asEntityRecord(current.data) as any)
                     : null;
+                  const invoiceOffice = officeIdSchema.parse(
+                    (candidate as any).officeId ??
+                      currentInvoice?.officeId ??
+                      scope.homeOffice ??
+                      (scope.role === "admin" ? "nouakchott" : undefined)
+                  );
+                  if (
+                    scope.role !== "admin" &&
+                    !scope.offices?.includes(invoiceOffice)
+                  )
+                    throw new Error("payment_office_scope_forbidden");
+                  const settings = await readOfficeSettings(tx, invoiceOffice);
                   const payment = canonicalInvoicePayment(
                     (candidate as any).payment,
                     currentInvoice,
-                    office
+                    settings,
+                    invoiceOffice
                   );
-                  candidate = (
-                    payment
-                      ? ({ ...candidate, payment } as EntityRecord)
-                      : candidate
-                  ) as EntityRecord;
+                  candidate = payment
+                    ? ({ ...candidate, payment } as EntityRecord)
+                    : candidate;
                 }
                 if (
                   change.entity === "shipment" &&
@@ -1746,123 +1741,7 @@ export const appRouter = router({
       }),
   }),
 
-  office: router({
-    public: publicProcedure.query(async () => {
-      const db = await dbOrThrow();
-      return publicOfficeSettings(await readOfficeSettings(db));
-    }),
-    get: protectedProcedure.query(async ({ ctx }) => {
-      const role = await effectiveRole(ctx.user);
-      if (!role) throw forbidden();
-      const db = await dbOrThrow();
-      const scope = await readOfficeScope(db, ctx.user);
-      if (!permissionAllowed(scope, "office_wallets", "view"))
-        throw forbidden("office_wallets_permission_required");
-      if (
-        role !== "admin" &&
-        scope.offices !== null &&
-        !scope.offices.includes("nouakchott")
-      )
-        throw forbidden("Nouakchott accounting scope required");
-      return readOfficeSettings(db);
-    }),
-    update: protectedProcedure
-      .input(officeUpdateSchema)
-      .mutation(async ({ ctx, input }) => {
-        const role = await effectiveRole(ctx.user);
-        if (!role) throw forbidden();
-        const db = await dbOrThrow();
-        return db.transaction(async tx => {
-          const scope = await readOfficeScope(tx, ctx.user);
-          if (!permissionAllowed(scope, "office_wallets", "manage"))
-            throw forbidden("office_wallets_permission_required");
-          const rows = await tx
-            .select()
-            .from(officeSettings)
-            .where(eq(officeSettings.id, 1))
-            .limit(1)
-            .for("update");
-          const current = rows[0];
-          if (current && current.version !== input.expectedVersion) {
-            const currentSettings = settingsWithVersion(current);
-            if (
-              currentSettings.office === input.office &&
-              sameOfficeMethods(currentSettings.methods, input.methods)
-            )
-              return {
-                office: currentSettings.office,
-                methods: currentSettings.methods,
-                version: currentSettings.version,
-              };
-            throw new TRPCError({
-              code: "CONFLICT",
-              message: "office_settings_version_conflict",
-            });
-          }
-          if (!current && input.expectedVersion !== 0)
-            throw new TRPCError({
-              code: "CONFLICT",
-              message: "office_settings_version_conflict",
-            });
-          const oldSettings = current
-            ? settingsWithVersion(current)
-            : { office: "nouakchott" as const, methods: [], version: 0 };
-          if (current) {
-            const ids = new Set(
-              (current.methods as any[]).map(method => method.id)
-            );
-            if (
-              [...ids].some(
-                id => !input.methods.some(method => method.id === id)
-              )
-            )
-              throw new TRPCError({
-                code: "BAD_REQUEST",
-                message: "payment_method_removal_forbidden",
-              });
-          }
-          const nextVersion = (current?.version ?? 0) + 1;
-          if (!current)
-            await tx.insert(officeSettings).values({
-              id: 1,
-              office: input.office,
-              methods: input.methods,
-              version: nextVersion,
-              updatedBy: ctx.user.id,
-            });
-          else
-            await tx
-              .update(officeSettings)
-              .set({
-                office: input.office,
-                methods: input.methods,
-                version: nextVersion,
-                updatedBy: ctx.user.id,
-              })
-              .where(eq(officeSettings.id, 1));
-          await appendAudit(tx, {
-            actor: actor(ctx.user, scope.role!),
-            entity: "office_settings",
-            recordId: "nouakchott",
-            action: "office_settings_update",
-            before: oldSettings,
-            after: {
-              office: input.office,
-              methods: input.methods,
-              version: nextVersion,
-            },
-            beforeVersion: current?.version ?? 0,
-            afterVersion: nextVersion,
-            requestKey: `office:${nextVersion}:${ctx.user.id}`,
-          });
-          return {
-            office: input.office,
-            methods: input.methods,
-            version: nextVersion,
-          };
-        });
-      }),
-  }),
+  office: officeRouter,
 });
 
 export type AppRouter = typeof appRouter;

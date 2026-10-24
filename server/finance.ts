@@ -1,3 +1,4 @@
+import { permissionAllowed } from "@shared/permissions";
 import { buildNetAccountingEntries } from "../shared/financialVoids";
 import { recordComponentPayment } from "./shipmentSettlement";
 import {
@@ -45,7 +46,11 @@ import type { PermissionMap } from "@shared/permissions";
 import { canReadOfficeRecord } from "@shared/branches";
 import { adjustedInvoiceTotal } from "@shared/finance";
 import { readOfficeScope } from "./branches";
-import { canonicalInvoicePayment, readOfficeSettings } from "./office";
+import {
+  canonicalInvoicePayment,
+  readOfficeSettings,
+  recordWalletReceipt,
+} from "./office";
 import { appendAudit } from "./audit";
 import {
   records,
@@ -57,6 +62,8 @@ import {
   cashMovements,
   shipmentTariffSnapshots,
   financeReversals,
+  shipmentCostApprovals,
+  users,
 } from "../drizzle/schema";
 import type { User } from "../drizzle/schema";
 
@@ -108,11 +115,18 @@ function assertFinanceCommand(
   if (
     !financeCan(
       permissionSubject(scope),
-      financePermissionForCommand(command.kind),
+      financePermissionForCommand(
+        command.kind,
+        command.kind === "expense" ? command.payload.category : undefined
+      ),
       "manage"
     )
   )
-    throw new Error("finance_forbidden");
+    throw new Error(
+      command.kind === "expense" && command.payload.category === "shipment_cost"
+        ? "shipment_cost_forbidden"
+        : "finance_forbidden"
+    );
 }
 function inScope(scope: FinanceScope, office: OfficeId) {
   return (
@@ -225,6 +239,19 @@ async function shipmentFor(tx: any, shipmentId: string) {
 }
 function assertOffice(scope: FinanceScope, office: OfficeId) {
   if (!inScope(scope, office)) throw new Error("finance_forbidden");
+}
+
+/** Source expense authority is capability + actual single-office scope, never a role label alone. */
+export function canPostShipmentCost(scope: FinanceScope, office: OfficeId) {
+  if (scope.role === "admin") return office !== "nouakchott";
+  return Boolean(
+    office !== "nouakchott" &&
+      scope.role === "general_accountant" &&
+      scope.offices?.length === 1 &&
+      scope.offices[0] === office &&
+      (scope.homeOffice ?? office) === office &&
+      financeCan(permissionSubject(scope), "shipment_cost", "manage")
+  );
 }
 
 export async function financeSnapshot(
@@ -419,7 +446,8 @@ async function applyInvoice(
     payment = canonicalInvoicePayment(
       payment,
       null,
-      await readOfficeSettings(tx)
+      await readOfficeSettings(tx, financialOfficeId),
+      financialOfficeId
     );
   const details = {
     customerId: input.customerId,
@@ -507,6 +535,10 @@ async function applyInvoice(
           customerId: account.id,
           customerName: account.name,
           ...(input.shipmentId ? { shipmentId: input.shipmentId } : {}),
+          ...(payment ? { payment } : {}),
+          ...(input.paymentMode === "wallet"
+            ? { cashEffect: "none" as const }
+            : {}),
         }
       )
     );
@@ -549,6 +581,20 @@ async function applyInvoice(
     });
   }
   for (const row of rows) await insertEntry(tx, row);
+  if (payment && payment.methodId !== "cash") {
+    const collection = rows.find(row => row.kind === "collection");
+    if (collection)
+      await recordWalletReceipt(tx, {
+        officeId: financialOfficeId,
+        methodId: payment.methodId,
+        currency: input.currency,
+        amount: total,
+        invoiceId: invoice.id,
+        financeEntryId: collection.id,
+        actorId: user.id,
+        data: { source: "invoice" },
+      });
+  }
   await appendAudit(tx, {
     actor: { id: user.id, name: actorName(user), role: scope.role! },
     entity: "invoice",
@@ -577,13 +623,36 @@ async function applyExpense(
   if (financialOfficeId !== input.officeId)
     throw new Error("financial_office_mismatch");
   let shipment: Shipment | undefined;
+  let costReference: string | undefined;
   if (input.category === "shipment_cost") {
+    if (!canPostShipmentCost(scope, input.officeId))
+      throw new Error("shipment_cost_forbidden");
     const found = await shipmentFor(tx, input.shipmentId!);
     shipment = found.shipment;
     const owner = shipment.packing?.source as OfficeId | undefined;
     if (!owner || owner !== input.officeId)
       throw new Error("shipment_office_mismatch");
     if (shipment.deleted) throw new Error("shipment_deleted");
+    const expectedCurrency = sourceCurrency[
+      owner as Exclude<OfficeId, "nouakchott">
+    ] as FinanceEntry["currency"];
+    if (input.currency !== expectedCurrency)
+      throw new Error("shipment_cost_currency_mismatch");
+    costReference =
+      input.referenceKey ?? input.costReference ?? "source_shipping";
+    const claimed = await tx
+      .select()
+      .from(shipmentCostApprovals)
+      .where(
+        and(
+          eq(shipmentCostApprovals.shipmentId, shipment.id),
+          eq(shipmentCostApprovals.officeId, owner),
+          eq(shipmentCostApprovals.referenceKey, costReference)
+        )
+      )
+      .limit(1)
+      .for("update");
+    if (claimed[0]) throw new Error("shipment_cost_duplicate");
   }
   const duplicate = await tx
     .select()
@@ -621,8 +690,24 @@ async function applyExpense(
     amount: input.amount.toFixed(2),
     currency: input.currency,
     actorId: user.id,
-    data: { source: "expense", category: input.category },
+    data: {
+      source: "expense",
+      category: input.category,
+      entryId: row.id,
+      ...(costReference ? { referenceKey: costReference } : {}),
+    },
   });
+  if (shipment && costReference) {
+    await tx.insert(shipmentCostApprovals).values({
+      id: `shipment-cost-approval:${hash({ shipmentId: shipment.id, officeId: input.officeId, referenceKey: costReference })}`,
+      shipmentId: shipment.id,
+      officeId: input.officeId,
+      currency: input.currency,
+      referenceKey: costReference,
+      financeEntryId: row.id,
+      actorId: user.id,
+    });
+  }
   await appendAudit(tx, {
     actor: { id: user.id, name: actorName(user), role: scope.role! },
     entity: "finance_entry",
@@ -666,7 +751,8 @@ async function applySettlement(
     payment = canonicalInvoicePayment(
       payment,
       current,
-      await readOfficeSettings(tx)
+      await readOfficeSettings(tx, finance.financialOfficeId),
+      finance.financialOfficeId
     );
   const nextFinance: FinancialInvoiceDetails = {
     ...finance,
@@ -692,6 +778,10 @@ async function applySettlement(
       invoiceId: current.id,
       customerId: finance.customerId,
       customerName: customer.name,
+      ...(payment ? { payment } : {}),
+      ...(payment && payment.methodId !== "cash"
+        ? { cashEffect: "none" as const }
+        : {}),
     }
   );
   await tx
@@ -699,6 +789,17 @@ async function applySettlement(
     .set({ version: rows[0].version + 1, data: next, updatedBy: user.id })
     .where(eq(records.id, rows[0].id));
   await insertEntry(tx, ledger);
+  if (payment && payment.methodId !== "cash")
+    await recordWalletReceipt(tx, {
+      officeId: finance.financialOfficeId,
+      methodId: payment.methodId,
+      currency: finance.currency,
+      amount: input.amount,
+      invoiceId: current.id,
+      financeEntryId: ledger.id,
+      actorId: user.id,
+      data: { source: "settlement" },
+    });
   await recordComponentPayment(tx, {
     invoiceId: current.id,
     amount: input.amount,
@@ -776,13 +877,26 @@ async function applyCustomerMovement(
     .for("update");
   if (duplicate[0]) throw new Error("movement_exists");
 
-  let payment = input.payment;
-  if (payment)
-    payment = canonicalInvoicePayment(
-      payment,
-      null,
-      await readOfficeSettings(tx)
-    );
+  if (customer.officeId !== financialOfficeId)
+    throw new Error("customer_office_mismatch");
+  const settings = await readOfficeSettings(tx, financialOfficeId);
+  const isWallet = input.paymentMode === "wallet";
+  if (isWallet && !permissionAllowed(scope, "office_wallets", "view"))
+    throw new Error("office_wallets_forbidden");
+  const payment = canonicalInvoicePayment(
+    isWallet
+      ? input.payment
+      : {
+          office: financialOfficeId,
+          methodId: "cash",
+          methodLabel:
+            settings.methods.find(method => method.id === "cash")?.label ??
+            "Cash",
+        },
+    null,
+    settings,
+    financialOfficeId
+  );
 
   const row = entry(
     input.direction === "credit" ? "customer_credit" : "customer_debit",
@@ -797,9 +911,44 @@ async function applyCustomerMovement(
       customerId: customer.id,
       customerName: customer.name,
       ...(payment ? { payment } : {}),
+      ...(isWallet ? { cashEffect: "none" as const } : {}),
     }
   );
   await insertEntry(tx, row);
+  if (isWallet && payment) {
+    await recordWalletReceipt(tx, {
+      officeId: financialOfficeId,
+      methodId: payment.methodId,
+      currency: input.currency,
+      amount: input.amount,
+      financeEntryId: row.id,
+      actorId: user.id,
+      kind: input.direction === "credit" ? "receipt" : "refund",
+      data: { source: "customer_movement", customerId: customer.id },
+    });
+  } else {
+    const registerId = await ensureOpenCashRegister(
+      tx,
+      financialOfficeId,
+      input.currency,
+      user.id,
+      command.id
+    );
+    await tx.insert(cashMovements).values({
+      id: `cash-movement:${command.id}`,
+      registerId,
+      officeId: financialOfficeId,
+      kind: input.direction === "credit" ? "receipt" : "expense",
+      amount: input.amount.toFixed(2),
+      currency: input.currency,
+      actorId: user.id,
+      data: {
+        source: "customer_movement",
+        entryId: row.id,
+        customerId: customer.id,
+      },
+    });
+  }
   await appendAudit(tx, {
     actor: { id: user.id, name: actorName(user), role: scope.role! },
     entity: "finance_entry",
@@ -1000,7 +1149,16 @@ export async function financeSync(
       // back its invoice, goods claim, ledger, audit, and receipt together,
       // without rolling back an earlier acknowledged command.
       const saved = await db.transaction(async (tx: any) => {
-        const scope = fixedScope ?? (await readOfficeScope(tx, user));
+        await tx
+          .select({ id: users.id })
+          .from(users)
+          .where(eq(users.id, user.id))
+          .limit(1)
+          .for("update");
+        // The legacy overload is for trusted internal fixtures only; the HTTP
+        // router never accepts a request-supplied or cached authorization scope.
+        const scope =
+          fixedScope ?? (await readOfficeScope(tx, user, new Set(), true));
         assertFinanceCommand(scope, parsed);
         const prior = await tx
           .select()

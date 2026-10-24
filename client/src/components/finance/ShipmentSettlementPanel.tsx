@@ -83,6 +83,7 @@ const copy = {
     onAccount: "على الحساب (دين)",
     walletMethod: "طريقة المحفظة",
     reference: "مرجع المحفظة (اختياري)",
+    referenceManual: "مرجع تكلفة يدوي (اختياري)",
     billSelected: "فوترة المكونات المختارة",
     noneSelected: "اختر مكونًا واحدًا على الأقل.",
     saved: "تم حفظ العملية وتحديث الكشف الرسمي.",
@@ -148,6 +149,7 @@ const copy = {
     onAccount: "On account (debt)",
     walletMethod: "Wallet method",
     reference: "Wallet reference (optional)",
+    referenceManual: "Manual cost reference (optional)",
     billSelected: "Bill selected components",
     noneSelected: "Select at least one component.",
     saved: "Operation saved and the official settlement was refreshed.",
@@ -214,6 +216,7 @@ const copy = {
     onAccount: "赊账（债务）",
     walletMethod: "钱包方式",
     reference: "钱包参考（可选）",
+    referenceManual: "手动成本参考（可选）",
     billSelected: "为所选组件开票",
     noneSelected: "至少选择一个组件。",
     saved: "操作已保存，正式结算已刷新。",
@@ -278,6 +281,7 @@ const copy = {
     onAccount: "Vadeli (borç)",
     walletMethod: "Cüzdan yöntemi",
     reference: "Cüzdan referansı (isteğe bağlı)",
+    referenceManual: "Manuel maliyet referansı (isteğe bağlı)",
     billSelected: "Seçili bileşenleri faturalandır",
     noneSelected: "En az bir bileşen seçin.",
     saved: "İşlem kaydedildi ve resmi mutabakat yenilendi.",
@@ -348,10 +352,8 @@ export default function ShipmentSettlementPanel({
   const canRead = canReadAnyFinance(subject);
   const canRegister = permissionAllowed(subject, "shipment_prices", "manage");
   const canLocalCost =
-    permissionAllowed(subject, "expenses", "manage") &&
-    (workspace.role === "admin"
-      ? selectedOffice === "all" || selectedOffice === "nouakchott"
-      : Boolean(workspace.offices?.includes("nouakchott")));
+    permissionAllowed(subject, "arrival_cost", "manage") &&
+    (selectedOffice === "all" || selectedOffice === "nouakchott");
   const canBill = permissionAllowed(subject, "invoices", "manage");
   const shipments = useMemo(
     () =>
@@ -371,6 +373,7 @@ export default function ShipmentSettlementPanel({
   const [localAmount, setLocalAmount] = useState("");
   const [localCurrency, setLocalCurrency] = useState<FinanceCurrency>("MRU");
   const [localDescription, setLocalDescription] = useState("");
+  const [localReference, setLocalReference] = useState("");
   const [passedToCustomer, setPassedToCustomer] = useState(false);
   const [paidInCash, setPaidInCash] = useState(false);
   const [componentIds, setComponentIds] = useState<string[]>([]);
@@ -420,17 +423,24 @@ export default function ShipmentSettlementPanel({
   const localCost = trpc.shipmentSettlement.localCost.useMutation();
   const billComponents = trpc.shipmentSettlement.billComponents.useMutation();
   const utils = trpc.useUtils();
-  const walletOffice =
-    workspace.homeOffice === "nouakchott" || selectedOffice === "nouakchott";
-  const wallet = trpc.office.public.useQuery(undefined, {
-    enabled: Boolean(canBill && paymentMode === "wallet" && walletOffice),
-    retry: false,
-    refetchOnWindowFocus: false,
-  });
-  const walletMethods = (wallet.data?.methods ?? []).filter(
+  const snapshot = snapshotQuery.data as ShipmentSettlementSnapshot | undefined;
+  const issuingOffice =
+    selectedOffice === "all"
+      ? (snapshot?.visibleOffice ?? workspace.homeOffice ?? undefined)
+      : selectedOffice;
+  const walletSettings = trpc.office.get.useQuery(
+    issuingOffice ? { officeId: issuingOffice } : undefined,
+    {
+      enabled: Boolean(
+        canBill && paymentMode === "wallet" && issuingOffice && workspace.online && workspace.userId
+      ),
+      retry: false,
+      refetchOnWindowFocus: false,
+    }
+  );
+  const walletMethods = (walletSettings.data?.methods ?? []).filter(
     method => method.id !== "cash"
   );
-  const snapshot = snapshotQuery.data as ShipmentSettlementSnapshot | undefined;
   const billable = useMemo(
     () =>
       (snapshot?.components ?? []).filter(
@@ -512,10 +522,17 @@ export default function ShipmentSettlementPanel({
           description: localDescription.trim(),
           passedToCustomer,
           paidInCash,
+          ...(localReference.trim()
+            ? {
+                referenceKey: localReference.trim(),
+                costReference: localReference.trim(),
+              }
+            : {}),
           confirmation: { trackingNumber: tracking.trim() },
         });
         setLocalAmount("");
         setLocalDescription("");
+        setLocalReference("");
       } else {
         if (
           !canBill ||
@@ -529,7 +546,7 @@ export default function ShipmentSettlementPanel({
           );
           return;
         }
-        if (paymentMode === "wallet" && (!walletMethod || !walletOffice)) {
+        if (paymentMode === "wallet" && (!walletMethod || !issuingOffice)) {
           setError(c.operationError);
           return;
         }
@@ -540,13 +557,13 @@ export default function ShipmentSettlementPanel({
           componentIds: selectedComponents.map(component => component.id),
           currency: billCurrency,
           paymentMode,
-          ...(workspace.role === "admin" && selectedOffice !== "all"
-            ? { issuingOfficeId: selectedOffice }
+          ...(issuingOffice
+            ? { issuingOfficeId: issuingOffice }
             : {}),
           ...(paymentMode === "wallet"
             ? {
                 payment: {
-                  office: "nouakchott" as const,
+                  office: issuingOffice as OfficeId,
                   methodId: walletMethod,
                   methodLabel:
                     walletMethods.find(method => method.id === walletMethod)
@@ -765,6 +782,22 @@ export default function ShipmentSettlementPanel({
                       </select>
                     </PackingField>
                   </div>
+                  <details className="rounded-xl border border-[#edf1f1] bg-[#fbfcfb] p-3">
+                    <summary className="cursor-pointer text-sm font-bold text-[#52636e]">
+                      {c.reference}
+                    </summary>
+                    <p className="mt-2 text-xs text-[#718088]">
+                      {c.referenceManual}
+                    </p>
+                    <input
+                      className={`${packingInputClass} mt-3`}
+                      maxLength={128}
+                      value={localReference}
+                      disabled={busy}
+                      onChange={event => setLocalReference(event.target.value)}
+                      placeholder={c.referenceManual}
+                    />
+                  </details>
                   <label className="flex gap-2 text-sm">
                     <input
                       type="checkbox"
@@ -887,7 +920,7 @@ export default function ShipmentSettlementPanel({
                     >
                       <option value="cash">{c.cash}</option>
                       <option value="on_account">{c.onAccount}</option>
-                      {walletOffice && walletMethods.length > 0 && (
+                      {issuingOffice && walletMethods.length > 0 && (
                         <option value="wallet">{c.wallet}</option>
                       )}
                     </select>

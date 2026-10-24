@@ -114,7 +114,8 @@ export function canNoteTracking(role: AppRole | null) {
     role === "office_manager" ||
     role === "supervisor" ||
     role === "tracking_staff" ||
-    role === "staff"
+    role === "staff" ||
+    role === "source_warehouse"
   );
 }
 export function canSuperviseTracking(role: AppRole | null) {
@@ -148,10 +149,11 @@ export function assertTrackingCommand(
     command.stage === "arrived_office"
   )
     throw new Error("arrival_confirmation_required");
-  if (role === "staff" && command.type !== "stage")
+  const sequentialWarehouse = role === "staff" || role === "source_warehouse";
+  if (sequentialWarehouse && command.type !== "stage")
     throw new Error("tracking_forbidden");
   if (
-    role === "staff" &&
+    sequentialWarehouse &&
     command.type === "stage" &&
     !shipment.journey &&
     command.stage === "preparing" &&
@@ -171,9 +173,9 @@ export function assertTrackingCommand(
       !canNoteTracking(role) ||
       !currentStage ||
       stageIds.indexOf(command.stage) !== stageIds.indexOf(currentStage) + 1 ||
-      !(role === "staff" ? warehouseStageTargets : staffStageTargets).includes(
-        command.stage
-      )
+      !(
+        sequentialWarehouse ? warehouseStageTargets : staffStageTargets
+      ).includes(command.stage)
     )
       throw new Error("tracking_forbidden");
   }

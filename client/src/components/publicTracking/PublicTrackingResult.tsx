@@ -231,6 +231,34 @@ export default function PublicTrackingResult({
           })}
         </ol>
       </div>
+      {shipment.timeline && shipment.timeline.length > 0 && (
+        <div className="rounded-3xl border border-[#d9e5e4] bg-white p-5 shadow-sm sm:p-7">
+          <h3 className="text-xl font-bold text-[#092d50]">
+            {copy.journeyTitle}
+          </h3>
+          <ol className="mt-4 space-y-3">
+            {shipment.timeline.map((event, index) => {
+              const stage = event.stage
+                ? existingCopy.stages[event.stage]
+                : copy.noLocation;
+              const branch = event.branch
+                ? existingCopy.branches[event.branch]
+                : copy.noLocation;
+              return (
+                <li
+                  key={`${event.at}-${event.stage ?? "none"}-${index}`}
+                  className="rounded-2xl border border-[#e1e9e8] bg-[#f7fbfa] p-3 text-sm"
+                >
+                  <div className="font-bold text-[#183d4d]">{stage}</div>
+                  <div className="mt-1 text-[#5e7479]">
+                    {branch} · {formatDate(event.at, language, copy.noUpdate)}
+                  </div>
+                </li>
+              );
+            })}
+          </ol>
+        </div>
+      )}
     </section>
   );
 }

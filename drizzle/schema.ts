@@ -589,3 +589,109 @@ export type FinanceReversalRow = typeof financeReversals.$inferSelect;
 export type ShipmentChargeComponentRow = typeof shipmentChargeComponents.$inferSelect;
 export type ShipmentChargeAllocationRow = typeof shipmentChargeAllocations.$inferSelect;
 export type DutyEventRow = typeof dutyEvents.$inferSelect;
+
+
+/** Root-approved delegation ceilings; a policy applies only to its membership version. */
+export const officeDelegationPolicies = mysqlTable(
+  "office_delegation_policies",
+  {
+    id: varchar("id", { length: 128 }).primaryKey(),
+    managerUserId: int("managerUserId").notNull().references(() => users.id),
+    officeId: varchar("officeId", { length: 32 }).notNull(),
+    managerMembershipVersion: int("managerMembershipVersion").notNull(),
+    policyVersion: int("policyVersion").notNull(),
+    permissions: json("permissions").$type<PermissionMap>().notNull(),
+    enabled: boolean("enabled").notNull().default(true),
+    actorId: int("actorId").notNull().references(() => users.id),
+    createdAt: timestamp("createdAt", { fsp: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
+  },
+  table => [
+    uniqueIndex("office_delegation_policy_version_unique").on(table.managerUserId, table.officeId, table.policyVersion),
+    index("office_delegation_policy_manager_idx").on(table.managerUserId, table.officeId),
+  ]
+);
+
+/** Explicit, revocable customer ownership. Names, phone numbers and self-claims never grant access. */
+export const customerShipmentAccess = mysqlTable(
+  "customer_shipment_access",
+  {
+    id: varchar("id", { length: 128 }).primaryKey(),
+    userId: int("userId").notNull().references(() => users.id),
+    customerAccountId: varchar("customerAccountId", { length: 128 }).notNull(),
+    shipmentId: varchar("shipmentId", { length: 128 }).notNull(),
+    goodsId: varchar("goodsId", { length: 128 }).notNull(),
+    officeId: varchar("officeId", { length: 32 }).notNull(),
+    status: mysqlEnum("status", ["active", "revoked"]).notNull().default("active"),
+    version: int("version").notNull().default(1),
+    grantedBy: int("grantedBy").notNull().references(() => users.id),
+    updatedBy: int("updatedBy").notNull().references(() => users.id),
+    createdAt: timestamp("createdAt", { fsp: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
+    updatedAt: timestamp("updatedAt", { fsp: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).onUpdateNow().notNull(),
+  },
+  table => [
+    uniqueIndex("customer_shipment_access_goods_unique").on(table.shipmentId, table.goodsId),
+    index("customer_shipment_access_user_idx").on(table.userId, table.status),
+    index("customer_shipment_access_account_idx").on(table.customerAccountId, table.officeId),
+  ]
+);
+
+/** One immutable expense fact per explicitly approved shipment-cost reference. */
+export const shipmentCostApprovals = mysqlTable(
+  "shipment_cost_approvals",
+  {
+    id: varchar("id", { length: 128 }).primaryKey(),
+    shipmentId: varchar("shipmentId", { length: 128 }).notNull(),
+    officeId: varchar("officeId", { length: 32 }).notNull(),
+    currency: mysqlEnum("currency", financeCurrencies).notNull(),
+    referenceKey: varchar("referenceKey", { length: 128 }).notNull(),
+    financeEntryId: varchar("financeEntryId", { length: 128 }).notNull(),
+    actorId: int("actorId").notNull().references(() => users.id),
+    createdAt: timestamp("createdAt", { fsp: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
+  },
+  table => [
+    uniqueIndex("shipment_cost_approval_reference_unique").on(table.shipmentId, table.officeId, table.referenceKey),
+    index("shipment_cost_approval_entry_idx").on(table.financeEntryId),
+  ]
+);
+
+/** Per-source payment settings; legacy Nouakchott office_settings is not rewritten. */
+export const officePaymentSettings = mysqlTable(
+  "office_payment_settings",
+  {
+    officeId: varchar("officeId", { length: 32 }).primaryKey(),
+    methods: json("methods").notNull(),
+    version: int("version").notNull().default(1),
+    updatedBy: int("updatedBy").notNull().references(() => users.id),
+    createdAt: timestamp("createdAt", { fsp: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
+    updatedAt: timestamp("updatedAt", { fsp: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).onUpdateNow().notNull(),
+  }
+);
+
+/** Actual wallet cash effects. Voiding an invoice alone never implies a refund. */
+export const walletMovements = mysqlTable(
+  "wallet_movements",
+  {
+    id: varchar("id", { length: 128 }).primaryKey(),
+    officeId: varchar("officeId", { length: 32 }).notNull(),
+    methodId: varchar("methodId", { length: 64 }).notNull(),
+    currency: mysqlEnum("currency", financeCurrencies).notNull(),
+    kind: mysqlEnum("kind", ["receipt", "refund"]).notNull(),
+    amount: decimal("amount", { precision: 18, scale: 2 }).notNull(),
+    invoiceId: varchar("invoiceId", { length: 128 }).notNull(),
+    financeEntryId: varchar("financeEntryId", { length: 128 }).notNull(),
+    actorId: int("actorId").notNull().references(() => users.id),
+    data: json("data"),
+    createdAt: timestamp("createdAt", { fsp: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
+  },
+  table => [
+    uniqueIndex("wallet_movement_entry_unique").on(table.financeEntryId),
+    index("wallet_movements_office_wallet_idx").on(table.officeId, table.methodId, table.currency),
+    index("wallet_movements_invoice_idx").on(table.invoiceId),
+  ]
+);
+
+export type OfficeDelegationPolicyRow = typeof officeDelegationPolicies.$inferSelect;
+export type CustomerShipmentAccessRow = typeof customerShipmentAccess.$inferSelect;
+export type ShipmentCostApprovalRow = typeof shipmentCostApprovals.$inferSelect;
+export type OfficePaymentSettingsRow = typeof officePaymentSettings.$inferSelect;
+export type WalletMovementRow = typeof walletMovements.$inferSelect;

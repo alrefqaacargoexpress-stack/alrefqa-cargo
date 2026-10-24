@@ -2,12 +2,14 @@ import { useEffect, useState } from "react";
 import { Link, useParams, useSearch } from "wouter";
 import { ArrowLeft, ArrowRight, Phone, UserRound } from "lucide-react";
 import { canUseFinance } from "@shared/finance";
+import { permissionAllowed } from "@shared/permissions";
 import { customerAccountStatement } from "@shared/customerAccounts";
 import { isSharedCustomerAccount } from "@shared/customerAccountCreation";
 import { officeIds, officeNames, type OfficeId } from "@shared/branches";
 import PackingLayout from "@/components/packing/PackingLayout";
 import CustomerMovementForm from "@/components/customers/CustomerMovementForm";
 import CustomerStatement from "@/components/customers/CustomerStatement";
+import CustomerTrackingGrantPanel from "@/components/customerTracking/CustomerTrackingGrantPanel";
 import { useFinanceWorkspace } from "@/hooks/useFinanceWorkspace";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { customerAccountCopyFor } from "@/lib/customerAccountCopy";
@@ -33,16 +35,27 @@ export default function CustomerAccount() {
       }
     })();
   useEffect(() => setNotice(null), [account?.id, workspace.base.userId]);
-  const financial = canUseFinance(workspace.role);
+  const scope = {
+    role: workspace.role,
+    offices: workspace.offices,
+    homeOffice: workspace.homeOffice,
+    permissions: workspace.permissions,
+  };
+  const financial = canUseFinance(scope);
+  const canMoveMoney =
+    permissionAllowed(scope, "payments", "manage") && workspace.canEdit;
   const permitted =
     workspace.base.offices === null ? [...officeIds] : workspace.base.offices;
   const fixedOffice =
-    workspace.homeOffice && permitted.includes(workspace.homeOffice)
-      ? workspace.homeOffice
-      : permitted.length === 1
-        ? permitted[0]
-        : null;
-  const needsOfficeSelection = financial && !fixedOffice && permitted.length > 1;
+    account?.officeId && permitted.includes(account.officeId)
+      ? account.officeId
+      : workspace.homeOffice && permitted.includes(workspace.homeOffice)
+        ? workspace.homeOffice
+        : permitted.length === 1
+          ? permitted[0]
+          : null;
+  const needsOfficeSelection =
+    financial && !fixedOffice && permitted.length > 1;
   useEffect(() => {
     setMovementOffice(fixedOffice);
   }, [account?.id, fixedOffice]);
@@ -57,7 +70,7 @@ export default function CustomerAccount() {
           workspace.invoices,
           workspace.entries
         )
-    : null;
+      : null;
   const publishAccount = async () => {
     if (!account || !workspace.base.syncRecords || publishing) return;
     setPublishing(true);
@@ -128,8 +141,8 @@ export default function CustomerAccount() {
                       {publishing ? c.saving : c.publishAccount}
                     </button>
                   )}
-                  {financial && (
-                    accountHasSharedOrigin ? (
+                  {financial &&
+                    (accountHasSharedOrigin ? (
                       <Link
                         href={`/operations/billing?customer=${encodeURIComponent(account.id)}`}
                         className="rounded-xl border border-[#dce4e7] px-3 py-2 text-sm font-bold text-[#2d6380]"
@@ -146,8 +159,7 @@ export default function CustomerAccount() {
                       >
                         {c.invoices}
                       </button>
-                    )
-                  )}
+                    ))}
                 </div>
               </div>
               <div className="mt-4 flex flex-wrap gap-2 text-xs text-[#718088]">
@@ -163,6 +175,12 @@ export default function CustomerAccount() {
                 </span>
               </div>
             </section>
+            {account && (
+              <CustomerTrackingGrantPanel
+                account={account}
+                workspace={workspace.base}
+              />
+            )}
             {!financial ? (
               <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5">
                 <p className="font-black text-amber-950">
@@ -203,7 +221,7 @@ export default function CustomerAccount() {
                 {movementOffice && (
                   <CustomerMovementForm
                     key={`${workspace.base.userId}:${account.id}:${movementOffice}`}
-                    workspace={workspace}
+                    workspace={{ ...workspace, canEdit: canMoveMoney }}
                     customerId={account.id}
                     officeId={movementOffice}
                     onNotice={setNotice}

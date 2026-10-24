@@ -144,6 +144,8 @@ export const expenseInputSchema = z
     date: dateSchema,
     description: z.string().trim().min(1).max(500),
     shipmentId: id.optional(),
+    referenceKey: z.string().trim().min(1).max(128).optional(),
+    costReference: z.string().trim().min(1).max(128).optional(),
   })
   .strict()
   .superRefine((v, c) => {
@@ -151,6 +153,8 @@ export const expenseInputSchema = z
       c.addIssue({ code: "custom", message: "shipment_required" });
     if (v.category !== "shipment_cost" && v.shipmentId)
       c.addIssue({ code: "custom", message: "unexpected_shipment" });
+    if (v.referenceKey && v.costReference && v.referenceKey !== v.costReference)
+      c.addIssue({ code: "custom", message: "cost_reference_mismatch" });
   });
 export type FinanceExpenseInput = z.infer<typeof expenseInputSchema>;
 export const openingBalanceDirections = ["debit", "credit"] as const;
@@ -457,10 +461,11 @@ export function canWriteFinance(scope: FinancePermissionScope) {
     key =>
       permissionAllowed(scope, key, "manage") &&
       [
-        "customers",
         "invoices",
         "payments",
         "expenses",
+        "shipment_cost",
+        "arrival_cost",
         "opening_balance",
         "shipment_prices",
         "finance_reports",
@@ -483,10 +488,12 @@ export function financePermissionForCommand(
     | "settlement"
     | "customer_movement"
     | "opening_balance"
-    | "shipment_price"
+    | "shipment_price",
+  expenseCategory?: FinanceExpenseInput["category"]
 ): PermissionKey {
   if (kind === "invoice") return "invoices";
-  if (kind === "expense") return "expenses";
+  if (kind === "expense")
+    return expenseCategory === "shipment_cost" ? "shipment_cost" : "expenses";
   if (kind === "opening_balance") return "opening_balance";
   if (kind === "shipment_price") return "shipment_prices";
   return "payments";

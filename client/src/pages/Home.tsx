@@ -56,6 +56,18 @@ function isIos() {
 export default function Home() {
   const { language, dir } = useLanguage();
   const copy = publicCopy[language];
+  const me = trpc.auth.me.useQuery(undefined, {
+    retry: false,
+    refetchOnWindowFocus: false,
+  });
+  const loggedCustomer = me.data?.accountType === "customer";
+  const loggedEmployee = me.data?.accountType === "employee";
+  const employeeAccess = trpc.operations.access.useQuery(undefined, {
+    enabled: loggedEmployee,
+    retry: false,
+    refetchOnWindowFocus: false,
+  });
+  const employeeReady = loggedEmployee && Boolean(employeeAccess.data?.role);
   const [menuOpen, setMenuOpen] = useState(false);
   const [inquiryName, setInquiryName] = useState("");
   const [inquiryPhone, setInquiryPhone] = useState("");
@@ -209,19 +221,37 @@ export default function Home() {
           </nav>
           <div className="flex items-center gap-2 sm:gap-3">
             <LanguageSwitcher />
-            <Link
-              href="/auth"
-              className="hidden rounded-full border border-[#092d50] px-4 py-2.5 text-sm font-semibold text-[#092d50] transition hover:bg-[#eaf1f3] sm:inline-flex"
-            >
-              {copy.nav.auth}
-            </Link>
-            <Link
-              href="/operations"
-              className="hidden rounded-full bg-[#092d50] px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-[#123f68] sm:inline-flex"
-            >
-              {copy.nav.operations}
-              <Arrow size={15} className="ms-2" />
-            </Link>
+            {loggedCustomer ? (
+              <Link
+                href="/my-shipments"
+                className="hidden rounded-full bg-[#092d50] px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-[#123f68] sm:inline-flex"
+              >
+                {
+                  {
+                    ar: "شحناتي",
+                    en: "My shipments",
+                    zh: "我的货运",
+                    tr: "Gönderilerim",
+                  }[language]
+                }
+                <Arrow size={15} className="ms-2" />
+              </Link>
+            ) : employeeReady ? (
+              <Link
+                href="/operations"
+                className="hidden rounded-full bg-[#092d50] px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-[#123f68] sm:inline-flex"
+              >
+                {copy.nav.operations}
+                <Arrow size={15} className="ms-2" />
+              </Link>
+            ) : (
+              <Link
+                href="/auth"
+                className="hidden rounded-full border border-[#092d50] px-4 py-2.5 text-sm font-semibold text-[#092d50] transition hover:bg-[#eaf1f3] sm:inline-flex"
+              >
+                {copy.nav.auth}
+              </Link>
+            )}
             <button
               onClick={() => setMenuOpen(value => !value)}
               className="rounded-xl border border-[#d9e1e3] p-2.5 text-[#092d50] md:hidden"
@@ -258,12 +288,26 @@ export default function Home() {
               <a href="#contact" onClick={() => setMenuOpen(false)}>
                 {copy.nav.contact}
               </a>
-              <Link href="/operations" onClick={() => setMenuOpen(false)}>
-                {copy.nav.operations}
-              </Link>
-              <Link href="/auth" onClick={() => setMenuOpen(false)}>
-                {copy.nav.auth}
-              </Link>
+              {loggedCustomer ? (
+                <Link href="/my-shipments" onClick={() => setMenuOpen(false)}>
+                  {
+                    {
+                      ar: "شحناتي",
+                      en: "My shipments",
+                      zh: "我的货运",
+                      tr: "Gönderilerim",
+                    }[language]
+                  }
+                </Link>
+              ) : employeeReady ? (
+                <Link href="/operations" onClick={() => setMenuOpen(false)}>
+                  {copy.nav.operations}
+                </Link>
+              ) : (
+                <Link href="/auth" onClick={() => setMenuOpen(false)}>
+                  {copy.nav.auth}
+                </Link>
+              )}
             </div>
           </div>
         )}

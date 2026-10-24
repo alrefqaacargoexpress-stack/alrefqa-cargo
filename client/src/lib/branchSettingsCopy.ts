@@ -81,6 +81,11 @@ export type BranchSettingsCopy = {
   employeeLoginRequired: string;
   contactNoAccess: string;
   rootAdminLocked: string;
+  delegationTitle: string;
+  delegationHint: string;
+  delegationNotExecution: string;
+  delegationGrantConfirm: string;
+  deprecatedRole: string;
   noMemberAccess: string;
   noOfficeAccess: string;
   resetPasswordTitle: string;
@@ -198,6 +203,15 @@ const ar: BranchSettingsCopy = {
   employeeLoginRequired: "سجل دخول الموظف أولاً، ثم اربطه بالمكتب",
   contactNoAccess: "جهة الاتصال العامة لا تمنح صلاحية دخول.",
   rootAdminLocked: "لا يمكن تعديل المدير الجذري أو ترقيته من هذه الشاشة.",
+  delegationTitle: "ما يستطيع المدير تفويضه للموظفين",
+  delegationHint:
+    "حدد الحد الأقصى الذي يمكن لمدير المكتب منحه لموظفي مكتبه. لا تمنح هذه المصفوفة المدير نفسه صلاحيات تنفيذ.",
+  delegationNotExecution:
+    "هذا سقف تفويض فقط، وليس إضافة إلى صلاحيات المدير التنفيذية.",
+  delegationGrantConfirm:
+    "ستُحفظ حدود التفويض المحددة لمدير المكتب. لا تغيّر هذه الخطوة صلاحياتك التنفيذية. هل تريد المتابعة؟",
+  deprecatedRole:
+    "دور تتبع قديم متقاعد؛ للعرض فقط ولا يتحول تلقائيًا. اعرض معاينة ترحيل صريحة قبل تغييره.",
   noMemberAccess: "إدارة العضويات متاحة للمدير فقط.",
   noOfficeAccess: "لا توجد صلاحية قراءة لهذا المكتب.",
   resetPasswordTitle: "إعادة تعيين كلمة مرور الحساب",
@@ -328,6 +342,15 @@ const en: BranchSettingsCopy = {
     "The employee must sign in first, then link them to the office",
   contactNoAccess: "A public contact does not grant login access.",
   rootAdminLocked: "The root administrator cannot be changed or promoted here.",
+  delegationTitle: "What the manager can delegate to employees",
+  delegationHint:
+    "Set the maximum a manager may grant to employees in that office. This matrix does not give the manager execution access.",
+  delegationNotExecution:
+    "This is a delegation ceiling only, not an addition to the manager's execution permissions.",
+  delegationGrantConfirm:
+    "The selected delegation ceiling will be saved for this office manager. This does not change your execution permissions. Continue?",
+  deprecatedRole:
+    "Retired legacy tracking role; read-only and never converted automatically. Show an explicit migration preview before changing it.",
   noMemberAccess: "Membership management is available to administrators only.",
   noOfficeAccess: "You do not have read access to this office.",
   resetPasswordTitle: "Reset account password",
@@ -443,6 +466,13 @@ const zh: BranchSettingsCopy = {
   employeeLoginRequired: "员工必须先登录，然后才能关联办公室",
   contactNoAccess: "公开联系人不会授予登录权限。",
   rootAdminLocked: "根管理员不能在此更改或提升。",
+  delegationTitle: "经理可以向员工委托的权限",
+  delegationHint:
+    "设置办公室经理可以授予员工的最高权限。此矩阵不会给经理本人增加执行权限。",
+  delegationNotExecution: "这只是委托上限，不会增加经理本人的执行权限。",
+  delegationGrantConfirm:
+    "将为该办公室经理保存所选委托上限。这不会改变您的执行权限。继续吗？",
+  deprecatedRole: "已弃用的旧追踪角色；仅供查看，不会自动转换。更改前请显示明确的迁移预览。",
   noMemberAccess: "只有管理员可以管理成员权限。",
   noOfficeAccess: "您没有读取此办公室的权限。",
   resetPasswordTitle: "重置账户密码",
@@ -573,6 +603,13 @@ const tr: BranchSettingsCopy = {
     "Çalışan önce giriş yapmalı, sonra ofise bağlanmalıdır",
   contactNoAccess: "Herkese açık kişi girişi yetkisi vermez.",
   rootAdminLocked: "Kök yönetici burada değiştirilemez veya yükseltilemez.",
+  delegationTitle: "Yöneticinin çalışanlara devredebileceği yetkiler",
+  delegationHint:
+    "Ofis yöneticisinin çalışanlara verebileceği en yüksek yetkiyi belirleyin. Bu matris yöneticiye yürütme yetkisi vermez.",
+  delegationNotExecution: "Bu yalnızca bir yetki devri sınırıdır; yöneticinin yürütme yetkilerini artırmaz.",
+  delegationGrantConfirm:
+    "Seçilen yetki devri sınırı bu ofis yöneticisi için kaydedilecek. Yürütme yetkilerinizi değiştirmez. Devam edilsin mi?",
+  deprecatedRole: "Kullanımdan kaldırılmış eski takip rolü; yalnızca okunur ve otomatik dönüştürülmez. Değiştirmeden önce açık bir geçiş önizlemesi gösterin.",
   noMemberAccess: "Üyelik yönetimi yalnızca yöneticilere açıktır.",
   noOfficeAccess: "Bu ofisi okuma yetkiniz yok.",
   resetPasswordTitle: "Hesap şifresini sıfırla",

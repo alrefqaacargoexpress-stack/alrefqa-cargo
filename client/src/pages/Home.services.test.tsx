@@ -24,6 +24,20 @@ vi.mock("@/components/offices/PublicWalletMethods", () => ({
 }));
 vi.mock("@/lib/trpc", () => ({
   trpc: {
+    auth: {
+      me: {
+        useQuery: () => ({ data: null, isLoading: false, isError: false }),
+      },
+    },
+    operations: {
+      access: {
+        useQuery: () => ({
+          data: undefined,
+          isLoading: false,
+          isError: false,
+        }),
+      },
+    },
     branches: {
       public: {
         useQuery: () => ({ data: [], isLoading: false, isError: false }),

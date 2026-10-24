@@ -13,6 +13,7 @@ import {
   permissionsFor,
   defaultPermissions,
   blankPermissions,
+  permissionMapSchema,
   intersectPermissions,
   permissionAllowed,
   canReadAnyFinance,
@@ -54,6 +55,7 @@ import { canViewFinance } from "@shared/operations";
 import {
   records,
   memberRoles,
+  officeDelegationPolicies,
   officeProfiles,
   syncReceipts,
   users,
@@ -75,6 +77,9 @@ export type OfficeScope = {
   permissions?: PermissionMap;
   permissionsCustomized?: boolean;
   delegatedBy?: number | null;
+  /** Root-approved ceiling for employee delegation; never added to own execution. */
+  delegationCeiling?: PermissionMap;
+  delegationPolicyConfigured?: boolean;
 };
 export const officeProfileUpdateSchema = officeProfileSchema.safeExtend({
   expectedVersion: z.number().int().nonnegative(),
@@ -103,6 +108,40 @@ export function rootAdmin(user: Pick<User, "openId" | "role">): boolean {
     (ENV.ownerOpenId && user.openId === ENV.ownerOpenId) ||
       user.role === "admin"
   );
+}
+
+export async function readDelegationPolicy(
+  db: any,
+  managerUserId: number,
+  officeId: OfficeId,
+  managerMembershipVersion: number
+): Promise<{
+  configured: boolean;
+  ceiling?: PermissionMap;
+  policyVersion?: number;
+}> {
+  const rows = await db
+    .select()
+    .from(officeDelegationPolicies)
+    .where(eq(officeDelegationPolicies.managerUserId, managerUserId));
+  const latest = (rows as any[])
+    .filter(
+      row => row.managerUserId === managerUserId && row.officeId === officeId
+    )
+    .sort((a, b) => (b.policyVersion ?? 0) - (a.policyVersion ?? 0))[0];
+  if (!latest) return { configured: false };
+  if (
+    latest.enabled === false ||
+    latest.managerMembershipVersion !== managerMembershipVersion
+  )
+    return { configured: true };
+  const parsed = permissionMapSchema.safeParse(latest.permissions);
+  if (!parsed.success) return { configured: true };
+  return {
+    configured: true,
+    ceiling: { ...blankPermissions(), ...parsed.data },
+    policyVersion: latest.policyVersion,
+  };
 }
 
 export async function readOfficeScope(
@@ -181,6 +220,16 @@ export async function readOfficeScope(
     ...scope,
     permissions: membership?.permissions ?? null,
   });
+  if (scope.role === "office_manager" && scope.homeOffice) {
+    const policy = await readDelegationPolicy(
+      db,
+      user.id,
+      scope.homeOffice,
+      scope.membershipVersion
+    );
+    scope.delegationPolicyConfigured = policy.configured;
+    scope.delegationCeiling = policy.ceiling;
+  }
   if (scope.delegatedBy) {
     if (
       visited.has(user.id) ||
@@ -206,12 +255,16 @@ export async function readOfficeScope(
           visited,
           forWrite
         );
+        const grantorCeiling = grantor.delegationPolicyConfigured
+          ? (grantor.delegationCeiling ?? blankPermissions())
+          : permissionsFor(grantor);
+        scope.delegationCeiling = grantorCeiling;
         scope.permissions =
           grantor.role === "office_manager" &&
           grantor.offices?.length === 1 &&
           offices.length === 1 &&
           grantor.offices[0] === offices[0]
-            ? intersectPermissions(scope.permissions, permissionsFor(grantor))
+            ? intersectPermissions(scope.permissions, grantorCeiling)
             : blankPermissions();
       }
     }

@@ -33,13 +33,16 @@ describe("offline and role access policies", () => {
     expect(profileMatchesUser(null, "7")).toBe(false);
   });
 
-  it("keeps account writes to a one-office accountant", () => {
+  it("allows approved customer-account management only within one office", () => {
     expect(canEditCustomerAccount("accountant", ["dubai"])).toBe(true);
     expect(canEditCustomerAccount("accountant", ["dubai", "china"])).toBe(
       false
     );
     expect(canEditCustomerAccount("admin", null)).toBe(false);
-    expect(canEditCustomerAccount("office_manager", ["dubai"])).toBe(false);
+    expect(canEditCustomerAccount("office_manager", ["dubai"])).toBe(true);
+    expect(canEditCustomerAccount("office_manager", ["dubai", "china"])).toBe(
+      false
+    );
   });
 
   it("limits Nouakchott staff to warehouse storage and permits only preparing to transit", () => {

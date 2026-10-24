@@ -9,7 +9,8 @@ import {
   type FinanceInvoiceInput,
 } from "@shared/finance";
 import { financeCurrencies, type FinanceCurrency } from "@shared/finance";
-import { officeNames, type OfficeId } from "@shared/branches";
+import { officeNames, officeIds, type OfficeId } from "@shared/branches";
+import { sourceCurrency } from "@shared/packing";
 import type { Account, Invoice, Shipment } from "@shared/operations";
 import { trpc } from "@/lib/trpc";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -43,6 +44,9 @@ type Workspace = {
   online: boolean;
   saveCommand: (command: FinanceCommand) => Promise<boolean>;
   syncCommands?: (commandIds: string[]) => Promise<unknown>;
+  settingsForOffice?: (
+    officeId: OfficeId
+  ) => import("@shared/office").OfficeSettings | undefined;
 };
 
 type Props = {
@@ -55,6 +59,9 @@ const inputClass =
   "w-full min-h-11 rounded-xl border border-[#dce4e7] bg-white px-3 py-2 text-sm text-[#092d50] outline-none focus:border-[#2d6380] focus:ring-4 focus:ring-[#2d6380]/10";
 const officeLabel = (language: "ar" | "en" | "zh" | "tr", office: OfficeId) =>
   officeNames[language][office];
+
+export const invoiceOfficeCurrency = (office: OfficeId): FinanceCurrency =>
+  office === "nouakchott" ? "MRU" : (sourceCurrency[office] as FinanceCurrency);
 
 function uuid() {
   return (
@@ -74,11 +81,20 @@ export default function InvoiceFinancialForm({
   const accounts = workspace.base.state.accounts;
   const shipments = workspace.base.state.shipments;
   const homeOffice = workspace.homeOffice;
+  const canChooseOffice =
+    workspace.role === "admin" && workspace.offices === null;
+  const [rootOffice, setRootOffice] = useState<OfficeId>(
+    initialIssuingOffice ?? homeOffice ?? officeIds[0]
+  );
+  const issuingOffice = canChooseOffice
+    ? rootOffice
+    : (homeOffice ??
+      (workspace.offices?.length === 1 ? workspace.offices[0] : undefined));
   const canWrite =
     canWriteFinanceUi(
       workspace.role,
       workspace.offices,
-      homeOffice,
+      issuingOffice,
       workspace.permissions
     ) && workspace.canEdit;
   const [accountQuery, setAccountQuery] = useState("");
@@ -91,14 +107,15 @@ export default function InvoiceFinancialForm({
   const [goodsQuery, setGoodsQuery] = useState("");
   const [selectedGoods, setSelectedGoods] = useState<string[]>([]);
   const [goodsConfirmed, setGoodsConfirmed] = useState(false);
-  const [currency, setCurrency] = useState<FinanceCurrency>("MRU");
+  const [currency, setCurrency] = useState<FinanceCurrency>(
+    issuingOffice ? invoiceOfficeCurrency(issuingOffice) : "MRU"
+  );
   const [manualAmount, setManualAmount] = useState("");
   const [adjustDirection, setAdjustDirection] = useState<
     "increase" | "decrease"
   >("increase");
   const [adjustment, setAdjustment] = useState("");
-  // The issuing/financial office is never user-selectable in this flow.
-  const issuingOffice = homeOffice ?? "";
+  const issuingOfficeId = issuingOffice ?? "";
   const [walletMethod, setWalletMethod] = useState("");
   const [reference, setReference] = useState("");
   const [saving, setSaving] = useState(false);
@@ -108,22 +125,28 @@ export default function InvoiceFinancialForm({
   useEffect(() => {
     if (!initialCustomerId) return;
     const account = accounts.find(item => item.id === initialCustomerId);
-    if (account && account.officeId === homeOffice) {
+    if (account && account.officeId === issuingOfficeId) {
       setAccountId(account.id);
       setAccountQuery(account.name);
     } else {
       setAccountId("");
     }
-  }, [accounts, initialCustomerId, homeOffice]);
+  }, [accounts, initialCustomerId, issuingOfficeId]);
 
-  const wallet = trpc.office.public.useQuery(undefined, {
-    // Load wallets up front so the option can appear; only Nouakchott uses them.
-    enabled: homeOffice === "nouakchott",
-    retry: false,
-    refetchOnWindowFocus: false,
-  });
-  const walletMethods = (wallet.data?.methods ?? []).filter(
-    method => method.id !== "cash"
+  const wallet = trpc.office.get.useQuery(
+    issuingOfficeId ? { officeId: issuingOfficeId as OfficeId } : undefined,
+    {
+      enabled: Boolean(
+        workspace.online && workspace.base.userId && issuingOfficeId
+      ),
+      retry: false,
+      refetchOnWindowFocus: false,
+    }
+  );
+  const effectiveSettings =
+    wallet.data ?? workspace.settingsForOffice?.(issuingOfficeId as OfficeId);
+  const walletMethods = (effectiveSettings?.methods ?? []).filter(
+    method => method.id !== "cash" && method.enabled
   );
   const paymentOptions = invoicePaymentOptions(c).filter(
     ([value]) => value !== "wallet" || walletMethods.length > 0
@@ -133,24 +156,24 @@ export default function InvoiceFinancialForm({
     return accounts
       .filter(
         account =>
-          account.officeId === homeOffice &&
+          account.officeId === issuingOfficeId &&
           (!needle ||
             `${account.name} ${account.phone}`
               .toLocaleLowerCase()
               .includes(needle))
       )
       .slice(0, 12);
-  }, [accounts, accountQuery]);
+  }, [accounts, accountQuery, issuingOfficeId]);
   const choices = useMemo(
     () =>
       searchableInvoiceGoods(shipments, goodsQuery, workspace.invoices).filter(
         item =>
           (item.officeId ??
             shipments.find(shipment => shipment.id === item.shipmentId)?.packing
-              ?.source) === homeOffice &&
+              ?.source) === issuingOfficeId &&
           (!shipmentId || item.shipmentId === shipmentId)
       ),
-    [shipments, goodsQuery, workspace.invoices, shipmentId, homeOffice]
+    [shipments, goodsQuery, workspace.invoices, shipmentId, issuingOfficeId]
   );
   const selectedChoices = useMemo(
     () =>
@@ -160,16 +183,16 @@ export default function InvoiceFinancialForm({
           item.shipmentId === shipmentId &&
           (item.officeId ??
             shipments.find(shipment => shipment.id === item.shipmentId)?.packing
-              ?.source) === homeOffice
+              ?.source) === issuingOfficeId
       ),
-    [shipments, workspace.invoices, selectedGoods, shipmentId, homeOffice]
+    [shipments, workspace.invoices, selectedGoods, shipmentId, issuingOfficeId]
   );
   const parsedManual = Number(manualAmount);
   const parsedAdjustment = Number(adjustment);
   const selectedShipment = shipments.find(
     shipment =>
       shipment.id === shipmentId &&
-      (shipment.officeId ?? shipment.packing?.source) === homeOffice
+      (shipment.officeId ?? shipment.packing?.source) === issuingOfficeId
   );
   const calculation = useMemo(() => {
     if (
@@ -180,8 +203,8 @@ export default function InvoiceFinancialForm({
     const input: FinanceInvoiceInput = {
       invoiceId: "preview",
       customerId: accountId,
-      issuingOfficeId: issuingOffice as OfficeId,
-      employeeOfficeId: homeOffice as OfficeId,
+      issuingOfficeId: issuingOfficeId as OfficeId,
+      employeeOfficeId: issuingOfficeId as OfficeId,
       chargeKind,
       paymentMode,
       currency,
@@ -197,16 +220,15 @@ export default function InvoiceFinancialForm({
             ? parsedAdjustment
             : 0,
       },
-      ...(paymentMode === "wallet" &&
-      homeOffice === "nouakchott" &&
-      walletMethod
+      ...(paymentMode === "wallet" && issuingOfficeId && walletMethod
         ? {
             payment: {
-              office: "nouakchott",
+              office: issuingOfficeId as OfficeId,
               methodId: walletMethod,
               methodLabel:
-                wallet.data?.methods.find(method => method.id === walletMethod)
-                  ?.label ?? walletMethod,
+                effectiveSettings?.methods.find(
+                  method => method.id === walletMethod
+                )?.label ?? walletMethod,
               ...(reference.trim() ? { reference: reference.trim() } : {}),
             },
           }
@@ -226,6 +248,7 @@ export default function InvoiceFinancialForm({
     shipmentId,
     selectedGoods,
     issuingOffice,
+    issuingOfficeId,
     homeOffice,
     workspace.offices,
     paymentMode,
@@ -265,7 +288,7 @@ export default function InvoiceFinancialForm({
     const selectedAccount = accounts.find(account => account.id === accountId);
     if (
       !selectedAccount ||
-      selectedAccount.officeId !== homeOffice ||
+      selectedAccount.officeId !== issuingOfficeId ||
       (paymentMode === "on_account" && !accountId)
     )
       return setError(c.accountRequired);
@@ -282,7 +305,7 @@ export default function InvoiceFinancialForm({
           tr: "Fatura kesmeden önce müşteri hesabını ofisle paylaşın.",
         }[language]
       );
-    if (!issuingOffice) return setError(c.officeRequired);
+    if (!issuingOfficeId) return setError(c.officeRequired);
     if (
       chargeKind === "shipping" &&
       (!shipmentId || !selectedGoods.length || !goodsConfirmed)
@@ -297,8 +320,8 @@ export default function InvoiceFinancialForm({
     const input: FinanceInvoiceInput = {
       invoiceId: `inv-${id}`.slice(0, 64),
       customerId: accountId,
-      issuingOfficeId: issuingOffice as OfficeId,
-      employeeOfficeId: homeOffice as OfficeId,
+      issuingOfficeId: issuingOfficeId as OfficeId,
+      employeeOfficeId: issuingOfficeId as OfficeId,
       chargeKind,
       paymentMode,
       currency,
@@ -322,11 +345,12 @@ export default function InvoiceFinancialForm({
       ...(paymentMode === "wallet"
         ? {
             payment: {
-              office: "nouakchott",
+              office: issuingOfficeId as OfficeId,
               methodId: walletMethod,
               methodLabel:
-                wallet.data?.methods.find(method => method.id === walletMethod)
-                  ?.label ?? walletMethod,
+                effectiveSettings?.methods.find(
+                  method => method.id === walletMethod
+                )?.label ?? walletMethod,
               ...(reference.trim() ? { reference: reference.trim() } : {}),
             },
           }
@@ -389,6 +413,46 @@ export default function InvoiceFinancialForm({
         )}
       </ol>
       <div className="grid gap-4 lg:grid-cols-2">
+        <PackingField label={c.office} required>
+          <select
+            className={inputClass}
+            value={issuingOfficeId}
+            disabled={!canChooseOffice || saving}
+            onChange={event => {
+              const next = event.target.value as OfficeId;
+              if (!canChooseOffice || !officeIds.includes(next)) return;
+              if (
+                (accountId || selectedGoods.length || manualAmount) &&
+                !window.confirm(
+                  `${c.officeRequired}: ${officeLabel(language, next)}?`
+                )
+              )
+                return;
+              setRootOffice(next);
+              setAccountId("");
+              setAccountQuery("");
+              setShipmentId("");
+              setSelectedGoods([]);
+              setGoodsConfirmed(false);
+              setManualAmount("");
+              setWalletMethod("");
+              setReference("");
+              setPaymentMode("cash");
+              setCurrency(invoiceOfficeCurrency(next));
+            }}
+          >
+            {(canChooseOffice
+              ? officeIds
+              : issuingOffice
+                ? [issuingOffice]
+                : []
+            ).map(office => (
+              <option key={office} value={office}>
+                {officeLabel(language, office)}
+              </option>
+            ))}
+          </select>
+        </PackingField>
         <PackingField label={c.customer} required hint={c.searchCustomer}>
           <div className="relative">
             <Search
@@ -529,7 +593,7 @@ export default function InvoiceFinancialForm({
                       shipment.packing &&
                       !shipment.deleted &&
                       (shipment.officeId ?? shipment.packing.source) ===
-                        homeOffice
+                        issuingOfficeId
                   )
                   .map(shipment => (
                     <option key={shipment.id} value={shipment.id}>

@@ -41,6 +41,7 @@ import {
   financeGoods,
   financeReceipts,
   records,
+  shipmentCostApprovals,
   shipmentChargeAllocations,
   shipmentChargeComponents,
   users,
@@ -52,7 +53,11 @@ import {
   recordVisibleInOffice,
 } from "./branches";
 import { appendAudit } from "./audit";
-import { canonicalInvoicePayment, readOfficeSettings } from "./office";
+import {
+  canonicalInvoicePayment,
+  readOfficeSettings,
+  recordWalletReceipt,
+} from "./office";
 import { getDb } from "./db";
 import { protectedProcedure, router } from "./_core/trpc";
 import { assertActiveEntity } from "./lifecycle";
@@ -99,6 +104,15 @@ export function settlementCanManage(
 }
 export function settlementOfficeVisible(scope: OfficeScope, office: OfficeId) {
   return scope.role === "admin" || Boolean(scope.offices?.includes(office));
+}
+export function canRecordArrivalCost(scope: OfficeScope) {
+  return Boolean(
+    scope.role === "admin" ||
+      (scope.offices?.length === 1 &&
+        scope.offices[0] === "nouakchott" &&
+        ["accountant", "general_accountant"].includes(scope.role ?? "") &&
+        permissionAllowed(scope, "arrival_cost", "manage"))
+  );
 }
 function financeView(scope: OfficeScope) {
   return [
@@ -450,7 +464,7 @@ export async function registerShipmentExport(
 ): Promise<RegisterExportResult> {
   const parsed = registerExportInputSchema.parse(input);
   await lockActor(tx, user);
-  const scope = await readOfficeScope(tx, user);
+  const scope = await readOfficeScope(tx, user, new Set(), true);
   if (!financeManage(scope, "shipment_prices")) forbidden();
   if ("shipmentId" in parsed && typeof parsed.shipmentId === "string")
     await assertActiveEntity(tx, "shipment", parsed.shipmentId);
@@ -658,10 +672,8 @@ export async function recordShipmentLocalCost(
 ): Promise<LocalCostResult> {
   const parsed = localCostInputSchema.parse(input);
   await lockActor(tx, user);
-  const scope = await readOfficeScope(tx, user);
-  if (!financeManage(scope, "expenses")) forbidden();
-  if (scope.role !== "admin" && !scope.offices?.includes("nouakchott"))
-    forbidden("nouakchott_finance_required");
+  const scope = await readOfficeScope(tx, user, new Set(), true);
+  if (!canRecordArrivalCost(scope)) forbidden("arrival_cost_forbidden");
   if ("shipmentId" in parsed && typeof parsed.shipmentId === "string")
     await assertActiveEntity(tx, "shipment", parsed.shipmentId);
   if ("invoiceId" in parsed && typeof parsed.invoiceId === "string")
@@ -676,6 +688,21 @@ export async function recordShipmentLocalCost(
   ensureTracking(shipment, parsed.confirmation.trackingNumber);
   if (!isConfirmedArrival(shipment)) bad("arrival_not_confirmed");
   ensureScope(scope, "nouakchott");
+  const costReference =
+    parsed.referenceKey ?? parsed.costReference ?? "destination_shipping";
+  const claimed = await tx
+    .select()
+    .from(shipmentCostApprovals)
+    .where(
+      and(
+        eq(shipmentCostApprovals.shipmentId, shipment.id),
+        eq(shipmentCostApprovals.officeId, "nouakchott"),
+        eq(shipmentCostApprovals.referenceKey, costReference)
+      )
+    )
+    .limit(1)
+    .for("update");
+  if (claimed[0]) bad("arrival_cost_duplicate");
   const goods = goodsForShipment(shipment);
   const amountCents = toCents(parsed.amount);
   const allocations = allocateCentsByWeight(amountCents, goods);
@@ -716,6 +743,15 @@ export async function recordShipmentLocalCost(
     { shipmentId: shipment.id }
   );
   await insertEntry(tx, entry);
+  await tx.insert(shipmentCostApprovals).values({
+    id: `shipment-cost-approval:${hash({ shipmentId: shipment.id, officeId: "nouakchott", referenceKey: costReference })}`,
+    shipmentId: shipment.id,
+    officeId: "nouakchott",
+    currency: parsed.currency,
+    referenceKey: costReference,
+    financeEntryId: entry.id,
+    actorId: user.id,
+  });
   if (parsed.paidInCash) {
     const registerId = await ensureOpenCashRegister(
       tx,
@@ -784,7 +820,7 @@ async function billComponentsTx(
 ): Promise<import("@shared/shipmentSettlement").BillComponentsResult> {
   const parsed = billComponentsInputSchema.parse(input);
   await lockActor(tx, user);
-  const scope = await readOfficeScope(tx, user);
+  const scope = await readOfficeScope(tx, user, new Set(), true);
   if (!financeManage(scope, "invoices")) forbidden();
   if ("shipmentId" in parsed && typeof parsed.shipmentId === "string")
     await assertActiveEntity(tx, "shipment", parsed.shipmentId);
@@ -906,7 +942,8 @@ async function billComponentsTx(
     payment = canonicalInvoicePayment(
       payment,
       null,
-      await readOfficeSettings(tx)
+      await readOfficeSettings(tx, office),
+      office
     );
   const details: FinancialInvoiceDetails = financialInvoiceSchema.parse({
     customerId: account.id,
@@ -1041,6 +1078,20 @@ async function billComponentsTx(
     });
   }
   for (const row of rows) await insertEntry(tx, row);
+  if (payment && payment.methodId !== "cash") {
+    const collection = rows.find(row => row.kind === "collection");
+    if (collection)
+      await recordWalletReceipt(tx, {
+        officeId: office,
+        methodId: payment.methodId,
+        currency,
+        amount: total,
+        invoiceId: invoice.id,
+        financeEntryId: collection.id,
+        actorId: user.id,
+        data: { source: "shipment_component_invoice" },
+      });
+  }
   await appendAudit(tx, {
     actor: auditActor(user, scope),
     entity: "invoice",

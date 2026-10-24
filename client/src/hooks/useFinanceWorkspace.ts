@@ -20,6 +20,8 @@ import {
   permissionAllowed,
   type PermissionMap,
 } from "@shared/permissions";
+import { officeIds, type OfficeId } from "@shared/branches";
+import type { OfficeSettings } from "@shared/office";
 import {
   loadFinanceWorkspace,
   saveFinanceWorkspace,
@@ -110,6 +112,83 @@ export function useFinanceWorkspace() {
     permissions: base.permissions,
   };
   const permission = canReadAnyFinance(subject);
+  const financeCacheUser = base.userId
+    ? `${base.userId}:${base.permissionFingerprint ?? "no-permission-fingerprint"}`
+    : null;
+  const officeSettingsReadable = permissionAllowed(
+    subject,
+    "office_wallets",
+    "view"
+  );
+  // A root user has the full four-office scope; an employee is limited to
+  // the offices explicitly returned by the access snapshot.
+  const settingsOffices: OfficeId[] =
+    base.offices === null ? [...officeIds] : (base.offices ?? []).slice(0, 4);
+  const settingsQueries = [
+    trpc.office.get.useQuery(
+      settingsOffices[0] ? { officeId: settingsOffices[0] } : undefined,
+      {
+        enabled: Boolean(
+          base.userId &&
+            base.accessReady &&
+            officeSettingsReadable &&
+            base.online &&
+            !base.localOnly &&
+            settingsOffices[0]
+        ),
+        retry: false,
+        refetchOnWindowFocus: false,
+      }
+    ),
+    trpc.office.get.useQuery(
+      settingsOffices[1] ? { officeId: settingsOffices[1] } : undefined,
+      {
+        enabled: Boolean(
+          base.userId &&
+            base.accessReady &&
+            officeSettingsReadable &&
+            base.online &&
+            !base.localOnly &&
+            settingsOffices[1]
+        ),
+        retry: false,
+        refetchOnWindowFocus: false,
+      }
+    ),
+    trpc.office.get.useQuery(
+      settingsOffices[2] ? { officeId: settingsOffices[2] } : undefined,
+      {
+        enabled: Boolean(
+          base.userId &&
+            base.accessReady &&
+            officeSettingsReadable &&
+            base.online &&
+            !base.localOnly &&
+            settingsOffices[2]
+        ),
+        retry: false,
+        refetchOnWindowFocus: false,
+      }
+    ),
+    trpc.office.get.useQuery(
+      settingsOffices[3] ? { officeId: settingsOffices[3] } : undefined,
+      {
+        enabled: Boolean(
+          base.userId &&
+            base.accessReady &&
+            officeSettingsReadable &&
+            base.online &&
+            !base.localOnly &&
+            settingsOffices[3]
+        ),
+        retry: false,
+        refetchOnWindowFocus: false,
+      }
+    ),
+  ];
+  const settingsByOffice = new Map<OfficeId, OfficeSettings>();
+  for (const result of settingsQueries)
+    if (result.data) settingsByOffice.set(result.data.office, result.data);
   const query = trpc.finance.snapshot.useQuery(
     { clientUserId: base.userId ?? "not-logged-in" },
     {
@@ -152,6 +231,13 @@ export function useFinanceWorkspace() {
     if (command.kind === "opening_balance") return command.payload.officeId;
     return undefined;
   };
+  const commandPermission = (command: FinanceCommand) =>
+    command.kind === "expense" && command.payload.category === "shipment_cost"
+      ? ("shipment_cost" as const)
+      : financePermissionForCommand(
+          command.kind,
+          command.kind === "expense" ? command.payload.category : undefined
+        );
   const explain = (e: unknown) =>
     e instanceof Error
       ? e.message === "finance_store_corrupt"
@@ -163,7 +249,7 @@ export function useFinanceWorkspace() {
             : w.failed
       : w.failed;
   useEffect(() => {
-    if (!base.userId || !base.accessReady) {
+    if (!base.userId || !base.accessReady || !permission) {
       workspaceOwner.current = null;
       ref.current = null;
       setWorkspace(null);
@@ -171,7 +257,7 @@ export function useFinanceWorkspace() {
     }
     workspaceOwner.current = base.userId;
     try {
-      const next = loadFinanceWorkspace(base.userId);
+      const next = loadFinanceWorkspace(financeCacheUser ?? base.userId);
       ref.current = next;
       setWorkspace(next);
       setError(null);
@@ -180,7 +266,7 @@ export function useFinanceWorkspace() {
       setWorkspace(null);
       setError(explain(e));
     }
-  }, [base.userId, base.accessReady]);
+  }, [base.userId, base.accessReady, permission, financeCacheUser]);
   useEffect(() => {
     if (!base.userId || !query.data || !ref.current || denied) return;
     let cancelled = false;
@@ -188,7 +274,7 @@ export function useFinanceWorkspace() {
     void (async () => {
       try {
         const next = mergeFinanceSnapshot(ref.current!, query.data, userId);
-        await saveFinanceWorkspace(userId, next);
+        await saveFinanceWorkspace(financeCacheUser ?? userId, next);
         if (!cancelled) {
           ref.current = next;
           setWorkspace(next);
@@ -201,7 +287,7 @@ export function useFinanceWorkspace() {
     return () => {
       cancelled = true;
     };
-  }, [base.userId, query.data, denied]);
+  }, [base.userId, query.data, denied, financeCacheUser]);
   const writePermission = canWriteFinance({
     role: base.role,
     offices: base.offices,
@@ -220,11 +306,7 @@ export function useFinanceWorkspace() {
   const saveCommand = async (command: FinanceCommand): Promise<boolean> => {
     if (
       !canEdit ||
-      !permissionAllowed(
-        subject,
-        financePermissionForCommand(command.kind),
-        "manage"
-      ) ||
+      !permissionAllowed(subject, commandPermission(command), "manage") ||
       !base.userId ||
       workspaceOwner.current !== base.userId ||
       !ref.current
@@ -243,7 +325,7 @@ export function useFinanceWorkspace() {
     }
     try {
       const next = stageFinanceCommand(ref.current, command, base.userId);
-      await saveFinanceWorkspace(base.userId, next);
+      await saveFinanceWorkspace(financeCacheUser ?? base.userId, next);
       if (currentUser.current !== base.userId) return false;
       ref.current = next;
       setWorkspace(next);
@@ -278,11 +360,7 @@ export function useFinanceWorkspace() {
       const office = commandOffice(command);
       return (
         Boolean(office && officeAllowed(office)) &&
-        permissionAllowed(
-          subject,
-          financePermissionForCommand(command.kind),
-          "manage"
-        )
+        permissionAllowed(subject, commandPermission(command), "manage")
       );
     });
     const batch = available.slice(0, 100);
@@ -341,7 +419,7 @@ export function useFinanceWorkspace() {
       )
         return null;
       const next = applyFinanceSync(ref.current, result, userId);
-      await saveFinanceWorkspace(userId, next);
+      await saveFinanceWorkspace(financeCacheUser ?? userId, next);
       if (currentUser.current !== userId) return null;
       ref.current = next;
       setWorkspace(next);
@@ -367,7 +445,7 @@ export function useFinanceWorkspace() {
   const reload = async () => {
     if (!base.userId) return;
     try {
-      const next = loadFinanceWorkspace(base.userId);
+      const next = loadFinanceWorkspace(financeCacheUser ?? base.userId);
       ref.current = next;
       setWorkspace(next);
       setError(null);
@@ -420,5 +498,7 @@ export function useFinanceWorkspace() {
     busy: mutation.isPending,
     store: workspace,
     snapshotError: query.error && !denied ? w.fetchFailed : null,
+    paymentSettings: settingsByOffice,
+    settingsForOffice: (officeId: OfficeId) => settingsByOffice.get(officeId),
   };
 }

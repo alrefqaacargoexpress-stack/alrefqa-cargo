@@ -235,7 +235,7 @@ export const financeInvoiceCopy: Record<FinanceLanguage, FinanceInvoiceCopy> = {
     officeRequired: "اختر مكتبًا ماليًا",
     walletMethod: "طريقة المحفظة",
     walletNouakchottOnly:
-      "المحافظ الإلكترونية (Bankily وMasrvi وSedad وغيرها) متاحة لمكتب نواكشوط فقط. في هذا المكتب استخدم الصندوق النقدي أو حساب العميل.",
+      "تظهر فقط محافظ مكتب الإصدار المفعلة؛ وإلا استخدم صندوقه النقدي أو حساب عميله.",
     reference: "مرجع السداد (اختياري)",
     saveDraft: "حفظ المسودة",
     saving: "جارٍ الحفظ…",
@@ -322,7 +322,7 @@ export const financeInvoiceCopy: Record<FinanceLanguage, FinanceInvoiceCopy> = {
     officeRequired: "Choose a financial office",
     walletMethod: "Wallet method",
     walletNouakchottOnly:
-      "E-wallets (Bankily, Masrvi, Sedad, etc.) are available at the Nouakchott office only. Here, use the cash box or the customer account.",
+      "Only active wallets configured for this issuing office are shown. Otherwise use its cash box or customer account.",
     reference: "Payment reference (optional)",
     saveDraft: "Save draft",
     saving: "Saving…",
@@ -408,7 +408,7 @@ export const financeInvoiceCopy: Record<FinanceLanguage, FinanceInvoiceCopy> = {
     officeRequired: "选择财务办公室",
     walletMethod: "钱包方式",
     walletNouakchottOnly:
-      "电子钱包（Bankily、Masrvi、Sedad 等）仅限努瓦克肖特办公室使用。本办公室请使用现金箱或客户账户。",
+      "仅显示开票办公室已启用的钱包；否则请使用该办公室现金箱或客户账户。",
     reference: "付款参考（可选）",
     saveDraft: "保存草稿",
     saving: "保存中…",
@@ -495,7 +495,7 @@ export const financeInvoiceCopy: Record<FinanceLanguage, FinanceInvoiceCopy> = {
     officeRequired: "Mali ofis seçin",
     walletMethod: "Cüzdan yöntemi",
     walletNouakchottOnly:
-      "E-cüzdanlar (Bankily, Masrvi, Sedad vb.) yalnızca Nouakchott ofisinde kullanılabilir. Burada kasa veya müşteri hesabını kullanın.",
+      "Yalnızca faturayı düzenleyen ofisin etkin cüzdanları gösterilir; aksi halde o ofisin kasasını veya müşteri hesabını kullanın.",
     reference: "Ödeme referansı (isteğe bağlı)",
     saveDraft: "Taslağı kaydet",
     saving: "Kaydediliyor…",

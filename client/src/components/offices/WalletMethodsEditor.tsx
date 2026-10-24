@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Plus, Save, Trash2 } from "lucide-react";
 import { officeSettingsSchema, type PaymentMethod } from "@shared/office";
+import type { OfficeId } from "@shared/branches";
+import { permissionAllowed } from "@shared/permissions";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useOperationsWorkspace } from "@/hooks/useOperationsWorkspace";
 import { trpc } from "@/lib/trpc";
@@ -9,6 +11,7 @@ import { walletCopyFor } from "@/lib/walletCopy";
 type Props = {
   workspace: ReturnType<typeof useOperationsWorkspace>;
   allowed: boolean;
+  selectedOffice?: OfficeId;
 };
 
 const inputClass =
@@ -22,18 +25,26 @@ function cloneMethods(methods: PaymentMethod[]): PaymentMethod[] {
   return methods.map(method => ({ ...method }));
 }
 
-export default function WalletMethodsEditor({ workspace, allowed }: Props) {
+export default function WalletMethodsEditor({
+  workspace,
+  allowed,
+  selectedOffice,
+}: Props) {
   const { language, dir } = useLanguage();
   const copy = walletCopyFor(language);
-  const settings = trpc.office.get.useQuery(undefined, {
+  const settings = trpc.office.get.useQuery(
+    selectedOffice ? { officeId: selectedOffice } : undefined,
+    {
     enabled:
       allowed &&
+      Boolean(selectedOffice) &&
       workspace.online &&
       Boolean(workspace.userId) &&
       !workspace.localOnly,
     retry: false,
     refetchOnWindowFocus: false,
-  });
+    }
+  );
   const update = trpc.office.update.useMutation();
   const [draft, setDraft] = useState<PaymentMethod[] | null>(null);
   const [version, setVersion] = useState<number | null>(null);
@@ -43,9 +54,15 @@ export default function WalletMethodsEditor({ workspace, allowed }: Props) {
   const [saving, setSaving] = useState(false);
   const saveRef = useRef(false);
   const persistedIdsRef = useRef<Set<string> | null>(null);
+  const subject = {
+    role: workspace.role,
+    offices: workspace.offices,
+    permissions: workspace.permissions,
+  };
   const canEdit =
     allowed &&
-    workspace.role === "admin" &&
+    Boolean(selectedOffice) &&
+    permissionAllowed(subject, "office_wallets", "manage") &&
     workspace.online &&
     Boolean(workspace.userId) &&
     !workspace.localOnly;
@@ -100,8 +117,9 @@ export default function WalletMethodsEditor({ workspace, allowed }: Props) {
       setError(copy.offline);
       return;
     }
+    if (!selectedOffice) return;
     const parsed = officeSettingsSchema.safeParse({
-      office: "nouakchott",
+      office: selectedOffice,
       methods: draft,
     });
     if (!parsed.success) {
@@ -114,7 +132,7 @@ export default function WalletMethodsEditor({ workspace, allowed }: Props) {
     setNotice("");
     try {
       const result = await update.mutateAsync({
-        office: "nouakchott",
+        office: selectedOffice,
         methods: parsed.data.methods,
         expectedVersion: version,
       });
@@ -175,7 +193,7 @@ export default function WalletMethodsEditor({ workspace, allowed }: Props) {
     setNotice("");
   };
 
-  if (!allowed) return null;
+  if (!allowed || !selectedOffice) return null;
   return (
     <section
       dir={dir}

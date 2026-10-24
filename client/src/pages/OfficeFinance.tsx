@@ -12,7 +12,7 @@ import {
   type FinanceSnapshot,
   canWriteFinance,
 } from "@shared/finance";
-import { canReadAnyFinance } from "@shared/permissions";
+import { canReadAnyFinance, permissionAllowed } from "@shared/permissions";
 import { sourceCurrency } from "@shared/packing";
 import type { Shipment } from "@shared/operations";
 import PackingLayout from "@/components/packing/PackingLayout";
@@ -22,6 +22,7 @@ import ShipmentSettlementPanel from "@/components/finance/ShipmentSettlementPane
 import FinancialVoidPanel from "@/components/finance/FinancialVoidPanel";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useFinanceWorkspace } from "@/hooks/useFinanceWorkspace";
+import OfficeWalletLedger from "@/components/finance/OfficeWalletLedger";
 import { officeIds } from "@/lib/branchSettingsCopy";
 import { officeName } from "@/lib/branchSettingsCopy";
 import {
@@ -103,6 +104,11 @@ export function financeCashBalance(
   let cents = 0;
   for (const entry of entries) {
     if (entry.officeId !== officeId || entry.currency !== currency) continue;
+    if (
+      entry.cashEffect === "none" ||
+      (entry.payment && entry.payment.methodId !== "cash")
+    )
+      continue;
     const signed =
       entry.kind === "opening_balance"
         ? entry.direction === "debit"
@@ -302,6 +308,7 @@ export default function OfficeFinance() {
     role: finance.role,
     offices: finance.offices,
     homeOffice: finance.homeOffice,
+    permissions: finance.permissions,
   });
   const shipmentSource = finance.base.state.shipments;
   const snapshot = finance.store?.snapshot;
@@ -309,7 +316,26 @@ export default function OfficeFinance() {
     snapshot ?? { receivables: [], shipmentReceivables: [] }
   );
   const accountantHomeOnly =
-    canWrite && finance.role === "accountant" && allowedOffices.length === 1;
+    canWrite &&
+    (finance.role === "admin"
+      ? selectedOffice !== "all"
+      : allowedOffices.length === 1);
+  const ownFinancePermissions = {
+    role: finance.role,
+    offices: finance.offices,
+    homeOffice: finance.homeOffice,
+    permissions: finance.permissions,
+  };
+  const canOpenBalance = permissionAllowed(
+    ownFinancePermissions,
+    "expenses",
+    "manage"
+  );
+  const canChangePrice = permissionAllowed(
+    ownFinancePermissions,
+    "shipment_prices",
+    "manage"
+  );
   const [openingCurrency, setOpeningCurrency] =
     useState<FinanceCurrency>("MRU");
   const [openingDirection, setOpeningDirection] = useState<"debit" | "credit">(
@@ -323,7 +349,11 @@ export default function OfficeFinance() {
   const [openingNotice, setOpeningNotice] = useState("");
   const [openingError, setOpeningError] = useState("");
   const [openingBusy, setOpeningBusy] = useState(false);
-  const openingOffice = accountantHomeOnly ? allowedOffices[0] : undefined;
+  const openingOffice = accountantHomeOnly
+    ? finance.role === "admin" && selectedOffice !== "all"
+      ? selectedOffice
+      : allowedOffices[0]
+    : undefined;
   const openingExists = Boolean(
     openingOffice &&
       (finance.entries.some(
@@ -375,7 +405,7 @@ export default function OfficeFinance() {
     setOpeningError("");
     setOpeningNotice("");
     const amount = Number(openingAmount);
-    if (!openingOffice || !accountantHomeOnly) return;
+    if (!openingOffice || !accountantHomeOnly || !canOpenBalance) return;
     if (
       openingExists ||
       !openingDate ||
@@ -422,6 +452,7 @@ export default function OfficeFinance() {
       !priceShipment ||
       !sourceOffice ||
       !accountantHomeOnly ||
+      !canChangePrice ||
       priceAlreadyPending ||
       !pricePerKg.trim() ||
       !Number.isFinite(amount) ||
@@ -786,6 +817,12 @@ export default function OfficeFinance() {
             )}
           </section>
 
+          <OfficeWalletLedger
+            key={`${finance.base.userId}:${selectedOffice}`}
+            workspace={finance}
+            selectedOffice={selectedOffice}
+          />
+
           <ShipmentSettlementPanel
             workspace={finance}
             language={language}
@@ -794,7 +831,7 @@ export default function OfficeFinance() {
 
           {canWrite ? (
             <>
-              {accountantHomeOnly && (
+              {accountantHomeOnly && (canOpenBalance || canChangePrice) && (
                 <>
                   <section className="rounded-2xl border border-[#dce4e7] bg-white p-5 shadow-sm">
                     <div className="border-b border-[#edf1f1] pb-4">
@@ -908,7 +945,7 @@ export default function OfficeFinance() {
                     <button
                       className={`${packingPrimaryClass} mt-4`}
                       type="button"
-                      disabled={openingBusy || openingExists}
+                      disabled={openingBusy || openingExists || !canOpenBalance}
                       onClick={() => void saveOpening()}
                     >
                       {openingBusy ? c.saving : c.saveOpening}
@@ -1012,7 +1049,10 @@ export default function OfficeFinance() {
                       className={`${packingPrimaryClass} mt-4`}
                       type="button"
                       disabled={
-                        priceBusy || priceAlreadyPending || !priceShipment
+                        priceBusy ||
+                        priceAlreadyPending ||
+                        !priceShipment ||
+                        !canChangePrice
                       }
                       onClick={() => void saveShipmentPrice()}
                     >
@@ -1035,12 +1075,9 @@ export default function OfficeFinance() {
                 canEdit={canWrite && finance.canEdit}
                 online={finance.online}
                 saveCommand={finance.saveCommand}
-                {...({
-                  role: finance.role,
-                  homeOffice: finance.homeOffice,
-                  permissions: finance.permissions,
-                  newReadonlyPolicy: !accountantHomeOnly,
-                } as Record<string, unknown>)}
+                role={finance.role}
+                homeOffice={finance.homeOffice}
+                permissions={finance.permissions}
               />
             </>
           ) : (

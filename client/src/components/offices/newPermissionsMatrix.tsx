@@ -20,6 +20,9 @@ type PermissionMatrixProps = {
   pending?: boolean;
   onChange?: (next: PermissionMap) => void;
   showRootPermissions?: boolean;
+  excludeRootOnly?: boolean;
+  title?: string;
+  hint?: string;
 };
 
 function completePermissions(
@@ -40,6 +43,9 @@ export default function NewPermissionsMatrix({
   pending = false,
   onChange,
   showRootPermissions = false,
+  excludeRootOnly = false,
+  title,
+  hint,
 }: PermissionMatrixProps) {
   const { language } = useLanguage();
   const copy = newPermissionsCopyFor(language);
@@ -55,6 +61,10 @@ export default function NewPermissionsMatrix({
     onChange?.({ ...current, [key]: event.target.value as PermissionLevel });
   };
 
+  const rows = excludeRootOnly
+    ? permissionKeys.filter(key => !rootOnlyPermissions.includes(key))
+    : permissionKeys;
+
   return (
     <fieldset
       className="mt-4 rounded-2xl border border-[#dce4e7] bg-white p-4"
@@ -63,9 +73,11 @@ export default function NewPermissionsMatrix({
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <legend className="text-sm font-black text-[#092d50]">
-            {copy.title}
-          </legend>
-          <p className="mt-1 text-xs leading-5 text-[#718088]">{copy.hint}</p>
+                  {title ?? copy.title}
+                </legend>
+          <p className="mt-1 text-xs leading-5 text-[#718088]">
+            {hint ?? copy.hint}
+          </p>
         </div>
         <span className="rounded-full bg-[#eef5f4] px-3 py-1 text-xs font-bold text-[#315b5a]">
           {copy.ceiling}:{" "}
@@ -81,7 +93,7 @@ export default function NewPermissionsMatrix({
           <thead className="bg-[#f7faf9] text-start text-xs text-[#52636e]">
             <tr>
               <th scope="col" className="px-3 py-2 text-start font-bold">
-                {copy.title}
+                {title ?? copy.title}
               </th>
               <th scope="col" className="px-3 py-2 text-start font-bold">
                 {copy.ceiling}
@@ -92,7 +104,7 @@ export default function NewPermissionsMatrix({
             </tr>
           </thead>
           <tbody>
-            {permissionKeys.map(key => {
+            {rows.map(key => {
               const isRootOnly = rootOnlyPermissions.includes(key);
               const maxRank = permissionRank(available[key]);
               const selected =

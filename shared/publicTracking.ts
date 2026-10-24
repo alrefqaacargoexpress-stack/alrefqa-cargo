@@ -57,6 +57,16 @@ export const publicTrackingPaymentStatusValues = [
 ] as const;
 export type PublicTrackingPaymentStatus =
   (typeof publicTrackingPaymentStatusValues)[number];
+export const publicTrackingTimelineItemSchema = z
+  .object({
+    stage: z.enum(stageIds).nullable(),
+    branch: z.enum(branchIds).nullable(),
+    at: z.string().datetime(),
+  })
+  .strict();
+export type PublicTrackingTimelineItem = z.infer<
+  typeof publicTrackingTimelineItemSchema
+>;
 const publicGoodsSchema = z
   .object({
     cartonNumber: z.number().int().positive(),
@@ -77,6 +87,7 @@ export const publicTrackingShipmentSchema = z
     updatedAt: z.string().datetime().nullable(),
     source: z.enum(["dubai", "turkey", "china"]).nullable(),
     goods: z.array(publicGoodsSchema).max(20000),
+    timeline: z.array(publicTrackingTimelineItemSchema).max(100).optional(),
     totalPieces: z.number().int().positive(),
     totalWeight: z.number().finite().positive(),
   })

@@ -47,13 +47,19 @@ export const localCostInputSchema = z
     description: z.string().trim().min(1).max(500),
     passedToCustomer: z.boolean(),
     paidInCash: z.boolean().optional().default(false),
+    referenceKey: z.string().trim().min(1).max(128).optional(),
+    costReference: z.string().trim().min(1).max(128).optional(),
     confirmation: settlementConfirmationSchema,
   })
   .strict()
   .refine(v => Math.abs(v.amount * 100 - Math.round(v.amount * 100)) < 0.0001, {
     message: "invalid_money",
     path: ["amount"],
-  });
+  })
+  .refine(
+    v => !v.referenceKey || !v.costReference || v.referenceKey === v.costReference,
+    "cost_reference_mismatch"
+  );
 export type LocalCostInput = z.infer<typeof localCostInputSchema>;
 
 export const billComponentsInputSchema = z
@@ -67,7 +73,7 @@ export const billComponentsInputSchema = z
     paymentMode: paymentModeSchema,
     payment: z
       .object({
-        office: z.literal("nouakchott"),
+        office: officeIdSchema,
         methodId: z.string().regex(/^[a-z0-9_-]{1,64}$/),
         methodLabel: z.string().trim().min(1).max(120),
         reference: z.string().trim().max(240).optional(),

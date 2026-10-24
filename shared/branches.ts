@@ -149,11 +149,16 @@ export const officeMembershipSchema = z
     homeOffice: officeIdSchema.nullable().optional(),
     canUpdateTracking: z.boolean().optional(),
     permissions: permissionMapSchema.optional(),
+    /** Root-only delegation ceiling for a newly assigned office manager. */
+    delegationPermissions: permissionMapSchema.optional(),
     expectedVersion: z.number().int().nonnegative(),
   })
   .strict()
   .refine(v => new Set(v.offices).size === v.offices.length, {
     message: "duplicate_office",
+  })
+  .refine(v => v.role !== "tracking_staff", {
+    message: "tracking_staff_assignment_retired",
   })
   .refine(v => !v.homeOffice || v.offices.includes(v.homeOffice), {
     message: "home_office_not_allowed",
@@ -175,7 +180,7 @@ export const officeMembershipSchema = z
   .refine(
     v =>
       !v.canUpdateTracking ||
-      (v.role === "staff" &&
+      (["staff", "source_warehouse"].includes(v.role) &&
         v.offices.length === 1 &&
         v.offices[0] !== "nouakchott"),
     { message: "warehouse_tracking_source_only" }
@@ -215,6 +220,7 @@ export type OfficeMember = {
   canUpdateTracking?: boolean;
   permissions?: PermissionMap | null;
   effectivePermissions?: PermissionMap;
+  effectiveDelegationCeiling?: PermissionMap;
   permissionsCustomized?: boolean;
   delegatedBy?: number | null;
   version: number;
@@ -323,7 +329,9 @@ export function canConfirmOfficeArrival(
   return (
     role === "admin" ||
     (role === "supervisor" && Boolean(offices?.includes("nouakchott"))) ||
-    (role === "staff" && offices?.length === 1 && offices[0] === "nouakchott")
+    ((role === "staff" || role === "destination_warehouse") &&
+      offices?.length === 1 &&
+      offices[0] === "nouakchott")
   );
 }
 export function mapsHref(

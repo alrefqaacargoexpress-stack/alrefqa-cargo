@@ -47,6 +47,7 @@ describe("public shipment number canonicalization", () => {
               clauses.push(dialect.sqlToQuery(clause));
               return b;
             },
+            orderBy: () => b,
             limit: () =>
               Promise.resolve(
                 n === 1

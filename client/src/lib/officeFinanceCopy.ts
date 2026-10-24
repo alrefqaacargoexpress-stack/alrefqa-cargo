@@ -100,6 +100,11 @@ export type OfficeFinanceCopy = {
   priceAlreadyPending: string;
   priceRequired: string;
   noPriceableShipments: string;
+  costReference?: string;
+  costReferenceHint?: string;
+  costReferenceManual?: string;
+  currencyMismatch?: string;
+  permissionDenied?: string;
 };
 
 const ar: OfficeFinanceCopy = {
@@ -151,6 +156,11 @@ const ar: OfficeFinanceCopy = {
   debtPayment: "سداد دين",
   collection: "تحصيل",
   shipmentCost: "تكلفة شحنة",
+  costReference: "مرجع تكلفة إضافية",
+  costReferenceHint: "اختياري؛ أدخل مرجعًا يدويًا فقط. يترك فارغًا للتكلفة الأساسية.",
+  costReferenceManual: "مرجع يدوي (اختياري)",
+  currencyMismatch: "اختر عملة المصدر نفسها للشحنة.",
+  permissionDenied: "لا تملك صلاحية تسجيل هذا النوع من المصروف.",
   dailyExpense: "مصروف يومي",
   monthlyExpense: "مصروف شهري",
   addExpense: "إضافة مصروف",
@@ -258,6 +268,11 @@ const en: OfficeFinanceCopy = {
   debtPayment: "Debt payment",
   collection: "Collection",
   shipmentCost: "Shipment cost",
+  costReference: "Additional cost reference",
+  costReferenceHint: "Optional; enter a manual reference only. Leave blank for the primary cost.",
+  costReferenceManual: "Manual reference (optional)",
+  currencyMismatch: "Choose the shipment source currency.",
+  permissionDenied: "You do not have permission to record this expense type.",
   dailyExpense: "Daily expense",
   monthlyExpense: "Monthly expense",
   addExpense: "Add expense",
@@ -368,6 +383,11 @@ const zh: OfficeFinanceCopy = {
   debtPayment: "债务付款",
   collection: "收款",
   shipmentCost: "运输成本",
+  costReference: "额外成本参考",
+  costReferenceHint: "可选；仅输入手动参考。留空表示主要成本。",
+  costReferenceManual: "手动参考（可选）",
+  currencyMismatch: "请选择货件来源币种。",
+  permissionDenied: "您无权记录此费用类型。",
   dailyExpense: "日常费用",
   monthlyExpense: "月度费用",
   addExpense: "添加费用",
@@ -471,6 +491,11 @@ const tr: OfficeFinanceCopy = {
   debtPayment: "Borç ödemesi",
   collection: "Tahsilat",
   shipmentCost: "Gönderi maliyeti",
+  costReference: "Ek maliyet referansı",
+  costReferenceHint: "İsteğe bağlı; yalnızca manuel bir referans girin. Birincil maliyet için boş bırakın.",
+  costReferenceManual: "Manuel referans (isteğe bağlı)",
+  currencyMismatch: "Gönderinin kaynak para birimini seçin.",
+  permissionDenied: "Bu gider türünü kaydetme yetkiniz yok.",
   dailyExpense: "Günlük gider",
   monthlyExpense: "Aylık gider",
   addExpense: "Gider ekle",

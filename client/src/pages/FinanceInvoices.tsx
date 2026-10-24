@@ -3,7 +3,7 @@ import { Link, useSearch } from "wouter";
 import { ArrowLeft, CloudOff, RefreshCw } from "lucide-react";
 import type { FinanceCommand } from "@shared/finance";
 import type { Invoice } from "@shared/operations";
-import { officeNames, type OfficeId } from "@shared/branches";
+import { officeIds, officeNames, type OfficeId } from "@shared/branches";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useFinanceWorkspace } from "@/hooks/useFinanceWorkspace";
 import PackingLayout from "@/components/packing/PackingLayout";
@@ -11,8 +11,7 @@ import FinanceExcelPanel from "@/components/finance/FinanceExcelPanel";
 import InvoiceFinancialForm from "@/components/finance/InvoiceFinancialForm";
 import FinancialVoidPanel from "@/components/finance/FinancialVoidPanel";
 import { canWriteFinanceUi, invoiceCopyFor } from "@/lib/financeInvoiceCopy";
-import { canReadAnyFinance } from "@shared/permissions";
-import { trpc } from "@/lib/trpc";
+import { canReadAnyFinance, permissionAllowed } from "@shared/permissions";
 import {
   formatLocalNumber,
   packingPrimaryClass,
@@ -57,20 +56,22 @@ function InvoiceTable({
       workspace.role,
       workspace.offices,
       workspace.homeOffice,
-      workspace.permissions
+      workspace.permissions,
+      "payments"
     ) && workspace.canEdit;
-  const wallet = trpc.office.public.useQuery(undefined, {
-    enabled: workspace.homeOffice === "nouakchott",
-    retry: false,
-    refetchOnWindowFocus: false,
-  });
-  const walletMethods = (wallet.data?.methods ?? []).filter(method => true);
-  const configuredWallets = walletMethods.filter(
-    method => method.id !== "cash"
-  );
-  const cashMethod = walletMethods.find(method => method.id === "cash");
   const invoices = workspace.invoices;
   const recordSettlement = async (invoice: Invoice) => {
+    const invoiceOffice =
+      invoice.finance?.financialOfficeId ??
+      invoice.finance?.issuingOfficeId ??
+      invoice.officeId;
+    const methods = invoiceOffice
+      ? (workspace.settingsForOffice?.(invoiceOffice)?.methods ?? [])
+      : [];
+    const configuredWallets = methods.filter(
+      method => method.id !== "cash" && method.enabled
+    );
+    const cashMethod = methods.find(method => method.id === "cash");
     const amount = Number(amounts[invoice.id]);
     if (
       !canWrite ||
@@ -88,6 +89,28 @@ function InvoiceTable({
       setMessage(c.invalidTotal);
       return;
     }
+    const walletIntent = settlementModes[invoice.id] === "wallet";
+    const selectedWallet = configuredWallets.find(
+      method => method.id === settlementWallets[invoice.id]
+    );
+    const walletAllowed = permissionAllowed(
+      {
+        role: workspace.role,
+        offices: workspace.offices,
+        homeOffice: workspace.homeOffice,
+        permissions: workspace.permissions,
+      },
+      "office_wallets",
+      "view"
+    );
+    if (
+      !invoiceOffice ||
+      (walletIntent && (!selectedWallet || !walletAllowed)) ||
+      (!walletIntent && !cashMethod?.enabled)
+    ) {
+      setMessage(c.saveError);
+      return;
+    }
     setSettling(invoice.id);
     setMessage("");
     const command: FinanceCommand = {
@@ -100,10 +123,20 @@ function InvoiceTable({
         amount,
         ...(settlementModes[invoice.id] === "wallet" &&
         settlementWallets[invoice.id] &&
-        workspace.homeOffice === "nouakchott"
+        invoiceOffice &&
+        permissionAllowed(
+          {
+            role: workspace.role ?? null,
+            offices: workspace.offices,
+            homeOffice: workspace.homeOffice,
+            permissions: workspace.permissions,
+          },
+          "office_wallets",
+          "view"
+        )
           ? {
               payment: {
-                office: "nouakchott" as const,
+                office: invoiceOffice,
                 methodId: settlementWallets[invoice.id],
                 methodLabel:
                   configuredWallets.find(
@@ -114,10 +147,10 @@ function InvoiceTable({
                   : {}),
               },
             }
-          : workspace.homeOffice === "nouakchott" && cashMethod
+          : invoiceOffice && cashMethod
             ? {
                 payment: {
-                  office: "nouakchott" as const,
+                  office: invoiceOffice,
                   methodId: cashMethod.id,
                   methodLabel: cashMethod.label,
                 },
@@ -174,6 +207,16 @@ function InvoiceTable({
                 : 0;
               const readonly = !finance;
               const settlementMode = settlementModes[invoice.id] ?? "cash";
+              const invoiceOffice =
+                finance?.financialOfficeId ??
+                finance?.issuingOfficeId ??
+                invoice.officeId;
+              const configuredWallets = (
+                invoiceOffice
+                  ? (workspace.settingsForOffice?.(invoiceOffice)?.methods ??
+                    [])
+                  : []
+              ).filter(method => method.id !== "cash" && method.enabled);
               return (
                 <tr
                   key={invoice.id}
@@ -331,7 +374,7 @@ function InvoiceTable({
                             !canWrite ||
                             (settlementMode === "wallet" &&
                               (!settlementWallets[invoice.id] ||
-                                workspace.homeOffice !== "nouakchott")) ||
+                                !invoiceOffice)) ||
                             workspace.commands.some(
                               x =>
                                 x.kind === "settlement" &&
@@ -437,6 +480,11 @@ export default function FinanceInvoices() {
           command.payload.invoiceId === selectedInvoice.id
       )
     : undefined;
+  const initialIssuingOffice =
+    selectedInvoice?.finance?.issuingOfficeId ??
+    workspace.homeOffice ??
+    workspace.offices?.[0] ??
+    (workspace.offices === null ? officeIds[0] : undefined);
   const selectiveSync = (workspace as SelectiveFinanceWorkspace).syncCommands;
   const canSee = canReadAnyFinance({
     role: workspace.role,
@@ -492,6 +540,7 @@ export default function FinanceInvoices() {
           <InvoiceFinancialForm
             key={`${workspace.base.userId ?? "local"}:${initialCustomerId ?? ""}`}
             workspace={workspace}
+            initialIssuingOffice={initialIssuingOffice}
             initialCustomerId={initialCustomerId}
           />
         )}

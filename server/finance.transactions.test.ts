@@ -13,9 +13,13 @@ import {
   financeEntries,
   financeGoods,
   financeReceipts,
+  cashMovements,
+  walletMovements,
+  officePaymentSettings,
 } from "../drizzle/schema";
-import type { FinanceCommand } from "@shared/finance";
-import { blankPermissions } from "@shared/permissions";
+import type { FinanceCommand } from "../shared/finance";
+import { blankPermissions } from "../shared/permissions";
+import { defaultOfficeSettings } from "../shared/office";
 const now = "2026-10-21T12:00:00.000Z";
 const user = {
   id: 7,
@@ -399,7 +403,7 @@ function movement(
 }
 
 describe("independent customer movements (isolated memory database)", () => {
-  it("writes only the customer ledger fact, with the requested date and server recordedAt", async () => {
+  it("writes the customer ledger and one actual cash movement, without a fictional invoice", async () => {
     const db = database();
     seed(db);
     const result = await financeSync(db, user, copiedScope(), [
@@ -421,6 +425,13 @@ describe("independent customer movements (isolated memory database)", () => {
       db.rows.get(records).filter((r: any) => r.entity === "invoice")
     ).toHaveLength(0);
     expect(db.events).toHaveLength(1);
+    expect(db.rows.get(cashMovements)).toHaveLength(1);
+    expect(db.rows.get(cashMovements)[0]).toMatchObject({
+      officeId: "nouakchott",
+      kind: "receipt",
+      amount: "12.50",
+    });
+    expect(db.rows.get(walletMovements) ?? []).toHaveLength(0);
   });
 
   it("maps a customer payout to customer_debit, keeps wallet metadata canonical, and replays safely", async () => {
@@ -442,7 +453,15 @@ describe("independent customer movements (isolated memory database)", () => {
       id: "move-wallet",
       kind: "customer_debit",
       payment: { methodId: "bankily", methodLabel: "Bankily" },
+      cashEffect: "none",
     });
+    expect(db.rows.get(walletMovements)).toHaveLength(1);
+    expect(db.rows.get(walletMovements)[0]).toMatchObject({
+      officeId: "nouakchott",
+      kind: "refund",
+      invoiceId: null,
+    });
+    expect(db.rows.get(cashMovements) ?? []).toHaveLength(0);
     expect(
       (await financeSync(db, user, copiedScope(), [command])).applied
     ).toHaveLength(1);
@@ -458,6 +477,7 @@ describe("independent customer movements (isolated memory database)", () => {
     expect(db.rows.get(financeEntries)).toHaveLength(1);
     expect(db.rows.get(financeReceipts)).toHaveLength(1);
     expect(db.events).toHaveLength(1);
+    expect(db.rows.get(walletMovements)).toHaveLength(1);
   });
 
   it("rejects an inaccessible office, customer, or wallet atomically without an entry, receipt, or audit", async () => {
@@ -744,4 +764,61 @@ it("prices an unpriced sent shipment once and keeps the authorized established r
   expect(blocked.conflicts[0].code).toBe("shipment_not_open");
   expect(db.rows.get(records)[1].data.packing.pricePerKg).toBe(10);
   expect(db.rows.get(records)[1].version).toBe(2);
+});
+
+it("posts a source customer wallet receipt to the source office without cash or a fictional invoice", async () => {
+  const db = database();
+  seed(db);
+  db.rows.get(records)[0].data.officeId = "dubai";
+  db.rows.set(officePaymentSettings, [
+    { officeId: "dubai", version: 1, methods: defaultOfficeSettings().methods },
+  ]);
+  const cmd = movement("dubai-wallet", {
+    officeId: "dubai",
+    currency: "AED",
+    paymentMode: "wallet",
+    payment: {
+      office: "dubai",
+      methodId: "bankily",
+      methodLabel: "Untrusted",
+      reference: "receipt-source",
+    },
+  });
+  const actorScope = {
+    role: "accountant" as const,
+    offices: ["dubai" as const],
+    homeOffice: "dubai" as const,
+  };
+  const result = await financeSync(db, user, actorScope, [cmd]);
+  expect(result.conflicts).toEqual([]);
+  expect(db.rows.get(financeEntries)[0].data).toMatchObject({
+    officeId: "dubai",
+    currency: "AED",
+    cashEffect: "none",
+    payment: { office: "dubai", methodLabel: "Bankily" },
+  });
+  expect(db.rows.get(walletMovements)[0]).toMatchObject({
+    officeId: "dubai",
+    currency: "AED",
+    kind: "receipt",
+    invoiceId: null,
+  });
+  expect(db.rows.get(cashMovements) ?? []).toHaveLength(0);
+  expect(
+    db.rows.get(records).filter((row: any) => row.entity === "invoice")
+  ).toHaveLength(0);
+  await financeSync(db, user, actorScope, [cmd]);
+  expect(db.rows.get(walletMovements)).toHaveLength(1);
+});
+
+it("rolls back a customer cash receipt together with ledger and audit failure", async () => {
+  const db = database();
+  seed(db);
+  const result = await financeSync(db, user, copiedScope(), [
+    movement("customer-audit-fails", { description: "FAIL-AUDIT" }),
+  ]);
+  expect(result.applied).toEqual([]);
+  expect(db.rows.get(financeEntries)).toHaveLength(0);
+  expect(db.rows.get(cashMovements) ?? []).toHaveLength(0);
+  expect(db.rows.get(financeReceipts)).toHaveLength(0);
 });

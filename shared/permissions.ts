@@ -13,6 +13,8 @@ export const permissionKeys = [
   "invoices",
   "payments",
   "expenses",
+  "shipment_cost",
+  "arrival_cost",
   "opening_balance",
   "shipment_prices",
   "reports",
@@ -51,6 +53,8 @@ export const financialPermissionKeys: readonly PermissionKey[] = [
   "invoices",
   "payments",
   "expenses",
+  "shipment_cost",
+  "arrival_cost",
   "opening_balance",
   "shipment_prices",
   "finance_reports",
@@ -98,6 +102,8 @@ export function defaultPermissions(subject: PermissionSubject): PermissionMap {
       ],
       "view"
     );
+    result.customers = "manage";
+    result.office_wallets = "view";
     if (subject.offices?.includes("nouakchott"))
       put(["storage", "arrival"], "manage");
   } else if (subject.role === "staff" || subject.role === "source_warehouse") {
@@ -105,8 +111,31 @@ export function defaultPermissions(subject: PermissionSubject): PermissionMap {
       put(["storage", "arrival"], "manage");
     else if (subject.offices?.length === 1) {
       put(["shipments", "shipment_send"], "manage");
-      if (subject.canUpdateTracking) put(["tracking"], "manage");
+      if (subject.role === "source_warehouse" || subject.canUpdateTracking)
+        put(["tracking"], "manage");
     }
+  } else if (
+    subject.role === "general_accountant" &&
+    !subject.offices?.includes("nouakchott")
+  ) {
+    // Source general accountants approve source costs, not sales, payments,
+    // opening balances, customer edits or general expense execution.
+    put(
+      [
+        "customers",
+        "invoices",
+        "payments",
+        "expenses",
+        "opening_balance",
+        "shipment_prices",
+        "finance_reports",
+        "reports",
+        "excel",
+        "office_wallets",
+      ],
+      "view"
+    );
+    put(["shipment_cost"], "manage");
   } else if (
     subject.role === "accountant" ||
     subject.role === "general_accountant"
@@ -124,8 +153,9 @@ export function defaultPermissions(subject: PermissionSubject): PermissionMap {
       "manage"
     );
     put(["reports", "finance_reports"], "view");
+    put(["office_wallets"], "manage");
     if (subject.offices?.includes("nouakchott"))
-      put(["office_wallets"], "manage");
+      put(["arrival_cost"], "manage");
   } else if (subject.role === "cashier") {
     put(["customers", "invoices", "payments", "expenses"], "manage");
     put(["reports"], "view");
@@ -183,7 +213,7 @@ export function permissionAllowed(
   if (subject.role === "admin") return true;
   if (!subject.role || !subject.offices?.length) return false;
   if (
-    ["arrival", "storage", "office_wallets"].includes(key) &&
+    ["arrival", "storage"].includes(key) &&
     level === "manage" &&
     !subject.offices.includes("nouakchott")
   )
@@ -219,7 +249,11 @@ export function actionRole(
   if (financialPermissionKeys.includes(key))
     return subject.role === "cashier" ? "cashier" : "accountant";
   if (["tracking", "arrival"].includes(key))
-    return level === "manage" ? "supervisor" : "tracking_staff";
+    return subject.role === "source_warehouse"
+      ? "source_warehouse"
+      : level === "manage"
+        ? "supervisor"
+        : "tracking_staff";
   if (key === "storage")
     return subject.role === "destination_warehouse"
       ? "destination_warehouse"

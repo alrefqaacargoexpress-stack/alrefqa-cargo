@@ -45,22 +45,37 @@ vi.mock("./db", () => ({
       select: () => ({
         from: (table: unknown) => {
           const data =
-            table === memberRoles
+            table === users
               ? [
                   {
-                    role: "office_manager",
-                    offices: state.offices,
-                    homeOffice: state.homeOffice,
-                    version: 1,
-                    permissions: state.permissions,
+                    id: 8,
+                    openId: "branch-test",
+                    name: "Office manager",
+                    email: "manager@example.test",
+                    loginMethod: "email",
+                    accountType: "employee",
+                    role: "user",
+                    passwordHash: "configured-hash",
+                    mustChangePassword: false,
                   },
                 ]
-              : table === records
-                ? rows
-                : [];
+              : table === memberRoles
+                ? [
+                    {
+                      role: "office_manager",
+                      offices: state.offices,
+                      homeOffice: state.homeOffice,
+                      version: 1,
+                      permissions: state.permissions,
+                    },
+                  ]
+                : table === records
+                  ? rows
+                  : [];
           const builder: any = {
             where: () => builder,
-            limit: () => Promise.resolve(data),
+            limit: () => builder,
+            for: () => builder,
             then: (resolve: any, reject: any) =>
               Promise.resolve(data).then(resolve, reject),
           };
@@ -87,7 +102,7 @@ function caller() {
       mustChangePassword: false,
     },
     req: { headers: {} },
-    res: {},
+    res: { setHeader: vi.fn() },
   } as never);
 }
 beforeEach(() => {
@@ -172,7 +187,7 @@ describe("Office manager API enforcement", () => {
     ).rejects.toMatchObject({ code: "FORBIDDEN" });
     expect(state.transaction).not.toHaveBeenCalled();
   });
-  it("cannot transfer shipments or modify global payment settings", async () => {
+  it("cannot transfer shipments", async () => {
     await expect(
       caller().tracking.commit({
         shipmentId: "S1",
@@ -181,9 +196,22 @@ describe("Office manager API enforcement", () => {
         command: { type: "transfer", branch: "china", reason: "test" },
       })
     ).rejects.toMatchObject({ code: "FORBIDDEN" });
-    await expect(caller().office.get()).rejects.toMatchObject({
-      code: "FORBIDDEN",
-    });
     expect(state.transaction).not.toHaveBeenCalled();
+  });
+
+  it("reads its own Dubai wallet but rejects other offices and wallet updates", async () => {
+    expect(await caller().office.get()).toMatchObject({ office: "dubai" });
+    await expect(
+      caller().office.get({ officeId: "china" })
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(
+      caller().office.update({
+        office: "dubai",
+        methods: [
+          { id: "cash", label: "Cash", enabled: true, showToCustomers: true },
+        ],
+        expectedVersion: 0,
+      })
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 });

@@ -40,6 +40,9 @@ function fakeDb(shipment: ReturnType<typeof fixture>) {
         where() {
           return builder;
         },
+        orderBy() {
+          return builder;
+        },
         limit() {
           if (selectCalls === 1)
             return Promise.resolve([{ recordId: shipment.id }]);
