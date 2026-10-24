@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isDeepStrictEqual } from "node:util";
 import type { User } from "../drizzle/schema";
 import { ENV } from "./_core/env";
 import { canonicalPackingShipment, packingSchema } from "@shared/packing";
@@ -284,8 +285,10 @@ export function prepareRecordForWrite(
         (next.packing.service !== undefined &&
           next.packing.service !== old.packing.service) ||
         (next.packing.rateSnapshot !== undefined &&
-          JSON.stringify(next.packing.rateSnapshot) !==
-            JSON.stringify(old.packing.rateSnapshot));
+          !isDeepStrictEqual(
+            next.packing.rateSnapshot,
+            old.packing.rateSnapshot
+          ));
       if (priceChanged && !staffMaskedPrices)
         throw new Error(
           ["staff", "source_warehouse"].includes(role ?? "")
@@ -320,8 +323,7 @@ export function prepareRecordForWrite(
     }
     if (
       next.destinationStorage !== undefined &&
-      JSON.stringify(next.destinationStorage) !==
-        JSON.stringify(old?.destinationStorage ?? [])
+      !isDeepStrictEqual(next.destinationStorage, old?.destinationStorage ?? [])
     )
       throw new Error("warehouse_command_required");
     if (old?.destinationStorage && next.destinationStorage === undefined)
@@ -400,8 +402,7 @@ export function prepareRecordForWrite(
         carton.goods.some(goods => !goods.deleted)
       ) ||
         result.packing?.cartons.some(
-          carton =>
-            !carton.closed && carton.goods.some(goods => !goods.deleted)
+          carton => !carton.closed && carton.goods.some(goods => !goods.deleted)
         ))
     )
       throw new Error("close_carton_first");
@@ -425,9 +426,7 @@ export function prepareRecordForWrite(
       // allowing a sync payload to erase actor-authored notes or metadata.
       if (!result.journey)
         result = { ...result, journey: structuredClone(oldShipment.journey) };
-      else if (
-        JSON.stringify(result.journey) !== JSON.stringify(oldShipment.journey)
-      )
+      else if (!isDeepStrictEqual(result.journey, oldShipment.journey))
         throw new Error("tracking_command_required");
       const stageStatus = stageShipmentStatus(oldShipment.journey.stage);
       const deliveredCorrection =
@@ -536,14 +535,14 @@ export function prepareRecordForWrite(
         )
           throw new Error("packing_data_loss_forbidden");
         if (
-          JSON.stringify(kept.deleted) !== JSON.stringify(oldGoods.deleted) &&
+          !isDeepStrictEqual(kept.deleted, oldGoods.deleted) &&
           current.status !== "قيد التجهيز"
         )
           throw new Error("shipment_not_open");
         if (
           kept.deleted &&
           oldGoods.deleted &&
-          JSON.stringify(kept.deleted) !== JSON.stringify(oldGoods.deleted)
+          !isDeepStrictEqual(kept.deleted, oldGoods.deleted)
         )
           throw new Error("deletion_metadata_change_forbidden");
       }
@@ -555,8 +554,7 @@ export function prepareRecordForWrite(
     }
     if (
       current.status !== "قيد التجهيز" &&
-      JSON.stringify(previous.cartons) !==
-        JSON.stringify(result.packing.cartons)
+      !isDeepStrictEqual(previous.cartons, result.packing.cartons)
     )
       throw new Error("shipment_not_open");
     result.packing.createdAt = previous.createdAt;
@@ -595,7 +593,8 @@ export function assertOfficeRecordWrite(
       throw new Error("shipment_source_office_mismatch");
   }
   if (
-    (["staff", "source_warehouse"].includes(role ?? "") || role === "accountant") &&
+    (["staff", "source_warehouse"].includes(role ?? "") ||
+      role === "accountant") &&
     (!offices || offices.length !== 1)
   )
     throw new Error("employee_single_office_required");
@@ -656,7 +655,11 @@ export function applyChangeInMemory(
       },
     };
   }
-  if (["staff", "source_warehouse"].includes(role ?? "") && !current && isFinancialPayloadNonZero(change)) {
+  if (
+    ["staff", "source_warehouse"].includes(role ?? "") &&
+    !current &&
+    isFinancialPayloadNonZero(change)
+  ) {
     return {
       nextState,
       result: {

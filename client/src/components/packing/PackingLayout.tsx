@@ -18,6 +18,7 @@ import { downloadLocalArchive } from "@/lib/offlineStore";
 import { copyFor } from "@/lib/packingCopy";
 import { canUseOperations } from "@shared/tracking";
 import { permissionAllowed } from "@shared/permissions";
+import SyncConflictPanel from "./SyncConflictPanel";
 import {
   PackingScopeBadge,
   packingPrimaryClass,
@@ -40,7 +41,10 @@ export default function PackingLayout({
   const { language } = useLanguage();
   const c = copyFor(language);
   const [, navigate] = useLocation();
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{
+    text: string;
+    success: boolean;
+  } | null>(null);
   const offlineCandidate = !workspace.online && workspace.offlineAvailable;
   const subject = {
     role: workspace.role,
@@ -148,10 +152,14 @@ export default function PackingLayout({
     if (!workspace.queue.length) return;
     const result = await workspace.sync();
     if (!result) return;
-    if (result.conflicts.length) setNotice(c.conflicts);
+    if (result.conflicts.length)
+      setNotice({ text: c.conflicts, success: false });
     else if (result.applied.length)
-      setNotice(`${c.syncSuccess}: ${result.applied.length} ${c.applied}`);
-    else setNotice(c.syncNoSuccess);
+      setNotice({
+        text: `${c.syncSuccess}: ${result.applied.length} ${c.applied}`,
+        success: true,
+      });
+    else setNotice({ text: c.syncNoSuccess, success: false });
   };
 
   const shellState = () => {
@@ -362,46 +370,33 @@ export default function PackingLayout({
             {notice && (
               <div
                 role="status"
-                className="mb-4 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900"
+                className={`mb-4 flex items-center gap-2 rounded-xl border px-4 py-3 text-sm ${notice.success ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-amber-300 bg-amber-50 text-amber-950"}`}
               >
-                <CheckCircle2 size={16} />
-                {notice}
+                {notice.success ? (
+                  <CheckCircle2 size={16} />
+                ) : (
+                  <AlertTriangle size={16} />
+                )}
+                {notice.text}
               </div>
             )}
-            {workspace.conflicts.length > 0 && (
-              <div className="mb-5 rounded-2xl border border-red-200 bg-red-50 p-4">
-                <p className="font-bold text-red-900">{c.conflicts}</p>
-                <div className="mt-3 grid gap-2">
-                  {workspace.conflicts.map(conflict => (
-                    <div
-                      key={conflict.changeId}
-                      className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-white p-3 text-sm"
-                    >
-                      <span className="text-red-950">{c.conflicts}</span>
-                      <div className="flex gap-2">
-                        <button
-                          className={packingSecondaryClass}
-                          onClick={() =>
-                            void workspace.resolveConflict(conflict, false)
-                          }
-                        >
-                          {c.keepLocal}
-                        </button>
-                        <button
-                          className={packingSecondaryClass}
-                          disabled={!conflict.current}
-                          onClick={() =>
-                            void workspace.resolveConflict(conflict, true)
-                          }
-                        >
-                          {c.useServer}
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
+            <SyncConflictPanel
+              conflicts={workspace.conflicts}
+              queue={workspace.queue}
+              language={language}
+              busy={workspace.busy}
+              onRetry={conflict => {
+                setNotice(null);
+                void workspace.retryConflict(conflict);
+              }}
+              onKeepLocal={conflict => {
+                setNotice(null);
+                void workspace.resolveConflict(conflict, false);
+              }}
+              onUseServer={conflict =>
+                void workspace.resolveConflict(conflict, true)
+              }
+            />
             {children}
             <details className="mt-6 rounded-2xl border border-[#dce4e7] bg-white p-4">
               <summary className="cursor-pointer text-sm font-black text-[#092d50]">

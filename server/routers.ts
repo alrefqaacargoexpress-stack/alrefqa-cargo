@@ -1112,9 +1112,11 @@ export const appRouter = router({
                 };
               }
             }
-            await tx
-              .insert(syncReceipts)
-              .values({ userId: ctx.user.id, changeId: change.id, result });
+            await tx.insert(syncReceipts).values({
+              userId: ctx.user.id,
+              changeId: change.id,
+              result: { ...result, payloadHash },
+            });
             output.applied.push(...result.applied);
             output.conflicts.push(...result.conflicts);
           }

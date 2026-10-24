@@ -14,6 +14,7 @@ import {
   downloadLocalArchive,
   loadWorkspace,
   mergeSnapshot,
+  retryPendingChange,
   saveWorkspace,
   stageChange,
   type Workspace,
@@ -650,6 +651,29 @@ export function useOperationsWorkspace() {
   const sync = () => runSync();
   const syncRecords = (records: Array<{ entity: Entity; recordId: string }>) =>
     runSync(records);
+  const retryConflict = async (conflict: SyncResult["conflicts"][number]) => {
+    const id = userId;
+    const current = ref.current;
+    if (!id || !current || busy || !accessReady) return;
+    const change = current.queue.find(item => item.id === conflict.changeId);
+    if (!change || !changeAllowed(current, change, subject)) {
+      setNotice(w.blocked);
+      return;
+    }
+    // Only a reviewed, rejected attempt gets a fresh request id. The content,
+    // action, expected version and other queued changes stay exactly as saved.
+    try {
+      const next = retryPendingChange(current, change.id);
+      await saveWorkspace(id, next);
+      if (owner.current !== id) return;
+      ref.current = next;
+      setWorkspace(next);
+      setConflicts(all => all.filter(item => item.changeId !== change.id));
+      setNotice(syncReasonMessage("retry_prepared", language));
+    } catch (error) {
+      setNotice(syncReasonMessage(reasonFromError(error), language));
+    }
+  };
   const resolveConflict = async (
     conflict: SyncResult["conflicts"][number],
     useServer: boolean
@@ -778,6 +802,7 @@ export function useOperationsWorkspace() {
       permissionFingerprint
     ),
     conflicts,
+    retryConflict,
     resolveConflict,
     busy,
   };

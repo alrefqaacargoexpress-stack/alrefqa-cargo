@@ -8,6 +8,42 @@ type Copy = Record<Language, string>;
  * never expose another office's data or internal identifiers.
  */
 const reasons: Record<string, Copy> = {
+  legacy_receipt_requires_review: {
+    ar: "هذا الطلب مرتبط بإقرار قديم لا يمكن التحقق من حمولة طلبه. راجع المسودة ثم أنشئ محاولة جديدة؛ لن نستبدل البيانات السابقة تلقائيًا.",
+    en: "This request has an old receipt whose payload cannot be verified. Review the draft and create a new retry; previous data will not be overwritten automatically.",
+    zh: "此请求关联的旧回执无法验证提交内容。请检查草稿后创建新重试；不会自动覆盖原有数据。",
+    tr: "Bu isteğin eski alındısında içerik doğrulanamıyor. Taslağı inceleyip yeni deneme oluşturun; önceki veriler otomatik olarak üzerine yazılmaz.",
+  },
+  replay_payload_mismatch: {
+    ar: "تغيّرت حمولة طلب سبق تسجيله. راجع المسودة ثم استخدم إعادة المحاولة الآمنة بدل إعادة استخدام الطلب القديم.",
+    en: "A previously recorded request has different content. Review the draft and use safe retry instead of reusing the old request.",
+    zh: "已记录的请求内容已改变。请检查草稿并安全重试，不要重复使用旧请求。",
+    tr: "Kaydedilmiş isteğin içeriği farklı. Taslağı inceleyip eski istek yerine güvenli yeniden denemeyi kullanın.",
+  },
+  previously_applied_access_changed: {
+    ar: "تغيّرت صلاحياتك منذ تنفيذ الطلب السابق؛ لا يمكن عرض إقراره بهذه الصلاحيات. اطلب مراجعة صلاحيات المكتب.",
+    en: "Your access changed since this request was applied. Its receipt cannot be shown with current permissions. Ask for an office permission review.",
+    zh: "请求执行后您的权限已变化，无法以当前权限查看回执。请申请检查办公室权限。",
+    tr: "İstek uygulandıktan sonra erişiminiz değişti. Alındı mevcut yetkilerle gösterilemez. Ofis yetkilerinin kontrolünü isteyin.",
+  },
+  identifier_conflict: {
+    ar: "معرّف السجل أو رقم الشحنة مستخدم بالفعل. راجع السجل الموجود قبل إنشاء سجل آخر؛ مسودتك محفوظة.",
+    en: "The record ID or shipment number is already used. Review the existing record before creating another; your draft is retained.",
+    zh: "记录标识或货运编号已使用。请先查看现有记录；草稿已保留。",
+    tr: "Kayıt kimliği veya gönderi numarası kullanılıyor. Yeni kayıt oluşturmadan önce mevcut kaydı inceleyin; taslağınız korunuyor.",
+  },
+  tracking_change_forbidden: {
+    ar: "لا يمكن تغيير رقم شحنة محفوظة من خلال المزامنة. راجع رقم الشحنة في المسودة.",
+    en: "A saved shipment number cannot be changed through sync. Review the draft's shipment number.",
+    zh: "不能通过同步修改已保存的货运编号。请检查草稿编号。",
+    tr: "Kaydedilmiş gönderi numarası senkronizasyonla değiştirilemez. Taslaktaki numarayı kontrol edin.",
+  },
+  retry_prepared: {
+    ar: "تم تجهيز طلب محاولة جديد مع الاحتفاظ بالمسودة والإصدار الأصلي. لم تُنفَّذ المزامنة بعد؛ اضغط «مزامنة التغييرات» للمراجعة والإرسال.",
+    en: "A new retry request is ready with the same draft and original version. It has not been synced; press Sync changes to review and send it.",
+    zh: "新重试请求已准备好，保留原草稿和版本。尚未同步；请点击同步更改进行检查和发送。",
+    tr: "Aynı taslak ve özgün sürümle yeni deneme hazır. Henüz senkronize edilmedi; inceleyip göndermek için Değişiklikleri eşitle düğmesine basın.",
+  },
   permission_denied: {
     ar: "لا تملك صلاحية تنفيذ هذا التعديل، أو تغيّرت صلاحياتك. مسودتك محفوظة؛ اطلب مراجعة الصلاحيات ثم أعد المحاولة.",
     en: "You do not have permission for this change, or your permissions changed. Your draft is retained; ask for a permission review and try again.",
