@@ -5,6 +5,7 @@ import { officeMembershipSchema } from "@shared/branches";
 import {
   blankPermissions,
   defaultPermissions,
+  permissionMapSchema,
   permissionAllowed,
   permissionsFor,
   withinPermissionCeiling,
@@ -18,6 +19,7 @@ import {
 } from "../drizzle/schema";
 import { appendAudit } from "./audit";
 import { readOfficeScope, rootAdmin, listMembers } from "./branches";
+import { isEmployeeDisabled } from "./lifecycle";
 
 function forbidden(message: string): never {
   throw new TRPCError({ code: "FORBIDDEN", message });
@@ -61,7 +63,11 @@ export async function assignPermissionMembership(
   user: User,
   input: z.infer<typeof officeMembershipSchema>
 ) {
+  // Routers parse this schema too, but this service is also called directly by
+  // sync/import code and tests. Keep the mutation boundary authoritative.
+  input = officeMembershipSchema.parse(input);
   return db.transaction(async (tx: any) => {
+    if (await isEmployeeDisabled(tx, user.id)) forbidden("employee_disabled");
     const scope = await readOfficeScope(tx, user);
     if (
       !permissionAllowed(scope, "employees", "manage") ||
@@ -78,6 +84,7 @@ export async function assignPermissionMembership(
     )[0];
     if (!target)
       throw new TRPCError({ code: "NOT_FOUND", message: "User not found" });
+    if (await isEmployeeDisabled(tx, target.id)) forbidden("employee_disabled");
     if (rootAdmin(target)) forbidden("root_admin_protected");
     if (target.accountType !== "employee")
       forbidden("employee_account_required");
@@ -113,16 +120,15 @@ export async function assignPermissionMembership(
       )
         forbidden("employee_outside_office");
     }
-    const homeOffice =
-      [
-        "office_manager",
-        "staff",
-        "accountant",
-        "general_accountant",
-        "cashier",
-        "source_warehouse",
-        "destination_warehouse",
-      ].includes(input.role)
+    const homeOffice = [
+      "office_manager",
+      "staff",
+      "accountant",
+      "general_accountant",
+      "cashier",
+      "source_warehouse",
+      "destination_warehouse",
+    ].includes(input.role)
       ? input.offices[0]
       : (input.homeOffice ?? input.offices[0]);
     if (!input.offices.includes(homeOffice))
@@ -136,7 +142,7 @@ export async function assignPermissionMembership(
         input.offices[0] !== "nouakchott" &&
         (input.canUpdateTracking ?? old?.canUpdateTracking)
     );
-    const requested =
+    const requestedSource =
       input.permissions ??
       (old?.role === input.role ? old?.permissions : null) ??
       defaultPermissions({
@@ -145,6 +151,12 @@ export async function assignPermissionMembership(
         homeOffice,
         canUpdateTracking,
       });
+    const parsedRequested = permissionMapSchema.safeParse(requestedSource);
+    if (!parsedRequested.success) forbidden("invalid_permission_map");
+    const requested = {
+      ...blankPermissions(),
+      ...parsedRequested.data,
+    };
     if (rootOnlyPermissions.some(key => requested[key] !== "none"))
       forbidden("global_permission_not_delegable");
     if (

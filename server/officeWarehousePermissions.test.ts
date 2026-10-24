@@ -95,6 +95,33 @@ describe("Warehouse and accountant capability boundaries", () => {
       officeMembershipSchema.safeParse({ ...member, role: "accountant" })
         .success
     ).toBe(false);
+    expect(
+      officeMembershipSchema.safeParse({
+        ...member,
+        role: "source_warehouse",
+        offices: ["nouakchott"],
+        homeOffice: "nouakchott",
+        canUpdateTracking: false,
+      }).success
+    ).toBe(false);
+    expect(
+      officeMembershipSchema.safeParse({
+        ...member,
+        role: "destination_warehouse",
+        offices: ["dubai"],
+        homeOffice: "dubai",
+        canUpdateTracking: false,
+      }).success
+    ).toBe(false);
+    expect(
+      officeMembershipSchema.safeParse({
+        ...member,
+        role: "destination_warehouse",
+        offices: ["nouakchott"],
+        homeOffice: "nouakchott",
+        canUpdateTracking: false,
+      }).success
+    ).toBe(true);
     expect(canReadOfficeRecord("staff", null, "shipment", cargo)).toBe(false);
     expect(
       canReadOfficeRecord("accountant", ["dubai", "china"], "account", account)

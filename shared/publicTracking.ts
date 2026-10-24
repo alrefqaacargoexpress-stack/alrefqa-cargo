@@ -48,6 +48,15 @@ export const publicTrackingStatusValues = [
   "delivered",
   "processing",
 ] as const;
+export const publicTrackingPaymentStatusValues = [
+  "unbilled",
+  "paid",
+  "partial",
+  "on_account",
+  "review",
+] as const;
+export type PublicTrackingPaymentStatus =
+  (typeof publicTrackingPaymentStatusValues)[number];
 const publicGoodsSchema = z
   .object({
     cartonNumber: z.number().int().positive(),
@@ -61,6 +70,8 @@ export const publicTrackingShipmentSchema = z
   .object({
     tracking: z.string(),
     status: z.enum(publicTrackingStatusValues),
+    /** Coarse status only; no amount, currency, invoice, or customer identity. */
+    paymentStatus: z.enum(publicTrackingPaymentStatusValues).optional(),
     stage: z.enum(stageIds).nullable(),
     branch: z.enum(branchIds).nullable(),
     updatedAt: z.string().datetime().nullable(),
@@ -84,7 +95,8 @@ export type PublicTrackingShipment = z.infer<
 export function publicTrackingProjection(
   shipment: Shipment,
   input: PublicTrackingInput,
-  recordUpdatedAt?: Date | string | null
+  recordUpdatedAt?: Date | string | null,
+  paymentStatus?: PublicTrackingPaymentStatus
 ): PublicTrackingResult {
   const expected = normalizePublicTracking(input.tracking);
   const phone = normalizePublicPhone(input.phone);
@@ -149,6 +161,7 @@ export function publicTrackingProjection(
     shipment: {
       tracking: shipment.tracking,
       status,
+      ...(paymentStatus ? { paymentStatus } : {}),
       stage: journey.success ? journey.data.stage : null,
       branch: journey.success ? journey.data.branch : null,
       updatedAt:

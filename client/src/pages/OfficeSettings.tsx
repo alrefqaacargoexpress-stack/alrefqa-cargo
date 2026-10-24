@@ -121,6 +121,7 @@ export default function OfficeSettings() {
   const updateProfile = trpc.branches.update.useMutation();
   const assignMember = trpc.branches.assignMember.useMutation();
   const resetPassword = trpc.operations.resetPassword.useMutation();
+  const disableEmployee = trpc.lifecycle.disableEmployee.useMutation();
   const utils = trpc.useUtils();
   const profiles = useMemo(() => {
     const source = profilesQuery.data ?? [];
@@ -202,6 +203,27 @@ export default function OfficeSettings() {
     try {
       await resetPassword.mutateAsync(input);
       await utils.branches.members.invalidate();
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const disableMember = async (input: {
+    userId: number;
+    confirmation: string;
+    reason: string;
+    expectedVersion: number;
+  }) => {
+    if (!canEditMemberships || !workspace.online || workspace.localOnly)
+      return false;
+    try {
+      await disableEmployee.mutateAsync({
+        ...input,
+        requestKey: `employee-disable-${input.userId}-${input.expectedVersion}-${Date.now()}`,
+      });
+      // Do not remove a row optimistically: only the acknowledged refetch
+      // establishes the new roster/counts and hides the disabled employee.
+      await utils.invalidate();
       return true;
     } catch {
       return false;
@@ -313,6 +335,7 @@ export default function OfficeSettings() {
             pending={assignMember.isPending}
             onSave={saveMember}
             onResetPassword={resetMemberPassword}
+            onDisable={disableMember}
           />
         )}
         {!canReadMemberships && (

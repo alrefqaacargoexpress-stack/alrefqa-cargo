@@ -23,12 +23,15 @@ export const permissionKeys = [
   "employees",
   "audit",
   "office_assign",
+  "invoice_void",
+  "entry_void",
+  "employee_disable",
 ] as const;
 export type PermissionKey = (typeof permissionKeys)[number];
 export const permissionLevels = ["none", "view", "manage"] as const;
 export type PermissionLevel = (typeof permissionLevels)[number];
 export type PermissionMap = Record<PermissionKey, PermissionLevel>;
-export const permissionMapSchema = z.record(
+export const permissionMapSchema = z.partialRecord(
   z.enum(permissionKeys),
   z.enum(permissionLevels)
 );
@@ -52,6 +55,8 @@ export const financialPermissionKeys: readonly PermissionKey[] = [
   "shipment_prices",
   "finance_reports",
   "office_wallets",
+  "invoice_void",
+  "entry_void",
 ];
 export function blankPermissions(
   level: PermissionLevel = "none"
@@ -95,10 +100,7 @@ export function defaultPermissions(subject: PermissionSubject): PermissionMap {
     );
     if (subject.offices?.includes("nouakchott"))
       put(["storage", "arrival"], "manage");
-  } else if (
-    subject.role === "staff" ||
-    subject.role === "source_warehouse"
-  ) {
+  } else if (subject.role === "staff" || subject.role === "source_warehouse") {
     if (subject.offices?.length === 1 && subject.offices[0] === "nouakchott")
       put(["storage", "arrival"], "manage");
     else if (subject.offices?.length === 1) {
@@ -146,7 +148,9 @@ export function permissionsFor(subject: PermissionSubject): PermissionMap {
   if (subject.role === "admin") return blankPermissions("manage");
   if (!subject.permissions) return defaultPermissions(subject);
   const parsed = permissionMapSchema.safeParse(subject.permissions);
-  const result = parsed.success ? { ...parsed.data } : blankPermissions();
+  const result: PermissionMap = parsed.success
+    ? { ...blankPermissions(), ...parsed.data }
+    : blankPermissions();
   rootOnlyPermissions.forEach(key => (result[key] = "none"));
   return result;
 }
@@ -217,13 +221,17 @@ export function actionRole(
   if (["tracking", "arrival"].includes(key))
     return level === "manage" ? "supervisor" : "tracking_staff";
   if (key === "storage")
-    return subject.role === "destination_warehouse" ? "destination_warehouse" : "staff";
+    return subject.role === "destination_warehouse"
+      ? "destination_warehouse"
+      : "staff";
   if (
     key === "shipments" ||
     key === "shipment_send" ||
     key === "shipment_delete"
   )
-    return subject.role === "source_warehouse" ? "source_warehouse" : "office_manager";
+    return subject.role === "source_warehouse"
+      ? "source_warehouse"
+      : "office_manager";
   return subject.role;
 }
 

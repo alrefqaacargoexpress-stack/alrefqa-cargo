@@ -1,7 +1,18 @@
 import { describe, expect, it } from "vitest";
 import { addPackingGoods, createPackedShipment } from "@shared/packing";
 import type { Shipment } from "@shared/operations";
-import { lookupPublicTracking, PublicTrackingLimiter } from "./publicTracking";
+import {
+  derivePublicPaymentStatus,
+  lookupPublicTracking,
+  PublicTrackingLimiter,
+} from "./publicTracking";
+import {
+  entityLifecycle,
+  financeGoods,
+  records,
+  shipmentChargeAllocations,
+  shipmentChargeComponents,
+} from "../drizzle/schema";
 
 function shipmentFixture(phone = "+222 12 34 56 78"): Shipment {
   let shipment = createPackedShipment({
@@ -61,6 +72,42 @@ function fakeDb(input: {
   return db;
 }
 
+function paymentDb(input: {
+  claims?: unknown[];
+  components?: unknown[];
+  allocations?: unknown[];
+  invoices?: unknown[];
+  lifecycle?: unknown[];
+}) {
+  return {
+    select: () => {
+      let table: unknown;
+      const builder: any = {
+        from(value: unknown) {
+          table = value;
+          return builder;
+        },
+        where() {
+          return builder;
+        },
+        limit() {
+          if (table === financeGoods)
+            return Promise.resolve(input.claims ?? []);
+          if (table === shipmentChargeComponents)
+            return Promise.resolve(input.components ?? []);
+          if (table === shipmentChargeAllocations)
+            return Promise.resolve(input.allocations ?? []);
+          if (table === records) return Promise.resolve(input.invoices ?? []);
+          if (table === entityLifecycle)
+            return Promise.resolve(input.lifecycle ?? []);
+          return Promise.resolve([]);
+        },
+      };
+      return builder;
+    },
+  };
+}
+
 describe("lookupPublicTracking", () => {
   it("returns only matching goods and real updatedAt without financial/internal fields", async () => {
     const shipment = shipmentFixture();
@@ -89,6 +136,7 @@ describe("lookupPublicTracking", () => {
       shipment: {
         tracking: "RF-123",
         status: "preparing",
+        paymentStatus: "unbilled",
         stage: null,
         branch: null,
         updatedAt: "2026-01-02T03:04:05.000Z",
@@ -210,6 +258,67 @@ describe("lookupPublicTracking", () => {
         phone: "+22212345678",
       })
     ).resolves.toEqual({ found: false });
+  });
+
+  it("does not use another customer's paid goods to mark the exact phone paid", async () => {
+    let shipment = shipmentFixture();
+    shipment = addPackingGoods(shipment, {
+      name: "Other customer goods",
+      phone: "+22299999999",
+      pieces: 1,
+      unitWeight: 1,
+    });
+    const own = shipment.packing!.cartons[0].goods[0].id;
+    const other = shipment.packing!.cartons[0].goods[1].id;
+    const status = await derivePublicPaymentStatus(
+      paymentDb({
+        claims: [
+          { shipmentId: shipment.id, goodsId: other, invoiceId: "paid-other" },
+        ],
+        invoices: [{ recordId: "paid-other", data: { status: "مدفوعة" } }],
+      }),
+      shipment,
+      { tracking: shipment.tracking, phone: "+22212345678" }
+    );
+    expect(own).not.toBe(other);
+    expect(status).toBe("unbilled");
+  });
+
+  it("marks a matched good paid only when its own charge is fully allocated", async () => {
+    const shipment = shipmentFixture();
+    const goodsId = shipment.packing!.cartons[0].goods[0].id;
+    const status = await derivePublicPaymentStatus(
+      paymentDb({
+        components: [
+          {
+            id: "component-own",
+            shipmentId: shipment.id,
+            goodsId,
+            amount: "10.00",
+          },
+        ],
+        allocations: [
+          {
+            componentId: "component-own",
+            invoiceId: "invoice-own",
+            kind: "invoice",
+            amount: "10.00",
+          },
+          {
+            componentId: "component-own",
+            invoiceId: "invoice-own",
+            kind: "payment",
+            amount: "10.00",
+          },
+        ],
+        invoices: [
+          { recordId: "invoice-own", data: { status: "بانتظار الدفع" } },
+        ],
+      }),
+      shipment,
+      { tracking: shipment.tracking, phone: "+22212345678" }
+    );
+    expect(status).toBe("paid");
   });
 
   it("has deterministic bounded TTL limiting for an IP and tracking pair", () => {

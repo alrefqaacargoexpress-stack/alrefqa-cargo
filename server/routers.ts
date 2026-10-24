@@ -1,3 +1,18 @@
+import { dutyRouter, endDutyForLogout } from "./duty";
+import {
+  shipmentSettlementRouter,
+  assertFrozenShipmentComponents,
+} from "./shipmentSettlement";
+import { financialVoidsRouter } from "./financialVoids";
+import { lifecycleAdminRouter } from "./lifecycleAdmin";
+import {
+  loadLifecycle,
+  recordIsActive,
+  isRetired,
+  assertActiveEntity,
+  isEmployeeDisabled,
+  insertLifecycle,
+} from "./lifecycle";
 import { canReadTrackingPermissionRecord } from "./permissionAccess";
 import {
   visiblePermissionMembers,
@@ -262,6 +277,11 @@ export const appRouter = router({
             message: "invalid_credentials",
           });
 
+        if (await isEmployeeDisabled(await dbOrThrow(), user.id))
+          throw new TRPCError({
+            code: "UNAUTHORIZED",
+            message: "invalid_credentials",
+          });
         const token = createSessionToken();
         await dbQueries.createLocalSession({
           tokenHash: hashSessionToken(token),
@@ -381,6 +401,17 @@ export const appRouter = router({
     logout: publicProcedure.mutation(async ({ ctx }) => {
       const cookies = parseCookieHeader(ctx.req.headers.cookie ?? "");
       const localToken = cookies[LOCAL_SESSION_COOKIE];
+      if (ctx.user?.accountType === "employee") {
+        const database = await dbOrThrow();
+        const key =
+          "logout-" +
+          createHash("sha256")
+            .update(
+              String(ctx.user.id) + ":" + (localToken ?? "no-local-session")
+            )
+            .digest("hex");
+        await endDutyForLogout(database, ctx.user.id, key);
+      }
       if (localToken) {
         await dbQueries.deleteLocalSession(hashSessionToken(localToken));
       }
@@ -504,6 +535,10 @@ export const appRouter = router({
         }
       }),
   }),
+  duty: dutyRouter,
+  shipmentSettlement: shipmentSettlementRouter,
+  financialVoids: financialVoidsRouter,
+  lifecycle: lifecycleAdminRouter,
   operations: router({
     access: protectedProcedure.query(async ({ ctx }) => {
       const db = await dbOrThrow();
@@ -529,8 +564,30 @@ export const appRouter = router({
       const scope = await readOfficeScope(db, ctx.user);
       if (!scope.role) throw forbidden();
       const state = emptyState();
+      state.retiredRecords = [];
+      const retired = await loadLifecycle(db);
       const rows = await db.select().from(records);
       for (const row of rows) {
+        if (
+          !recordIsActive(
+            retired,
+            row.entity as Entity,
+            row.data as EntityRecord
+          )
+        ) {
+          if (
+            canReadPermissionRecord(
+              scope,
+              row.entity as Entity,
+              row.data as EntityRecord
+            )
+          )
+            state.retiredRecords!.push({
+              entity: row.entity as Entity,
+              recordId: row.recordId,
+            });
+          continue;
+        }
         if (
           !canReadPermissionRecord(
             scope,
@@ -598,6 +655,7 @@ export const appRouter = router({
           const scope = await readOfficeScope(tx, ctx.user);
           const role = scope.role;
           if (!role) throw forbidden();
+          const retired = await loadLifecycle(tx);
           const office =
             role === "admin" ||
             (role === "accountant" &&
@@ -606,6 +664,18 @@ export const appRouter = router({
               : null;
           for (const rawChange of input.changes) {
             const change = parseChange(rawChange);
+            if (
+              change.action === "restore-shipment" ||
+              (isRetired(retired, change.entity, change.recordId) &&
+                change.action !== "delete-shipment")
+            ) {
+              output.conflicts.push({
+                changeId: change.id,
+                reason: "record_permanently_retired",
+                current: null,
+              });
+              continue;
+            }
             const payloadHash = createHash("sha256")
               .update(JSON.stringify(change))
               .digest("hex");
@@ -700,6 +770,19 @@ export const appRouter = router({
                 });
                 continue;
               }
+              if (
+                (replay.applied ?? []).some(
+                  item => !recordIsActive(retired, item.entity, item.record)
+                ) &&
+                change.action !== "delete-shipment"
+              ) {
+                output.conflicts.push({
+                  changeId: change.id,
+                  reason: "record_permanently_retired",
+                  current: null,
+                });
+                continue;
+              }
               for (const acknowledged of replay.applied ?? []) {
                 if (
                   acknowledged.entity === "invoice" &&
@@ -750,6 +833,14 @@ export const appRouter = router({
               .limit(1)
               .for("update");
             const current = currentRows[0] ?? null;
+            if (isRetired(retired, change.entity, change.recordId)) {
+              output.conflicts.push({
+                changeId: change.id,
+                reason: "record_permanently_retired",
+                current: null,
+              });
+              continue;
+            }
             const currentPublic = current
               ? hideForOfficeScope(
                   permissionCurrent(current, scope),
@@ -902,6 +993,7 @@ export const appRouter = router({
                   const { pricePerKgMRU: _ignoredMru, ...withoutMru } = packing;
                   candidate = {
                     ...shipment,
+                    accountingModelVersion: 2,
                     amount: 0,
                     packing: {
                       ...withoutMru,
@@ -922,8 +1014,22 @@ export const appRouter = router({
                   change.action,
                   approvedServerTariff
                 );
-                if (change.entity === "shipment")
+                if (change.entity === "shipment") {
+                  if (current)
+                    await assertFrozenShipmentComponents(
+                      tx,
+                      current.data as Shipment,
+                      nextData as Shipment
+                    );
+                  const version = (current?.data as Shipment | undefined)
+                    ?.accountingModelVersion;
+                  if (current) {
+                    if (version === 2)
+                      (nextData as Shipment).accountingModelVersion = 2;
+                    else delete (nextData as Shipment).accountingModelVersion;
+                  }
                   financeShipment = nextData as Shipment;
+                }
                 assertOfficeRecordWrite(
                   authorizationRole,
                   scope.offices,
@@ -1074,26 +1180,49 @@ export const appRouter = router({
                   }
                 }
               } else {
-                await tx
-                  .update(records)
-                  .set({
-                    version: nextVersion,
-                    data: nextData,
-                    updatedBy: ctx.user.id,
-                  })
-                  .where(eq(records.id, current.id));
-                const after = (
+                let after;
+                if (change.action === "delete-shipment") {
+                  await insertLifecycle(tx, {
+                    entity: "shipment",
+                    recordId: change.recordId,
+                    action: "delete",
+                    officeId:
+                      (current.data as Shipment).packing?.source ??
+                      (current.data as Shipment).officeId ??
+                      null,
+                    reason: (nextData as Shipment).deleted?.reason ?? "deleted",
+                    expectedVersion: current.version,
+                    actorId: ctx.user.id,
+                    requestKey: change.id,
+                    snapshot: { before: current.data, payloadHash },
+                  });
+                  const ids = retired.get("shipment") ?? new Set<string>();
+                  ids.add(change.recordId);
+                  retired.set("shipment", ids);
+                  after = { ...current, data: nextData, version: nextVersion };
+                } else {
                   await tx
-                    .select()
-                    .from(records)
-                    .where(eq(records.id, current.id))
-                    .limit(1)
-                )[0];
+                    .update(records)
+                    .set({
+                      version: nextVersion,
+                      data: nextData,
+                      updatedBy: ctx.user.id,
+                    })
+                    .where(eq(records.id, current.id));
+                  after = (
+                    await tx
+                      .select()
+                      .from(records)
+                      .where(eq(records.id, current.id))
+                      .limit(1)
+                  )[0];
+                }
                 await appendAudit(tx, {
                   actor: actor(ctx.user, role),
                   entity: change.entity,
                   recordId: change.recordId,
-                  action: "update",
+                  action:
+                    change.action === "delete-shipment" ? "delete" : "update",
                   before: current.data,
                   after: nextData,
                   beforeVersion: current.version,
@@ -1164,9 +1293,14 @@ export const appRouter = router({
         if (!permissionAllowed(scope, "tracking", "view"))
           throw forbidden("tracking_permission_required");
         const search = input.search?.toLocaleLowerCase("ar");
+        const retired = await loadLifecycle(db);
         const rows = await db.select().from(records);
         const matching = rows.filter(row => {
-          if (row.entity !== "shipment") return false;
+          if (
+            row.entity !== "shipment" ||
+            !recordIsActive(retired, "shipment", row.data as Shipment)
+          )
+            return false;
           if (
             !canReadTrackingPermissionRecord(
               scope,
@@ -1224,7 +1358,7 @@ export const appRouter = router({
             )
             .limit(1)
         )[0];
-        if (!row)
+        if (!row || (row.data as Shipment).deleted)
           throw new TRPCError({
             code: "NOT_FOUND",
             message: "Shipment not found",
@@ -1237,6 +1371,7 @@ export const appRouter = router({
           )
         )
           throw branchForbidden();
+        await assertActiveEntity(db, "shipment", input.shipmentId);
         return sanitizePermissionRecord(scope, "shipment", {
           ...(row.data as Shipment),
           scope: "shared",
@@ -1261,6 +1396,7 @@ export const appRouter = router({
         try {
           return await db.transaction(async tx => {
             const scope = await readOfficeScope(tx, ctx.user);
+            await assertActiveEntity(tx, "shipment", request.shipmentId);
             const role = scope.role;
             const authorizationRole = permissionActionRole(
               scope,
@@ -1293,7 +1429,8 @@ export const appRouter = router({
               )
               .limit(1)
               .for("update");
-            if (!scopeRows[0]) throw new Error("tracking_not_found");
+            if (!scopeRows[0] || (scopeRows[0].data as Shipment).deleted)
+              throw new Error("tracking_not_found");
             if (
               !canReadTrackingPermissionRecord(
                 scope,
@@ -1438,11 +1575,13 @@ export const appRouter = router({
         if (!permissionAllowed(scope, "tracking", "view"))
           throw forbidden("tracking_permission_required");
         const search = input.search?.toLocaleLowerCase("ar");
+        const retired = await loadLifecycle(db);
         const rows = await db.select().from(records);
         return rows
           .filter(
             row =>
               row.entity === "shipment" &&
+              recordIsActive(retired, "shipment", row.data as Shipment) &&
               canReadTrackingPermissionRecord(
                 scope,
                 "shipment",

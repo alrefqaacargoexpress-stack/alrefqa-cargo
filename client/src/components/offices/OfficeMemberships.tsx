@@ -5,6 +5,7 @@ import {
   blankPermissions,
   defaultPermissions,
   intersectPermissions,
+  permissionAllowed,
   permissionKeys,
   rootOnlyPermissions,
   type PermissionMap,
@@ -34,7 +35,12 @@ type AssignableRole = (typeof assignableRoles)[number];
 const managerAssignableRoles = assignableRoles.filter(
   role => role !== "office_manager"
 );
-const officeManagerOfficeIds: OfficeId[] = ["dubai", "china", "turkey"];
+const officeManagerOfficeIds: OfficeId[] = [
+  "nouakchott",
+  "dubai",
+  "china",
+  "turkey",
+];
 
 type EditableOfficeMember = OfficeMember & {
   permissions?: PermissionMap | null;
@@ -49,6 +55,11 @@ type MemberDraft = {
   permissions: PermissionMap;
   dirty: boolean;
   version: number;
+};
+type DisableDraft = {
+  open: boolean;
+  confirmation: string;
+  reason: string;
 };
 
 const roleLabels = {
@@ -153,12 +164,29 @@ const permissionCopy = {
 } as const;
 
 const singleOfficeRole = (role: string) =>
-  ["office_manager", "staff", "source_warehouse", "destination_warehouse", "accountant", "general_accountant", "cashier"].includes(role);
+  [
+    "office_manager",
+    "staff",
+    "source_warehouse",
+    "destination_warehouse",
+    "accountant",
+    "general_accountant",
+    "cashier",
+  ].includes(role);
 const completePermissions = (
   value: PermissionMap | null | undefined
 ): PermissionMap => ({ ...blankPermissions(), ...(value ?? {}) });
 const managerOfficeIds = (home: OfficeId | null | undefined): OfficeId[] =>
   home && officeManagerOfficeIds.includes(home) ? [home] : [];
+const roleOfficeIds = (role: string, allowed: readonly OfficeId[]) => {
+  if (role === "office_manager")
+    return allowed.filter(office => officeManagerOfficeIds.includes(office));
+  if (role === "source_warehouse")
+    return allowed.filter(office => office !== "nouakchott");
+  if (role === "destination_warehouse")
+    return allowed.filter(office => office === "nouakchott");
+  return [...allowed];
+};
 
 function draftFrom(
   member: EditableOfficeMember,
@@ -180,7 +208,9 @@ function draftFrom(
           .filter(office => officeManagerOfficeIds.includes(office))
           .slice(0, 1)
       : singleOfficeRole(role)
-        ? source.filter(office => allowed.includes(office)).slice(0, 1)
+        ? source
+            .filter(office => roleOfficeIds(role, allowed).includes(office))
+            .slice(0, 1)
         : source.filter(office => allowed.includes(office));
   const raw =
     member.permissions ??
@@ -233,6 +263,12 @@ type OfficeMembershipsProps = {
     userId: number;
     temporaryPassword: string;
   }) => Promise<boolean>;
+  onDisable?: (input: {
+    userId: number;
+    confirmation: string;
+    reason: string;
+    expectedVersion: number;
+  }) => Promise<boolean>;
 };
 
 export default function OfficeMemberships({
@@ -246,6 +282,7 @@ export default function OfficeMemberships({
   pending = false,
   onSave,
   onResetPassword,
+  onDisable = async () => false,
 }: OfficeMembershipsProps) {
   const { language } = useLanguage();
   const c = branchSettingsCopyFor(language);
@@ -255,12 +292,27 @@ export default function OfficeMemberships({
   const [temporaryPasswords, setTemporaryPasswords] = useState<
     Record<number, string>
   >({});
+  const [disableDrafts, setDisableDrafts] = useState<
+    Record<number, DisableDraft>
+  >({});
   const availableRoles =
     actorRole === "office_manager" ? managerAssignableRoles : assignableRoles;
   const allowedOffices =
     actorRole === "office_manager"
       ? managerOfficeIds(managerHomeOffice)
       : [...officeIds];
+  const canDisablePermission = permissionAllowed(
+    {
+      role: actorRole,
+      offices:
+        actorRole === "office_manager"
+          ? managerOfficeIds(managerHomeOffice)
+          : officeIds,
+      permissions: permissionCeiling,
+    },
+    "employee_disable",
+    "manage"
+  );
 
   useEffect(() => {
     setDrafts(current => {
@@ -294,6 +346,51 @@ export default function OfficeMemberships({
     member.role === "admin" ||
     (actorRole === "office_manager" &&
       (member.userId === actorUserId || member.role === "office_manager"));
+  const canDisableMember = (member: EditableOfficeMember) =>
+    canEdit &&
+    canDisablePermission &&
+    online &&
+    member.accountType === "employee" &&
+    member.userId !== actorUserId &&
+    member.role !== "admin" &&
+    (actorRole === "admin" ||
+      (actorRole === "office_manager" &&
+        member.role !== "office_manager" &&
+        member.offices?.length === 1 &&
+        member.offices[0] === managerHomeOffice));
+  const disable = async (member: EditableOfficeMember) => {
+    if (!canDisableMember(member)) return;
+    const draft = disableDrafts[member.userId] ?? {
+      open: true,
+      confirmation: "",
+      reason: "",
+    };
+    if (draft.confirmation.trim() !== String(member.userId)) {
+      setError(c.disableConfirmationMismatch);
+      return;
+    }
+    if (draft.reason.trim().length < 2) {
+      setError(c.disableReasonRequired);
+      return;
+    }
+    if (!window.confirm(`${c.disableConfirm}\n${member.name || member.email}?`))
+      return;
+    setError("");
+    setNotice("");
+    const ok = await onDisable({
+      userId: member.userId,
+      confirmation: draft.confirmation.trim(),
+      reason: draft.reason.trim(),
+      expectedVersion: member.version,
+    });
+    if (ok) {
+      setDisableDrafts(current => ({
+        ...current,
+        [member.userId]: { ...draft, open: false },
+      }));
+      setNotice(c.disableSuccess);
+    } else setError(c.disableError);
+  };
 
   const save = async (member: EditableOfficeMember) => {
     const draft =
@@ -380,6 +477,11 @@ export default function OfficeMemberships({
           const rootLocked = member.role === "admin";
           const locked = isLocked(member);
           const canEditMember = canEdit && !locked;
+          const disableDraft = disableDrafts[member.userId] ?? {
+            open: true,
+            confirmation: "",
+            reason: "",
+          };
           const displayRole = rootLocked ? "admin" : draft.role;
           return (
             <article
@@ -427,12 +529,13 @@ export default function OfficeMemberships({
                     disabled={!canEditMember || pending}
                     onChange={event => {
                       const nextRole = event.target.value as AssignableRole;
+                      const roleOffices = roleOfficeIds(
+                        nextRole,
+                        allowedOffices
+                      );
                       const office =
-                        nextRole === "office_manager"
-                          ? draft.offices.find(id =>
-                              officeManagerOfficeIds.includes(id)
-                            )
-                          : draft.offices[0];
+                        draft.offices.find(id => roleOffices.includes(id)) ??
+                        roleOffices[0];
                       patch(member, {
                         role: nextRole,
                         offices: singleOfficeRole(nextRole)
@@ -444,7 +547,8 @@ export default function OfficeMemberships({
                           ? (office ?? null)
                           : draft.homeOffice,
                         canUpdateTracking:
-                          ["staff", "source_warehouse"].includes(nextRole) && office !== "nouakchott"
+                          ["staff", "source_warehouse"].includes(nextRole) &&
+                          office !== "nouakchott"
                             ? draft.canUpdateTracking
                             : false,
                       });
@@ -467,10 +571,7 @@ export default function OfficeMemberships({
                     {c.offices}
                   </legend>
                   <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                    {(draft.role === "office_manager"
-                      ? officeManagerOfficeIds
-                      : allowedOffices
-                    ).map(officeId => (
+                    {roleOfficeIds(draft.role, allowedOffices).map(officeId => (
                       <label
                         key={officeId}
                         className="flex items-center gap-2 rounded-lg border border-[#e5ecee] bg-white px-3 py-2 text-sm"
@@ -497,7 +598,9 @@ export default function OfficeMemberships({
                                   : draft.homeOffice,
                               canUpdateTracking:
                                 officeId !== "nouakchott" &&
-                                ["staff", "source_warehouse"].includes(draft.role)
+                                ["staff", "source_warehouse"].includes(
+                                  draft.role
+                                )
                                   ? draft.canUpdateTracking
                                   : false,
                             })
@@ -593,6 +696,61 @@ export default function OfficeMemberships({
                     onClick={() => void save(member)}
                   >
                     {c.saveMember}
+                  </button>
+                </div>
+              )}
+              {canDisableMember(member) && disableDraft.open && (
+                <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3">
+                  <p className="text-sm font-black text-red-950">
+                    {c.disableEmployee}
+                  </p>
+                  <p className="mt-1 text-xs leading-5 text-red-900">
+                    {c.disableHint} {c.disableConfirmationHint} {member.userId}
+                  </p>
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                    <label className="grid gap-1 text-xs font-bold text-red-950">
+                      <span>{c.disableConfirmation}</span>
+                      <input
+                        className={packingInputClass}
+                        inputMode="numeric"
+                        value={disableDraft.confirmation}
+                        onChange={event =>
+                          setDisableDrafts(current => ({
+                            ...current,
+                            [member.userId]: {
+                              ...disableDraft,
+                              confirmation: event.target.value,
+                            },
+                          }))
+                        }
+                      />
+                    </label>
+                    <label className="grid gap-1 text-xs font-bold text-red-950">
+                      <span>{c.disableReason}</span>
+                      <textarea
+                        className={packingInputClass}
+                        rows={2}
+                        value={disableDraft.reason}
+                        placeholder={c.disableReasonPlaceholder}
+                        onChange={event =>
+                          setDisableDrafts(current => ({
+                            ...current,
+                            [member.userId]: {
+                              ...disableDraft,
+                              reason: event.target.value,
+                            },
+                          }))
+                        }
+                      />
+                    </label>
+                  </div>
+                  <button
+                    type="button"
+                    className="mt-3 rounded-xl border border-red-300 bg-white px-4 py-2 text-sm font-bold text-red-800"
+                    disabled={pending || !online}
+                    onClick={() => void disable(member)}
+                  >
+                    {c.disableEmployee}
                   </button>
                 </div>
               )}

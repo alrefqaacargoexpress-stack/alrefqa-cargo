@@ -231,7 +231,11 @@ export function filterStateByAccess(
       accessAllowsRecord(role, offices, "account", record)
     ),
     shipments: state.shipments
-      .filter(record => accessAllowsRecord(role, offices, "shipment", record))
+      .filter(
+        record =>
+          !record.deleted &&
+          accessAllowsRecord(role, offices, "shipment", record)
+      )
       .map(record => protectOfficeShipmentFinance(record, role, offices)),
     invoices: state.invoices.filter(record =>
       accessAllowsRecord(role, offices, "invoice", record)
@@ -415,7 +419,7 @@ export function useOperationsWorkspace() {
     const before = ref.current;
     void (async () => {
       try {
-        const next = mergeSnapshot(before, snapshot.data);
+        const next = mergeSnapshot(before, snapshot.data, activeId);
         await saveWorkspace(activeId, next);
         if (!stopped && owner.current === activeId) {
           ref.current = next;
@@ -499,6 +503,8 @@ export function useOperationsWorkspace() {
     lastSaveErrorRef.current = null;
     const existing =
       current.state.shipments.find(s => s.id === shipment.id) ?? null;
+    if (existing?.deleted && action !== "delete-shipment")
+      return failSave("record_permanently_retired");
     // Preserve an existing operational owner when a legacy editor omits it;
     // never silently reassign an old row to the selected office.
     const candidate =
@@ -574,7 +580,8 @@ export function useOperationsWorkspace() {
         "shipment",
         safe,
         label ?? candidate.tracking,
-        action
+        action,
+        id
       );
       await saveWorkspace(id, next);
       if (owner.current !== id) return false;
@@ -622,7 +629,7 @@ export function useOperationsWorkspace() {
       const result = await mutation.mutateAsync({ changes: batch });
       if (owner.current !== id) return null;
       const latest = ref.current ?? current;
-      const next = applySyncResult(latest, result);
+      const next = applySyncResult(latest, result, id);
       await saveWorkspace(id, next);
       if (owner.current !== id) return null;
       ref.current = next;
@@ -630,7 +637,8 @@ export function useOperationsWorkspace() {
       setConflicts(result.conflicts);
       utils.operations.snapshot.setData(undefined, previous =>
         previous
-          ? applySyncResult({ state: previous, queue: [] }, result).state
+          ? applySyncResult({ state: previous, queue: [] }, result, activeId)
+              .state
           : undefined
       );
       setNotice(
@@ -663,7 +671,7 @@ export function useOperationsWorkspace() {
     // Only a reviewed, rejected attempt gets a fresh request id. The content,
     // action, expected version and other queued changes stay exactly as saved.
     try {
-      const next = retryPendingChange(current, change.id);
+      const next = retryPendingChange(current, change.id, id);
       await saveWorkspace(id, next);
       if (owner.current !== id) return;
       ref.current = next;
@@ -707,7 +715,7 @@ export function useOperationsWorkspace() {
             : [],
         conflicts: [],
       };
-      const next = applySyncResult(current, result);
+      const next = applySyncResult(current, result, id);
       await saveWorkspace(id, next);
       ref.current = next;
       setWorkspace(next);

@@ -1,4 +1,10 @@
-import { AXIOS_TIMEOUT_MS, COOKIE_NAME, ONE_YEAR_MS, decodeOAuthState } from "@shared/const";
+import { isEmployeeDisabled } from "../lifecycle";
+import {
+  AXIOS_TIMEOUT_MS,
+  COOKIE_NAME,
+  ONE_YEAR_MS,
+  decodeOAuthState,
+} from "@shared/const";
 import { ForbiddenError } from "@shared/_core/errors";
 import axios, { type AxiosInstance } from "axios";
 import { parse as parseCookieHeader } from "cookie";
@@ -215,7 +221,8 @@ class SDKServer {
 
       if (
         !isNonEmptyString(openId) ||
-        (!isNonEmptyString(appId) || appId !== ENV.appId) ||
+        !isNonEmptyString(appId) ||
+        appId !== ENV.appId ||
         typeof name !== "string"
       ) {
         console.warn("[Auth] Session payload missing required fields");
@@ -267,6 +274,9 @@ class SDKServer {
         hashSessionToken(localToken)
       );
       if (localUser) {
+        const database = await db.getDb();
+        if (!database || (await isEmployeeDisabled(database, localUser.id)))
+          throw ForbiddenError("Invalid email session");
         await db.upsertUser({
           openId: localUser.openId,
           lastSignedIn: new Date(),
@@ -281,7 +291,8 @@ class SDKServer {
     if (!sessionToken && req.path.startsWith("/api/scheduled/")) {
       const ticket = cookies.get("app_session_id");
       const identity = await this.verifySession(ticket);
-      if (identity?.openId.startsWith(CRON_OPEN_ID_PREFIX)) sessionToken = ticket;
+      if (identity?.openId.startsWith(CRON_OPEN_ID_PREFIX))
+        sessionToken = ticket;
     }
 
     // 2. Fallback to the Authorization header (Preview auto-login via
@@ -319,7 +330,10 @@ class SDKServer {
 
     if (user.passwordHash || user.loginMethod === "email")
       throw ForbiddenError("Email login required");
-    if (user.role !== "admin" && !(ENV.ownerOpenId && user.openId === ENV.ownerOpenId))
+    if (
+      user.role !== "admin" &&
+      !(ENV.ownerOpenId && user.openId === ENV.ownerOpenId)
+    )
       throw ForbiddenError("Email login required");
     await db.upsertUser({
       openId: user.openId,

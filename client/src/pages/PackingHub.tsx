@@ -76,14 +76,6 @@ export default function PackingHub() {
   const [pricePerKg, setPricePerKg] = useState("0");
   const [pricePerKgMRU, setPricePerKgMRU] = useState("");
   const [saving, setSaving] = useState(false);
-  const showDeletedShipments =
-    new URLSearchParams(query).get("deleted") === "1";
-  const setShowDeletedShipments = (value: boolean) => {
-    const params = new URLSearchParams(query);
-    if (value) params.set("deleted", "1");
-    else params.delete("deleted");
-    navigate(`/operations/shipments${params.toString() ? `?${params}` : ""}`);
-  };
   useEffect(() => {
     if (selectedOffice && selectedOffice !== "nouakchott")
       setSource(selectedOffice);
@@ -117,32 +109,25 @@ export default function PackingHub() {
   const savingRef = useRef(false);
   const allShipments = useMemo(
     () =>
-      workspace.state.shipments.filter(shipment =>
-        officeFilter === "unassigned"
-          ? ownerOffice("shipment", shipment) === null
-          : officeFilter === "all"
-            ? true
-            : recordBelongsToOffice("shipment", shipment, officeFilter)
+      workspace.state.shipments.filter(
+        shipment =>
+          !shipment.deleted &&
+          (officeFilter === "unassigned"
+            ? ownerOffice("shipment", shipment) === null
+            : officeFilter === "all"
+              ? true
+              : recordBelongsToOffice("shipment", shipment, officeFilter))
       ),
     [workspace.state.shipments, officeFilter]
   );
-  const visibleShipments = useMemo(
-    () =>
-      allShipments.filter(
-        shipment => Boolean(shipment.deleted) === showDeletedShipments
-      ),
-    [allShipments, showDeletedShipments]
-  );
   const packingShipments = useMemo(
-    () => visibleShipments.filter(isPackedShipment),
-    [visibleShipments]
+    () => allShipments.filter(isPackedShipment),
+    [allShipments]
   );
   const legacyShipments = useMemo(
-    () => visibleShipments.filter(shipment => !isPackedShipment(shipment)),
-    [visibleShipments]
+    () => allShipments.filter(shipment => !isPackedShipment(shipment)),
+    [allShipments]
   );
-  const deletedCount = allShipments.filter(shipment => shipment.deleted).length;
-  const activeCount = allShipments.length - deletedCount;
   const filtered = useMemo(
     () =>
       packingShipments.filter(shipment => matchesShipment(shipment, search)),
@@ -291,9 +276,7 @@ export default function PackingHub() {
         <>
           <section className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#dce4e7] bg-white p-4 shadow-sm">
             <div>
-              <p className="font-black text-[#092d50]">
-                {showDeletedShipments ? c.deletedShipments : c.shipments}
-              </p>
+              <p className="font-black text-[#092d50]">{c.shipments}</p>
               <p className="text-sm text-[#718088]">{c.createHelp}</p>
             </div>
             {workspace.canCreateShipments ? (
@@ -324,22 +307,6 @@ export default function PackingHub() {
             </p>
           )}
           <div className="mb-4 flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              aria-pressed={!showDeletedShipments}
-              onClick={() => setShowDeletedShipments(false)}
-              className={`rounded-xl border px-3 py-2 text-sm font-bold ${!showDeletedShipments ? "border-[#092d50] bg-[#092d50] text-white" : "border-slate-200 bg-white text-[#243f52]"}`}
-            >
-              {c.shipments} ({activeCount})
-            </button>
-            <button
-              type="button"
-              aria-pressed={showDeletedShipments}
-              onClick={() => setShowDeletedShipments(true)}
-              className={`rounded-xl border px-3 py-2 text-sm font-bold ${showDeletedShipments ? "border-[#092d50] bg-[#092d50] text-white" : "border-slate-200 bg-white text-[#243f52]"}`}
-            >
-              {c.deletedShipments} ({deletedCount})
-            </button>
             <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold">
               <span className="sr-only">Office</span>
               <select
@@ -391,15 +358,7 @@ export default function PackingHub() {
               ))}
             </div>
           ) : !filteredLegacy.length ? (
-            <EmptyPanel
-              text={
-                search
-                  ? c.noResults
-                  : showDeletedShipments
-                    ? c.noDeletedShipments
-                    : c.noShipments
-              }
-            />
+            <EmptyPanel text={search ? c.noResults : c.noShipments} />
           ) : null}
           {filteredLegacy.length > 0 && (
             <section className="mt-8 rounded-2xl border border-slate-200 bg-white p-4">
@@ -419,33 +378,20 @@ export default function PackingHub() {
                 {filteredLegacy.map(shipment => (
                   <div
                     key={shipment.id}
-                    className={`flex flex-wrap items-center justify-between gap-3 rounded-xl border p-3 text-sm ${shipment.deleted ? "border-amber-200 bg-amber-50/40" : "border-slate-100"}`}
+                    className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-100 p-3 text-sm"
                   >
                     <div>
                       <TrackingNumber value={shipment.tracking} />{" "}
                       <span className="ms-2 text-[#718088]">
-                        {shipment.deleted ? c.deleted : shipment.status}
+                        {shipment.status}
                       </span>
-                      {shipment.deleted && (
-                        <p className="mt-1 text-xs text-amber-800">
-                          {c.deletedAt}:{" "}
-                          {new Date(shipment.deleted.at).toLocaleString()} ·{" "}
-                          {c.deletionReason}: {shipment.deleted.reason}
-                        </p>
-                      )}
                     </div>
                     <div className="flex flex-wrap items-center gap-3">
                       <Link
                         className="font-bold text-[#2d6380] underline"
-                        href={
-                          shipment.deleted
-                            ? `/operations/shipments/${shipment.id}${query ? `?${query}` : ""}`
-                            : `/operations?${query}`
-                        }
+                        href={`/operations?${query}`}
                       >
-                        {shipment.deleted
-                          ? c.shipmentDetails
-                          : c.viewOperations}
+                        {c.viewOperations}
                       </Link>
                       <ShipmentDeleteActions
                         shipment={shipment}
@@ -656,9 +602,7 @@ function ShipmentRow({
   );
   const mruTotals = packingTotalsMRU(shipment.packing);
   return (
-    <article
-      className={`rounded-2xl border p-4 shadow-sm transition ${shipment.deleted ? "border-amber-200 bg-amber-50/40" : "border-[#dce4e7] bg-white"}`}
-    >
+    <article className="rounded-2xl border border-[#dce4e7] bg-white p-4 shadow-sm transition">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <Link
           href={`/operations/shipments/${shipment.id}${officeQuery ? `?${officeQuery}` : ""}`}
@@ -682,11 +626,6 @@ function ShipmentRow({
           <PackingStatusBadge status={shipment.status} c={c} />
         </Link>
         <div className="flex flex-wrap items-center gap-2">
-          {shipment.deleted && (
-            <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-bold text-amber-900">
-              {c.deleted}
-            </span>
-          )}
           <ShipmentDeleteActions
             shipment={shipment}
             workspace={workspace}
@@ -704,12 +643,6 @@ function ShipmentRow({
           />
         </div>
       </div>
-      {shipment.deleted && (
-        <p className="mt-2 text-xs text-amber-800">
-          {c.deletedAt}: {new Date(shipment.deleted.at).toLocaleString()} ·{" "}
-          {c.deletionReason}: {shipment.deleted.reason}
-        </p>
-      )}
       <div className="mt-4 grid grid-cols-2 gap-2 border-t border-slate-100 pt-3 text-sm sm:grid-cols-4">
         <Metric
           label={c.totalPieces}

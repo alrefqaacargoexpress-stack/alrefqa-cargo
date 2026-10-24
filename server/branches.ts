@@ -1,4 +1,15 @@
 import {
+  loadLifecycle,
+  recordIsActive,
+  isRetired,
+  isEmployeeDisabled,
+  assertActiveEntity,
+} from "./lifecycle";
+import {
+  canReadPermissionRecord,
+  sanitizePermissionRecord,
+} from "./permissionAccess";
+import {
   permissionsFor,
   defaultPermissions,
   blankPermissions,
@@ -116,6 +127,8 @@ export async function readOfficeScope(
       permissionsCustomized: true,
       delegatedBy: null,
     };
+  if (user.id > 0 && (await isEmployeeDisabled(db, user.id)))
+    throw branchForbidden("employee_disabled");
   const rawOffices = membership?.offices;
   let offices = Array.isArray(rawOffices)
     ? (rawOffices.filter((id: any) => officeIds.includes(id)) as OfficeId[])
@@ -300,7 +313,24 @@ export async function publicProfiles(
   db?: any
 ): Promise<VersionedOfficeProfile[]> {
   if (!db) return officeIds.map(defaultOfficeProfile);
-  return readProfileRows(db);
+  const profiles = await readProfileRows(db);
+  const retired = await loadLifecycle(db);
+  return profiles.map(profile => ({
+    ...profile,
+    employees: profile.employees.filter(
+      person =>
+        !isRetired(
+          retired,
+          "public_employee",
+          profile.officeId + ":" + person.id
+        ) &&
+        !isRetired(
+          retired,
+          "employee",
+          String((person as any).linkedUserId ?? "")
+        )
+    ),
+  }));
 }
 export async function readProfile(
   db: any,
@@ -367,7 +397,10 @@ export async function listMembers(db: any): Promise<OfficeMember[]> {
     })
     .from(users)
     .leftJoin(memberRoles, eq(memberRoles.userId, users.id));
-  return rows.map(memberFromRow);
+  const retired = await loadLifecycle(db);
+  return rows
+    .filter((row: any) => !isRetired(retired, "employee", String(row.userId)))
+    .map(memberFromRow);
 }
 
 export function branchForbidden(message = "Insufficient branch scope") {
@@ -382,16 +415,25 @@ export async function dashboardData(
   scope: OfficeScope,
   officeId: OfficeId
 ) {
-  if (!scope.role || scope.role === "viewer")
-    throw branchForbidden("Dashboard is not available to viewers");
+  if (
+    !scope.role ||
+    !(permissionAllowed(scope, "shipments", "view") || canReadAnyFinance(scope))
+  )
+    throw branchForbidden("dashboard_permission_required");
   if (!officeIsAssigned(scope, officeId)) throw branchForbidden();
   const profile = await readProfile(db, officeId);
+  const retired = await loadLifecycle(db);
   const rows = await db.select().from(records);
   const shipments: Shipment[] = [];
   const accounts: Account[] = [];
   const invoices: Invoice[] = [];
   for (const row of rows) {
     const data = row.data as EntityRecord;
+    if (
+      !recordIsActive(retired, row.entity as Entity, data) ||
+      !canReadPermissionRecord(scope, row.entity as Entity, data)
+    )
+      continue;
     if (!recordVisibleInOffice(scope, officeId, row.entity as Entity, data))
       continue;
     if (row.entity === "shipment")
@@ -402,13 +444,19 @@ export async function dashboardData(
           scope.offices
         )
       );
-    else if (row.entity === "account" && canViewFinance(scope.role))
+    else if (
+      row.entity === "account" &&
+      permissionAllowed(scope, "customers", "view")
+    )
       accounts.push({
         ...data,
         scope: "shared",
         version: row.version,
       } as Account);
-    else if (row.entity === "invoice" && canViewFinance(scope.role))
+    else if (
+      row.entity === "invoice" &&
+      permissionAllowed(scope, "invoices", "view")
+    )
       invoices.push({
         ...data,
         scope: "shared",
@@ -420,7 +468,7 @@ export async function dashboardData(
     shipments,
     accounts,
     invoices,
-    financial: canViewFinance(scope.role),
+    financial: canReadAnyFinance(scope),
   };
 }
 
@@ -535,6 +583,7 @@ export async function confirmArrival(
     throw branchForbidden("Nouakchott warehouse arrival is restricted");
   return db.transaction(async (tx: any) => {
     scope = await readOfficeScope(tx, user);
+    await assertActiveEntity(tx, "shipment", input.shipmentId);
     if (
       !permissionAllowed(scope, "arrival", "manage") ||
       (scope.role !== "admin" && !scope.offices?.includes("nouakchott"))

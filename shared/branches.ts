@@ -187,8 +187,20 @@ export const officeMembershipSchema = z
         officeIds.includes(v.offices[0]) &&
         (!v.homeOffice || v.homeOffice === v.offices[0])),
     {
-      message: "office_manager_single_source_office_required",
+      message: "office_manager_single_office_required",
     }
+  )
+  .refine(
+    v =>
+      v.role !== "source_warehouse" ||
+      (v.offices.length === 1 && v.offices[0] !== "nouakchott"),
+    { message: "source_warehouse_source_office_required" }
+  )
+  .refine(
+    v =>
+      v.role !== "destination_warehouse" ||
+      (v.offices.length === 1 && v.offices[0] === "nouakchott"),
+    { message: "destination_warehouse_nouakchott_only" }
   );
 export type OfficeMember = {
   userId: number;

@@ -66,6 +66,17 @@ export type BranchSettingsCopy = {
   memberSaved: string;
   memberLoadError: string;
   memberSaveError: string;
+  disableEmployee: string;
+  disableHint: string;
+  disableConfirmation: string;
+  disableConfirmationHint: string;
+  disableConfirmationMismatch: string;
+  disableReason: string;
+  disableReasonPlaceholder: string;
+  disableReasonRequired: string;
+  disableConfirm: string;
+  disableSuccess: string;
+  disableError: string;
   globalLegacy: string;
   employeeLoginRequired: string;
   contactNoAccess: string;
@@ -171,6 +182,18 @@ const ar: BranchSettingsCopy = {
   memberSaved: "تم حفظ صلاحية الموظف",
   memberLoadError: "تعذر تحميل أعضاء الفريق.",
   memberSaveError: "تعذر حفظ صلاحية الموظف.",
+  disableEmployee: "تعطيل حساب الموظف",
+  disableHint:
+    "هذا إجراء نهائي من منظور التشغيل؛ تبقى الهوية في التدقيق ولا يُحذف السجل.",
+  disableConfirmation: "اكتب معرّف الموظف للتأكيد",
+  disableConfirmationHint: "اكتب الرقم التالي حرفيًا:",
+  disableConfirmationMismatch: "اكتب معرّف الموظف كاملًا قبل التعطيل.",
+  disableReason: "سبب التعطيل",
+  disableReasonPlaceholder: "اكتب سببًا واضحًا للتدقيق",
+  disableReasonRequired: "اكتب سبب التعطيل (حرفان على الأقل).",
+  disableConfirm: "سيتم تعطيل حساب الموظف وإسناده. هل تتابع؟",
+  disableSuccess: "أقرّ الخادم تعطيل الموظف، وتم تحديث القائمة والصلاحيات.",
+  disableError: "تعذر تعطيل الموظف؛ لم تتغير العضوية.",
   globalLegacy: "صلاحية عامة قديمة لم تُقسم بعد؛ سيغير الحفظ نطاقها صراحة.",
   employeeLoginRequired: "سجل دخول الموظف أولاً، ثم اربطه بالمكتب",
   contactNoAccess: "جهة الاتصال العامة لا تمنح صلاحية دخول.",
@@ -283,6 +306,22 @@ const en: BranchSettingsCopy = {
   memberSaved: "Employee access saved",
   memberLoadError: "Could not load team members.",
   memberSaveError: "Could not save employee access.",
+  disableEmployee: "Disable employee account",
+  disableHint:
+    "This is final for operations; the identity remains in audit and the record is not erased.",
+  disableConfirmation: "Type the employee ID to confirm",
+  disableConfirmationHint: "Type this number exactly:",
+  disableConfirmationMismatch:
+    "Type the complete employee ID before disabling.",
+  disableReason: "Disable reason",
+  disableReasonPlaceholder: "Enter a clear reason for the audit trail",
+  disableReasonRequired: "Enter a disable reason (at least two characters).",
+  disableConfirm:
+    "The employee account and assignment will be disabled. Continue?",
+  disableSuccess:
+    "The server acknowledged the employee disablement; lists and permissions were refreshed.",
+  disableError:
+    "The employee could not be disabled; membership was not changed.",
   globalLegacy:
     "Legacy global access has not been split; saving will explicitly change its scope.",
   employeeLoginRequired:
@@ -389,6 +428,17 @@ const zh: BranchSettingsCopy = {
   memberSaved: "员工权限已保存",
   memberLoadError: "无法加载团队成员。",
   memberSaveError: "无法保存员工权限。",
+  disableEmployee: "停用员工账户",
+  disableHint: "此操作对运营是最终的；身份会保留在审计中，不会删除记录。",
+  disableConfirmation: "输入员工编号确认",
+  disableConfirmationHint: "请准确输入此编号：",
+  disableConfirmationMismatch: "停用前请输入完整的员工编号。",
+  disableReason: "停用原因",
+  disableReasonPlaceholder: "输入清晰的审计原因",
+  disableReasonRequired: "请输入停用原因（至少两个字符）。",
+  disableConfirm: "员工账户和分配将被停用。是否继续？",
+  disableSuccess: "服务器已确认员工停用；列表和权限已刷新。",
+  disableError: "无法停用员工；成员资格未更改。",
   globalLegacy: "旧的全局权限尚未拆分；保存将明确更改其范围。",
   employeeLoginRequired: "员工必须先登录，然后才能关联办公室",
   contactNoAccess: "公开联系人不会授予登录权限。",
@@ -501,6 +551,22 @@ const tr: BranchSettingsCopy = {
   memberSaved: "Çalışan erişimi kaydedildi",
   memberLoadError: "Ekip üyeleri yüklenemedi.",
   memberSaveError: "Çalışan erişimi kaydedilemedi.",
+  disableEmployee: "Çalışan hesabını devre dışı bırak",
+  disableHint:
+    "Bu işlem operasyonlar için kesindir; kimlik denetimde kalır ve kayıt silinmez.",
+  disableConfirmation: "Onay için çalışan kimliğini yazın",
+  disableConfirmationHint: "Bu numarayı aynen yazın:",
+  disableConfirmationMismatch:
+    "Devre dışı bırakmadan önce çalışan kimliğinin tamamını yazın.",
+  disableReason: "Devre dışı bırakma nedeni",
+  disableReasonPlaceholder: "Denetim kaydı için açık bir neden yazın",
+  disableReasonRequired:
+    "Devre dışı bırakma nedeni yazın (en az iki karakter).",
+  disableConfirm:
+    "Çalışan hesabı ve ataması devre dışı bırakılacak. Devam edilsin mi?",
+  disableSuccess:
+    "Sunucu çalışanı devre dışı bırakmayı onayladı; listeler ve izinler yenilendi.",
+  disableError: "Çalışan devre dışı bırakılamadı; üyelik değiştirilmedi.",
   globalLegacy:
     "Eski genel erişim bölünmedi; kaydetmek kapsamı açıkça değiştirir.",
   employeeLoginRequired:

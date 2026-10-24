@@ -118,6 +118,17 @@ describe("Scoped delegation and revocation", () => {
     expect(result.delegatedBy).toBeNull();
     expect(result.version).toBe(2);
   });
+  it("preserves legacy partial maps while defaulting newly introduced keys to none", async () => {
+    const f = fixture();
+    const result = await assignPermissionMembership(f.db, root, {
+      ...input({ shipments: "view" } as PermissionMap),
+      permissions: { shipments: "view" },
+    } as any);
+    expect(result.permissions.shipments).toBe("view");
+    expect(result.permissions.invoice_void).toBe("none");
+    expect(result.permissions.entry_void).toBe("none");
+    expect(result.permissions.employee_disable).toBe("none");
+  });
   it("lets a manager delegate only existing capabilities to their own employee", async () => {
     const f = fixture();
     const result = await assignPermissionMembership(

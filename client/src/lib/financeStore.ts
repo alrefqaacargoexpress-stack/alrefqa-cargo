@@ -8,6 +8,13 @@ import {
   type FinanceSyncResult,
 } from "@shared/finance";
 import { withWorkspaceLock } from "./offlineStore";
+import {
+  archiveRetirementConflicts,
+  isRememberedRetirement,
+  rememberRetirements,
+  rememberedRetirements,
+  type RetirementArchiveItem,
+} from "./retirementStore";
 const PREFIX = "alrefqaa-finance-v1-";
 export type FinanceWorkspace = {
   snapshot: FinanceSnapshot;
@@ -46,7 +53,8 @@ export function loadFinanceWorkspace(
   userId: string | number
 ): FinanceWorkspace {
   const raw = store().getItem(`${PREFIX}${userId}`);
-  return raw ? parse(raw) : emptyFinanceWorkspace();
+  const workspace = raw ? parse(raw) : emptyFinanceWorkspace();
+  return filterRetiredFinance(userId, workspace);
 }
 export async function saveFinanceWorkspace(
   userId: string | number,
@@ -70,9 +78,20 @@ export async function saveFinanceWorkspace(
 }
 export function stageFinanceCommand(
   workspace: FinanceWorkspace,
-  command: FinanceCommand
+  command: FinanceCommand,
+  userId?: string | number
 ): FinanceWorkspace {
   const parsed = financeCommandSchema.parse(command);
+  const retiredInvoiceId = invoiceIdForCommand(parsed);
+  if (
+    userId !== undefined &&
+    retiredInvoiceId &&
+    isRememberedRetirement(userId, {
+      entity: "invoice",
+      recordId: retiredInvoiceId,
+    })
+  )
+    throw new Error("record_permanently_retired");
   const old = workspace.commands.find(c => c.id === parsed.id);
   if (old) {
     if (JSON.stringify(old) !== JSON.stringify(parsed))
@@ -88,34 +107,92 @@ function mergeById<T extends { id: string }>(old: T[], incoming: T[]): T[] {
 }
 export function mergeFinanceSnapshot(
   workspace: FinanceWorkspace,
-  snapshot: FinanceSnapshot
+  snapshot: FinanceSnapshot,
+  userId?: string | number
 ): FinanceWorkspace {
   const valid = financeSnapshotSchema.parse(snapshot) as FinanceSnapshot;
-  return {
+  const retiredIds = valid.retiredInvoiceIds ?? [];
+  if (userId !== undefined)
+    rememberRetirements(
+      userId,
+      retiredIds.map(recordId => ({ entity: "invoice" as const, recordId }))
+    );
+  const knownRetired = new Set([
+    ...retiredIds,
+    ...(userId === undefined
+      ? []
+      : rememberedRetirements(userId)
+          .filter(item => item.entity === "invoice")
+          .map(item => item.recordId)),
+  ]);
+  const commands = workspace.commands.filter(command => {
+    const invoiceId = invoiceIdForCommand(command);
+    return !invoiceId || !knownRetired.has(invoiceId);
+  });
+  if (userId !== undefined) {
+    const archived: RetirementArchiveItem[] = workspace.commands
+      .filter(command => {
+        const invoiceId = invoiceIdForCommand(command);
+        return Boolean(invoiceId && knownRetired.has(invoiceId));
+      })
+      .map(command => ({
+        archivedAt: new Date().toISOString(),
+        retirement: {
+          entity: "invoice" as const,
+          recordId: invoiceIdForCommand(command)!,
+        },
+        financeCommand: command,
+      }));
+    archiveRetirementConflicts(userId, archived);
+  }
+  const next = {
     ...workspace,
+    commands,
     snapshot: {
       ...valid,
       entries: mergeById(workspace.snapshot.entries, valid.entries),
-      invoices: mergeById(workspace.snapshot.invoices, valid.invoices),
+      invoices: mergeById(workspace.snapshot.invoices, valid.invoices).filter(
+        invoice => !knownRetired.has(invoice.id)
+      ),
     },
   };
+  return userId === undefined ? next : filterRetiredFinance(userId, next);
 }
 export function applyFinanceSync(
   workspace: FinanceWorkspace,
-  result: FinanceSyncResult
+  result: FinanceSyncResult,
+  userId?: string | number
 ): FinanceWorkspace {
   const acknowledged = new Set(result.applied.map(r => r.commandId));
+  const retiredIds = new Set(
+    userId === undefined
+      ? []
+      : rememberedRetirements(userId)
+          .filter(item => item.entity === "invoice")
+          .map(item => item.recordId)
+  );
   const postedInvoices = result.applied
     .flatMap(r => (r.invoice ? [r.invoice] : []))
+    .filter(invoice => !retiredIds.has(invoice.id))
     .filter(invoice => {
       const current = workspace.snapshot.invoices.find(
         i => i.id === invoice.id
       );
       return !current || (invoice.version ?? 0) >= (current.version ?? 0);
     });
-  return {
+  const next = {
     ...workspace,
-    commands: workspace.commands.filter(c => !acknowledged.has(c.id)),
+    commands: workspace.commands.filter(
+      c =>
+        !acknowledged.has(c.id) &&
+        !(
+          userId !== undefined &&
+          (() => {
+            const invoiceId = invoiceIdForCommand(c);
+            return Boolean(invoiceId && retiredIds.has(invoiceId));
+          })()
+        )
+    ),
     snapshot: {
       ...workspace.snapshot,
       entries: mergeById(
@@ -128,14 +205,24 @@ export function applyFinanceSync(
         : workspace.snapshot.lastReadAt,
     },
   };
+  return userId === undefined ? next : filterRetiredFinance(userId, next);
 }
 export function downloadFinanceArchive(userId: string | number): void {
   const raw = store().getItem(`${PREFIX}${userId}`);
+  let financeRaw = raw;
+  if (raw) {
+    try {
+      financeRaw = JSON.stringify(loadFinanceWorkspace(userId));
+    } catch {
+      // Keep an unreadable original available for manual recovery.
+      financeRaw = raw;
+    }
+  }
   const url = URL.createObjectURL(
     new Blob(
       [
         JSON.stringify(
-          { exportedAt: new Date().toISOString(), financeRaw: raw },
+          { exportedAt: new Date().toISOString(), financeRaw },
           null,
           2
         ),
@@ -148,4 +235,49 @@ export function downloadFinanceArchive(userId: string | number): void {
   a.download = "alrefqaa-finance-archive.json";
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function invoiceIdForCommand(command: FinanceCommand): string | undefined {
+  if (command.kind === "invoice" || command.kind === "settlement")
+    return command.payload.invoiceId;
+  return undefined;
+}
+
+function filterRetiredFinance(
+  userId: string | number,
+  workspace: FinanceWorkspace
+): FinanceWorkspace {
+  const retired = new Set(
+    rememberedRetirements(userId)
+      .filter(item => item.entity === "invoice")
+      .map(item => item.recordId)
+  );
+  if (!retired.size) return workspace;
+  const archived: RetirementArchiveItem[] = workspace.commands
+    .filter(command => {
+      const invoiceId = invoiceIdForCommand(command);
+      return Boolean(invoiceId && retired.has(invoiceId));
+    })
+    .map(command => ({
+      archivedAt: new Date().toISOString(),
+      retirement: {
+        entity: "invoice" as const,
+        recordId: invoiceIdForCommand(command)!,
+      },
+      financeCommand: command,
+    }));
+  archiveRetirementConflicts(userId, archived);
+  return {
+    ...workspace,
+    commands: workspace.commands.filter(command => {
+      const invoiceId = invoiceIdForCommand(command);
+      return !invoiceId || !retired.has(invoiceId);
+    }),
+    snapshot: {
+      ...workspace.snapshot,
+      invoices: workspace.snapshot.invoices.filter(
+        invoice => !retired.has(invoice.id)
+      ),
+    },
+  };
 }

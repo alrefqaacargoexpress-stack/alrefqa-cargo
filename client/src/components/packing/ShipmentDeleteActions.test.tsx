@@ -12,7 +12,10 @@ const original = createPackedShipment({
   pricePerKgMRU: 120,
 });
 const archived = deleteShipment(original, "User request");
-const workspace = (role: AppRole | null, offices?: ("nouakchott" | "dubai" | "china" | "turkey")[] | null) => ({
+const workspace = (
+  role: AppRole | null,
+  offices?: ("nouakchott" | "dubai" | "china" | "turkey")[] | null
+) => ({
   role,
   offices,
   error: null,
@@ -66,7 +69,7 @@ describe("Shipment deletion action rendering", () => {
       )
     ).toBe("");
   });
-  it("offers restore instead of delete for archived data and disables it for read-only roles", () => {
+  it("does not expose restore or delete actions for archived data", () => {
     const c = copyFor("en");
     const admin = renderToStaticMarkup(
       <ShipmentDeleteActions
@@ -75,8 +78,7 @@ describe("Shipment deletion action rendering", () => {
         c={c}
       />
     );
-    expect(admin).toContain(c.restoreShipment);
-    expect(admin).not.toContain(c.deleteShipment);
+    expect(admin).toBe("");
     const viewer = renderToStaticMarkup(
       <ShipmentDeleteActions
         shipment={archived}

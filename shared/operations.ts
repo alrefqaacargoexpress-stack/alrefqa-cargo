@@ -50,6 +50,7 @@ export type Shipment = {
   journey?: ShipmentJourney;
   destinationStorage?: DestinationStorageItem[];
   deleted?: { at: string; reason: string };
+  accountingModelVersion?: 2;
   officeId?: OfficeId;
   scope?: DataScope;
   version?: number;
@@ -71,6 +72,7 @@ export type LocalState = {
   shipments: Shipment[];
   invoices: Invoice[];
   lastSyncedAt: string | null;
+  retiredRecords?: { entity: Entity; recordId: string }[];
 };
 export type Entity = "account" | "shipment" | "invoice";
 export type EntityRecord = Account | Shipment | Invoice;

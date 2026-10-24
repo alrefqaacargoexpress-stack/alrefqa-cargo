@@ -49,6 +49,9 @@ const ar: PermissionCopy = {
     employees: "الموظفون",
     audit: "سجل التدقيق",
     office_assign: "تعيين المكاتب",
+    invoice_void: "إلغاء الفواتير",
+    entry_void: "إلغاء القيود",
+    employee_disable: "تعطيل الموظفين",
   },
 };
 
@@ -84,6 +87,9 @@ const en: PermissionCopy = {
     employees: "Employees",
     audit: "Audit log",
     office_assign: "Assign offices",
+    invoice_void: "Void invoices",
+    entry_void: "Void entries",
+    employee_disable: "Disable employees",
   },
 };
 
@@ -119,6 +125,9 @@ const zh: PermissionCopy = {
     employees: "员工",
     audit: "审计日志",
     office_assign: "分配办公室",
+    invoice_void: "作废发票",
+    entry_void: "作废账目",
+    employee_disable: "停用员工",
   },
 };
 
@@ -154,6 +163,9 @@ const tr: PermissionCopy = {
     employees: "Çalışanlar",
     audit: "Denetim günlüğü",
     office_assign: "Ofis atama",
+    invoice_void: "Faturaları iptal et",
+    entry_void: "Kayıtları iptal et",
+    employee_disable: "Çalışanları devre dışı bırak",
   },
 };
 

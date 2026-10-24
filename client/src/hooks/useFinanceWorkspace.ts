@@ -187,7 +187,7 @@ export function useFinanceWorkspace() {
     const userId = base.userId;
     void (async () => {
       try {
-        const next = mergeFinanceSnapshot(ref.current!, query.data);
+        const next = mergeFinanceSnapshot(ref.current!, query.data, userId);
         await saveFinanceWorkspace(userId, next);
         if (!cancelled) {
           ref.current = next;
@@ -242,7 +242,7 @@ export function useFinanceWorkspace() {
       return false;
     }
     try {
-      const next = stageFinanceCommand(ref.current, command);
+      const next = stageFinanceCommand(ref.current, command, base.userId);
       await saveFinanceWorkspace(base.userId, next);
       if (currentUser.current !== base.userId) return false;
       ref.current = next;
@@ -340,7 +340,7 @@ export function useFinanceWorkspace() {
         !ref.current
       )
         return null;
-      const next = applyFinanceSync(ref.current, result);
+      const next = applyFinanceSync(ref.current, result, userId);
       await saveFinanceWorkspace(userId, next);
       if (currentUser.current !== userId) return null;
       ref.current = next;

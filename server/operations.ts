@@ -80,6 +80,7 @@ export const shipmentDataSchema = z
     journey: journeySchema.optional(),
     destinationStorage: destinationStorageSchema.optional(),
     deleted: shipmentDeletionSchema.optional(),
+    accountingModelVersion: z.literal(2).optional(),
     ...optionalMeta,
   })
   .strict();

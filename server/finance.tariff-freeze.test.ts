@@ -19,6 +19,12 @@ function transactionFor(row: any) {
             limit() {
               return query;
             },
+            then(resolve: any, reject: any) {
+              return Promise.resolve(table === records ? [row] : []).then(
+                resolve,
+                reject
+              );
+            },
             for() {
               return Promise.resolve(table === records ? [row] : []);
             },

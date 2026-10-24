@@ -18,6 +18,8 @@ import type { Shipment } from "@shared/operations";
 import PackingLayout from "@/components/packing/PackingLayout";
 import FinanceExcelPanel from "@/components/finance/FinanceExcelPanel";
 import OfficeExpenseForm from "@/components/finance/OfficeExpenseForm";
+import ShipmentSettlementPanel from "@/components/finance/ShipmentSettlementPanel";
+import FinancialVoidPanel from "@/components/finance/FinancialVoidPanel";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useFinanceWorkspace } from "@/hooks/useFinanceWorkspace";
 import { officeIds } from "@/lib/branchSettingsCopy";
@@ -106,16 +108,18 @@ export function financeCashBalance(
         ? entry.direction === "debit"
           ? -entry.amount
           : entry.amount
-        : entry.kind === "collection" ||
-            entry.kind === "debt_payment" ||
-            entry.kind === "customer_credit"
+        : entry.kind === "collection" || entry.kind === "debt_payment"
           ? entry.amount
-          : entry.kind === "customer_debit" ||
-              entry.kind === "daily_expense" ||
-              entry.kind === "monthly_expense" ||
-              entry.kind === "shipment_cost"
-            ? -entry.amount
-            : 0;
+          : entry.kind === "customer_credit"
+            ? entry.cashEffect === "none"
+              ? 0
+              : entry.amount
+            : entry.kind === "customer_debit" ||
+                entry.kind === "daily_expense" ||
+                entry.kind === "monthly_expense" ||
+                entry.kind === "shipment_cost"
+              ? -entry.amount
+              : 0;
     cents += Math.round(signed * 100);
   }
   return cents / 100;
@@ -782,6 +786,12 @@ export default function OfficeFinance() {
             )}
           </section>
 
+          <ShipmentSettlementPanel
+            workspace={finance}
+            language={language}
+            selectedOffice={selectedOffice}
+          />
+
           {canWrite ? (
             <>
               {accountantHomeOnly && (
@@ -1119,6 +1129,13 @@ export default function OfficeFinance() {
               </p>
             )}
           </section>
+
+          <FinancialVoidPanel
+            workspace={finance}
+            language={language}
+            mode="entry"
+            entries={visibleEntries}
+          />
 
           <section className="rounded-2xl border border-[#dce4e7] bg-white p-5 shadow-sm">
             <h2 className="text-lg font-black text-[#092d50]">{c.debts}</h2>

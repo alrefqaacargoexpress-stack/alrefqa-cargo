@@ -8,6 +8,7 @@ import {
 import { deleteShipment } from "../shared/shipmentDeletion";
 import {
   records,
+  entityLifecycle,
   syncReceipts,
   financeEntries,
   memberRoles,
@@ -168,7 +169,10 @@ describe("Safe generic archive receipts", () => {
     expect(first.conflicts).toEqual([]);
     expect(second).toEqual(first);
     expect(receipts).toHaveLength(1);
-    expect(updates).toHaveBeenCalledTimes(1);
+    expect(updates).not.toHaveBeenCalled();
+    expect(
+      inserts.mock.calls.filter(([table]) => table === entityLifecycle)
+    ).toHaveLength(1);
     expect(appendAudit).toHaveBeenCalledTimes(1);
   });
   it("records a payload hash and acknowledges an exact successful retry without another write", async () => {
@@ -181,9 +185,12 @@ describe("Safe generic archive receipts", () => {
     });
     expect(receipts[0].result.payloadHash).toMatch(/^[a-f0-9]{64}$/);
     expect(await sync(request)).toEqual(first);
-    expect(updates).toHaveBeenCalledTimes(1);
+    expect(updates).not.toHaveBeenCalled();
+    expect(
+      inserts.mock.calls.filter(([table]) => table === entityLifecycle)
+    ).toHaveLength(1);
     expect(appendAudit).toHaveBeenCalledTimes(1);
-    expect(row.data.deleted).toBeDefined();
+    expect(row.data.deleted).toBeUndefined();
   });
   it("rejects a modified draft under an already acknowledged request id", async () => {
     const request = change();
@@ -193,7 +200,10 @@ describe("Safe generic archive receipts", () => {
     const result = await sync(changed);
     expect(result.applied).toEqual([]);
     expect(result.conflicts[0].reason).toBe("replay_payload_mismatch");
-    expect(updates).toHaveBeenCalledTimes(1);
+    expect(updates).not.toHaveBeenCalled();
+    expect(
+      inserts.mock.calls.filter(([table]) => table === entityLifecycle)
+    ).toHaveLength(1);
   });
   it("does not modify legacy receipts or automatically rebase a fresh retry", async () => {
     const request = change();

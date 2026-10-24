@@ -19,6 +19,7 @@ import { copyFor } from "@/lib/packingCopy";
 import { canUseOperations } from "@shared/tracking";
 import { permissionAllowed } from "@shared/permissions";
 import SyncConflictPanel from "./SyncConflictPanel";
+import DutyAvailability from "./DutyAvailability";
 import {
   PackingScopeBadge,
   packingPrimaryClass,
@@ -380,6 +381,7 @@ export default function PackingLayout({
                 {notice.text}
               </div>
             )}
+            <DutyAvailability workspace={workspace} />
             <SyncConflictPanel
               conflicts={workspace.conflicts}
               queue={workspace.queue}

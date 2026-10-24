@@ -1,12 +1,8 @@
 import { useRef, useState } from "react";
-import { RotateCcw, Trash2 } from "lucide-react";
+import { Trash2 } from "lucide-react";
 import ConfirmShipmentDeletionDialog from "@/components/packing/ConfirmShipmentDeletionDialog";
 import { copyFor } from "@/lib/packingCopy";
-import {
-  canDeleteShipment,
-  deleteShipment,
-  restoreShipment,
-} from "@shared/shipmentDeletion";
+import { canDeleteShipment, deleteShipment } from "@shared/shipmentDeletion";
 import type { AppRole, Shipment } from "@shared/operations";
 import { permissionAllowed, type PermissionMap } from "@shared/permissions";
 import type { OfficeId } from "@shared/branches";
@@ -20,7 +16,7 @@ type Workspace = {
   saveShipment: (
     shipment: Shipment,
     label?: string,
-    action?: "delete-shipment" | "restore-shipment"
+    action?: "delete-shipment"
   ) => Promise<boolean>;
   error: string | null;
   lastSaveError?: () => string | null;
@@ -55,6 +51,7 @@ export default function ShipmentDeleteActions({
     permissions: workspace.permissions,
   };
   const allowed =
+    !shipment.deleted &&
     permissionAllowed(subject, "shipment_delete", "manage") &&
     Boolean(
       canDeleteShipment(
@@ -65,23 +62,17 @@ export default function ShipmentDeleteActions({
     );
   const disabled = saving || busy || !allowed;
 
-  const run = async (
-    action: "delete-shipment" | "restore-shipment",
-    reason?: string
-  ) => {
+  const run = async (reason?: string) => {
     if (busyRef.current || saving || !allowed) return;
-    const isRestore = action === "restore-shipment";
     busyRef.current = true;
     setBusy(true);
     setError(null);
     try {
-      const next = isRestore
-        ? restoreShipment(shipment)
-        : deleteShipment(shipment, reason || c.shipmentDeleteReason);
+      const next = deleteShipment(shipment, reason || c.shipmentDeleteReason);
       const saved = await workspace.saveShipment(
         next,
-        `${isRestore ? c.restoreShipment : c.deleteShipment}: ${shipment.tracking}`,
-        action
+        `${c.deleteShipment}: ${shipment.tracking}`,
+        "delete-shipment"
       );
       if (!saved) {
         setError(workspace.lastSaveError?.() ?? workspace.error ?? c.saveError);
@@ -102,43 +93,21 @@ export default function ShipmentDeleteActions({
     }
   };
 
-  const restore = () => {
-    if (
-      !window.confirm(
-        c.confirmRestoreShipment.replace("{tracking}", shipment.tracking)
-      )
-    )
-      return;
-    void run("restore-shipment");
-  };
-
   if (!allowed) return null;
   return (
     <div className={`flex flex-wrap items-center gap-2 ${className}`}>
-      {shipment.deleted ? (
-        <button
-          type="button"
-          disabled={disabled}
-          onClick={restore}
-          className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-bold text-emerald-800 disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          <RotateCcw size={15} />
-          {c.restoreShipment}
-        </button>
-      ) : (
-        <button
-          type="button"
-          disabled={disabled}
-          onClick={() => {
-            setError(null);
-            setConfirmOpen(true);
-          }}
-          className="inline-flex items-center gap-1.5 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-bold text-red-800 disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          <Trash2 size={15} />
-          {c.deleteShipment}
-        </button>
-      )}
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => {
+          setError(null);
+          setConfirmOpen(true);
+        }}
+        className="inline-flex items-center gap-1.5 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-bold text-red-800 disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        <Trash2 size={15} />
+        {c.deleteShipment}
+      </button>
       {error && !confirmOpen && (
         <span role="alert" className="text-xs font-semibold text-red-700">
           {error}
@@ -153,7 +122,7 @@ export default function ShipmentDeleteActions({
           busy={busy}
           error={confirmOpen ? error : null}
           onCancel={() => setConfirmOpen(false)}
-          onConfirm={reason => void run("delete-shipment", reason)}
+          onConfirm={reason => void run(reason)}
         />
       )}
     </div>

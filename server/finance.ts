@@ -1,3 +1,11 @@
+import { buildNetAccountingEntries } from "../shared/financialVoids";
+import { recordComponentPayment } from "./shipmentSettlement";
+import {
+  loadLifecycle,
+  recordIsActive,
+  isRetired,
+  assertActiveEntity,
+} from "./lifecycle";
 import { canBillShipmentCurrency } from "@shared/officeFinanceVisibility";
 import { createHash } from "node:crypto";
 import { and, eq } from "drizzle-orm";
@@ -48,6 +56,7 @@ import {
   cashRegisters,
   cashMovements,
   shipmentTariffSnapshots,
+  financeReversals,
 } from "../drizzle/schema";
 import type { User } from "../drizzle/schema";
 
@@ -197,6 +206,7 @@ async function accountFor(tx: any, customerId: string) {
     .limit(1)
     .for("update");
   if (!rows[0]) throw new Error("customer_not_found");
+  await assertActiveEntity(tx, "account", customerId);
   return rows[0].data as { id: string; name: string; officeId?: OfficeId };
 }
 async function shipmentFor(tx: any, shipmentId: string) {
@@ -208,7 +218,9 @@ async function shipmentFor(tx: any, shipmentId: string) {
     )
     .limit(1)
     .for("update");
-  if (!rows[0]) throw new Error("shipment_not_found");
+  if (!rows[0] || (rows[0].data as Shipment).deleted)
+    throw new Error("shipment_not_found");
+  await assertActiveEntity(tx, "shipment", shipmentId);
   return { row: rows[0], shipment: rows[0].data as Shipment };
 }
 function assertOffice(scope: FinanceScope, office: OfficeId) {
@@ -220,13 +232,26 @@ export async function financeSnapshot(
   scope: FinanceScope
 ): Promise<FinanceSnapshot> {
   assertFinance(scope);
+  const retired = await loadLifecycle(db);
   const invoices: Invoice[] = [];
   const persistedInvoices: Invoice[] = [];
+  const retiredInvoiceIds: string[] = [];
   for (const row of await db
     .select()
     .from(records)
     .where(eq(records.entity, "invoice"))) {
     const invoice = row.data as Invoice;
+    if (!recordIsActive(retired, "invoice", invoice)) {
+      if (
+        inScope(
+          scope,
+          invoice.finance?.financialOfficeId ?? invoice.officeId ?? "nouakchott"
+        ) &&
+        financeCan(permissionSubject(scope), "invoices", "view")
+      )
+        retiredInvoiceIds.push(invoice.id);
+      continue;
+    }
     persistedInvoices.push(invoice);
     if (!financeCan(permissionSubject(scope), "invoices", "view")) continue;
     if (!canReadOfficeRecord(scope.role, scope.offices, "invoice", invoice))
@@ -234,8 +259,12 @@ export async function financeSnapshot(
     invoices.push(publicInvoice(row));
   }
   const entries: FinanceEntry[] = [];
-  for (const row of await db.select().from(financeEntries)) {
-    const parsed = asEntry(row.data);
+  const originals = (await db.select().from(financeEntries)).map((row: any) =>
+    asEntry(row.data)
+  );
+  const reversals = await db.select().from(financeReversals);
+  for (const parsed of buildNetAccountingEntries(originals, reversals)) {
+    if (isRetired(retired, "finance_entry", parsed.id)) continue;
     if (
       inScope(scope, parsed.officeId) &&
       financeCan(
@@ -248,10 +277,15 @@ export async function financeSnapshot(
   }
   const shipments = (
     await db.select().from(records).where(eq(records.entity, "shipment"))
-  ).map((row: any) => row.data as Shipment);
+  )
+    .map((row: any) => row.data as Shipment)
+    .filter((shipment: Shipment) =>
+      recordIsActive(retired, "shipment", shipment)
+    );
   const snapshot = {
     invoices,
     entries,
+    retiredInvoiceIds,
     homeOffice:
       scope.homeOffice ??
       (scope.offices?.length === 1 ? scope.offices[0] : null),
@@ -616,6 +650,7 @@ async function applySettlement(
     )
     .limit(1)
     .for("update");
+  await assertActiveEntity(tx, "invoice", input.invoiceId);
   if (!rows[0]) throw new Error("invoice_not_found");
   const current = rows[0].data as Invoice;
   const finance = invoiceFinance(current);
@@ -664,6 +699,15 @@ async function applySettlement(
     .set({ version: rows[0].version + 1, data: next, updatedBy: user.id })
     .where(eq(records.id, rows[0].id));
   await insertEntry(tx, ledger);
+  await recordComponentPayment(tx, {
+    invoiceId: current.id,
+    amount: input.amount,
+    actorId: user.id,
+    requestKey: createHash("sha256")
+      .update(String(user.id) + ":" + command.id)
+      .digest("hex"),
+    data: { source: "finance_settlement" },
+  });
   if (payment?.methodId === "cash") {
     const registerId = await ensureOpenCashRegister(
       tx,
@@ -913,6 +957,8 @@ export async function applyFinanceCommand(
   command: FinanceMutationCommand
 ) {
   assertFinanceCommand(scope, command);
+  if (command.kind === "invoice" || command.kind === "settlement")
+    await assertActiveEntity(tx, "invoice", command.payload.invoiceId);
   if (command.kind === "invoice") return applyInvoice(tx, user, scope, command);
   if (command.kind === "expense") return applyExpense(tx, user, scope, command);
   if (command.kind === "customer_movement")
@@ -972,9 +1018,22 @@ export async function financeSync(
             throw new Error("replay_payload_mismatch");
           const replay = prior[0].result as any;
           const replayInvoice = replay.invoice as Invoice | undefined;
+          const retired = await loadLifecycle(tx);
+          if (
+            replayInvoice &&
+            !recordIsActive(retired, "invoice", replayInvoice)
+          )
+            throw new Error("record_permanently_retired");
           const replayEntries = Array.isArray(replay.entries)
             ? (replay.entries as FinanceEntry[])
             : [];
+          if (
+            (Array.isArray(replay.entries) ? replay.entries : []).some(
+              (item: FinanceEntry) =>
+                isRetired(retired, "finance_entry", item.id)
+            )
+          )
+            throw new Error("record_permanently_retired");
           if (
             (replayInvoice &&
               (!financeCan(permissionSubject(scope), "invoices", "view") ||

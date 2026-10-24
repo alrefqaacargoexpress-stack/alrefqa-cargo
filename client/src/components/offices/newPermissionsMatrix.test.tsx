@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { blankPermissions } from "@shared/permissions";
+import {
+  blankPermissions,
+  permissionKeys,
+} from "../../../../shared/permissions";
 import NewPermissionsMatrix from "./newPermissionsMatrix";
 
 vi.mock("@/contexts/LanguageContext", () => ({
@@ -16,7 +19,9 @@ describe("new permissions matrix", () => {
         canEdit
       />
     );
-    expect((html.match(/aria-label=/g) ?? []).length).toBe(20);
+    expect((html.match(/aria-label=/g) ?? []).length).toBe(
+      permissionKeys.length
+    );
     expect(html).toContain("Assign offices");
     expect(html).toContain("Root administrator only");
   });

@@ -1,4 +1,5 @@
 import type { TrackingLanguage } from "./trackingCopy";
+import type { PublicTrackingPaymentStatus } from "@shared/publicTracking";
 
 export type PublicTrackingCopy = typeof publicTrackingCopy.ar;
 
@@ -22,6 +23,14 @@ export const publicTrackingCopy = {
       "يلزم الاتصال بالخادم لعرض الحالة الحالية. حاول مجددًا عند عودة الاتصال.",
     cooldownError: "تم تجاوز عدد المحاولات. انتظر قليلًا ثم حاول مجددًا.",
     status: "حالة الشحنة",
+    paymentStatus: "حالة الدفع",
+    paymentStatuses: {
+      unbilled: "غير مفوتر",
+      paid: "مدفوع",
+      partial: "مدفوع جزئيًا",
+      on_account: "آجل",
+      review: "بحاجة لمراجعة",
+    } satisfies Record<PublicTrackingPaymentStatus, string>,
     trackingNumber: "رقم الشحنة",
     branch: "الموقع الحالي",
     lastUpdated: "آخر تحديث",
@@ -86,6 +95,14 @@ export const publicTrackingCopy = {
       "A server connection is required to show the current status. Try again when you are online.",
     cooldownError: "Too many attempts. Please wait a moment and try again.",
     status: "Shipment status",
+    paymentStatus: "Payment status",
+    paymentStatuses: {
+      unbilled: "Unbilled",
+      paid: "Paid",
+      partial: "Partially paid",
+      on_account: "On account",
+      review: "Needs review",
+    } satisfies Record<PublicTrackingPaymentStatus, string>,
     trackingNumber: "Shipment number",
     branch: "Current location",
     lastUpdated: "Last updated",
@@ -148,6 +165,14 @@ export const publicTrackingCopy = {
     offlineError: "查看当前状态需要连接服务器。网络恢复后请重试。",
     cooldownError: "尝试次数过多。请稍等片刻后重试。",
     status: "货件状态",
+    paymentStatus: "付款状态",
+    paymentStatuses: {
+      unbilled: "未开票",
+      paid: "已付款",
+      partial: "部分付款",
+      on_account: "赊账",
+      review: "需要审核",
+    } satisfies Record<PublicTrackingPaymentStatus, string>,
     trackingNumber: "货件编号",
     branch: "当前位置",
     lastUpdated: "最后更新",
@@ -214,6 +239,14 @@ export const publicTrackingCopy = {
     cooldownError:
       "Çok fazla deneme yapıldı. Lütfen biraz bekleyip tekrar deneyin.",
     status: "Gönderi durumu",
+    paymentStatus: "Ödeme durumu",
+    paymentStatuses: {
+      unbilled: "Faturalanmamış",
+      paid: "Ödendi",
+      partial: "Kısmen ödendi",
+      on_account: "Veresiye",
+      review: "İnceleme gerekli",
+    } satisfies Record<PublicTrackingPaymentStatus, string>,
     trackingNumber: "Gönderi numarası",
     branch: "Mevcut konum",
     lastUpdated: "Son güncelleme",

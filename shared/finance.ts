@@ -290,6 +290,7 @@ export const financeEntrySchema = z
     customerId: id.optional(),
     customerName: z.string().max(240).optional(),
     payment: invoicePaymentSchema.optional(),
+    cashEffect: z.literal("none").optional(),
   })
   .strict();
 export type FinanceEntry = z.infer<typeof financeEntrySchema>;
@@ -311,6 +312,7 @@ export const financeSnapshotSchema = z
   .object({
     invoices: z.array(financialInvoiceRecordSchema),
     entries: z.array(financeEntrySchema),
+    retiredInvoiceIds: z.array(id).optional().default([]),
     homeOffice: officeIdSchema.nullable(),
     offices: z.array(officeIdSchema).nullable(),
     lastReadAt: z.string().datetime().nullable(),
@@ -375,6 +377,7 @@ export const financeSnapshotSchema = z
 export type FinanceSnapshot = {
   invoices: Invoice[];
   entries: FinanceEntry[];
+  retiredInvoiceIds?: string[];
   homeOffice: OfficeId | null;
   offices: OfficeId[] | null;
   lastReadAt: string | null;
@@ -781,7 +784,7 @@ export function summarizeOfficeFinance(
     if (e.kind === "debt_payment") row.debts = add(row.debts, -e.amount);
     if (e.kind === "collection" || e.kind === "debt_payment")
       row.collections = add(row.collections, e.amount);
-    if (e.kind === "customer_credit")
+    if (e.kind === "customer_credit" && e.cashEffect !== "none")
       row.collections = add(row.collections, e.amount);
     if (e.kind === "customer_debit")
       row.collections = add(row.collections, -e.amount);

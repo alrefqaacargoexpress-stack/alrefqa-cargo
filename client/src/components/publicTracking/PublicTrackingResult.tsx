@@ -108,6 +108,14 @@ export default function PublicTrackingResult({
               {shipment.tracking}
             </strong>
           </span>
+          {shipment.paymentStatus && (
+            <span>
+              {copy.paymentStatus}:{" "}
+              <strong className="text-white">
+                {copy.paymentStatuses[shipment.paymentStatus]}
+              </strong>
+            </span>
+          )}
         </div>
       </div>
 

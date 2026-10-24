@@ -12,6 +12,8 @@ import {
   uniqueIndex,
 } from "drizzle-orm/mysql-core";
 
+import { sql } from "drizzle-orm";
+
 import type { PermissionMap } from "../shared/permissions";
 /** Core user table backing auth flow. */
 export const users = mysqlTable("users", {
@@ -466,3 +468,124 @@ export const officeTariffHistory = mysqlTable(
   ]
 );
 export type OfficeTariffHistoryRow = typeof officeTariffHistory.$inferSelect;
+
+/** Permanent operational tombstones. Originals remain untouched for forensic audit. */
+export const entityLifecycle = mysqlTable(
+  "entity_lifecycle",
+  {
+    id: varchar("id", { length: 128 }).primaryKey(),
+    entity: mysqlEnum("entity", ["shipment", "invoice", "finance_entry", "employee", "public_employee", "account"]).notNull(),
+    recordId: varchar("recordId", { length: 128 }).notNull(),
+    action: mysqlEnum("action", ["delete", "void", "disable"]).notNull(),
+    officeId: varchar("officeId", { length: 32 }),
+    reason: varchar("reason", { length: 500 }).notNull(),
+    expectedVersion: int("expectedVersion").notNull(),
+    actorId: int("actorId").notNull().references(() => users.id),
+    requestKey: varchar("requestKey", { length: 128 }).notNull(),
+    snapshot: json("snapshot"),
+    createdAt: timestamp("createdAt", { fsp: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
+  },
+  table => [
+    uniqueIndex("entity_lifecycle_record_unique").on(table.entity, table.recordId),
+    uniqueIndex("entity_lifecycle_request_unique").on(table.actorId, table.requestKey),
+    index("entity_lifecycle_office_idx").on(table.officeId),
+  ]
+);
+
+/** Signed contra effects linked to immutable original entries; never delete posted facts. */
+export const financeReversals = mysqlTable(
+  "finance_reversals",
+  {
+    id: varchar("id", { length: 128 }).primaryKey(),
+    lifecycleId: varchar("lifecycleId", { length: 128 }).notNull(),
+    originalEntryId: varchar("originalEntryId", { length: 128 }).notNull(),
+    originalKind: varchar("originalKind", { length: 64 }).notNull(),
+    officeId: varchar("officeId", { length: 32 }).notNull(),
+    currency: mysqlEnum("currency", financeCurrencies).notNull(),
+    amount: decimal("amount", { precision: 18, scale: 2 }).notNull(),
+    invoiceId: varchar("invoiceId", { length: 128 }),
+    shipmentId: varchar("shipmentId", { length: 128 }),
+    customerId: varchar("customerId", { length: 128 }),
+    actorId: int("actorId").notNull().references(() => users.id),
+    data: json("data").notNull(),
+    createdAt: timestamp("createdAt", { fsp: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
+  },
+  table => [
+    uniqueIndex("finance_reversals_original_unique").on(table.originalEntryId),
+    index("finance_reversals_lifecycle_idx").on(table.lifecycleId),
+    index("finance_reversals_office_currency_idx").on(table.officeId, table.currency),
+  ]
+);
+
+/** Frozen per-good charge components; export and destination charges are not billed twice. */
+export const shipmentChargeComponents = mysqlTable(
+  "shipment_charge_components",
+  {
+    id: varchar("id", { length: 128 }).primaryKey(),
+    shipmentId: varchar("shipmentId", { length: 128 }).notNull(),
+    goodsId: varchar("goodsId", { length: 128 }).notNull(),
+    chargeKey: varchar("chargeKey", { length: 128 }).notNull(),
+    kind: mysqlEnum("kind", ["export", "destination_local"]).notNull(),
+    officeId: varchar("officeId", { length: 32 }).notNull(),
+    currency: mysqlEnum("currency", financeCurrencies).notNull(),
+    amount: decimal("amount", { precision: 18, scale: 2 }).notNull(),
+    actorId: int("actorId").notNull().references(() => users.id),
+    requestKey: varchar("requestKey", { length: 128 }).notNull(),
+    data: json("data").notNull(),
+    createdAt: timestamp("createdAt", { fsp: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
+  },
+  table => [
+    uniqueIndex("shipment_charge_component_unique").on(table.shipmentId, table.goodsId, table.chargeKey),
+    index("shipment_charge_components_office_idx").on(table.officeId, table.currency),
+    index("shipment_charge_components_shipment_idx").on(table.shipmentId),
+  ]
+);
+
+/** Append-only billing/payment/void allocations, not a replacement for old goods claims. */
+export const shipmentChargeAllocations = mysqlTable(
+  "shipment_charge_allocations",
+  {
+    id: varchar("id", { length: 128 }).primaryKey(),
+    componentId: varchar("componentId", { length: 128 }).notNull(),
+    invoiceId: varchar("invoiceId", { length: 128 }).notNull(),
+    kind: mysqlEnum("kind", ["invoice", "payment", "void"]).notNull(),
+    amount: decimal("amount", { precision: 18, scale: 2 }).notNull(),
+    actorId: int("actorId").notNull().references(() => users.id),
+    requestKey: varchar("requestKey", { length: 128 }).notNull(),
+    data: json("data"),
+    createdAt: timestamp("createdAt", { fsp: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
+  },
+  table => [
+    uniqueIndex("shipment_charge_allocation_request_unique").on(table.componentId, table.kind, table.requestKey),
+    index("shipment_charge_allocations_invoice_idx").on(table.invoiceId),
+    index("shipment_charge_allocations_component_idx").on(table.componentId),
+  ]
+);
+
+/** Explicit availability events; role and office snapshots never grant authority. */
+export const dutyEvents = mysqlTable(
+  "duty_events",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    userId: int("userId").notNull().references(() => users.id),
+    actorId: int("actorId").notNull().references(() => users.id),
+    role: mysqlEnum("role", appRoleValues).notNull(),
+    officeId: varchar("officeId", { length: 32 }).notNull(),
+    status: mysqlEnum("status", ["on", "off"]).notNull(),
+    reason: varchar("reason", { length: 64 }).notNull(),
+    membershipVersion: int("membershipVersion").notNull(),
+    expiresAt: timestamp("expiresAt", { fsp: 3 }),
+    requestKey: varchar("requestKey", { length: 128 }).notNull(),
+    createdAt: timestamp("createdAt", { fsp: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
+  },
+  table => [
+    uniqueIndex("duty_events_request_unique").on(table.userId, table.requestKey),
+    index("duty_events_user_id_idx").on(table.userId, table.id),
+    index("duty_events_office_id_idx").on(table.officeId, table.id),
+  ]
+);
+export type EntityLifecycleRow = typeof entityLifecycle.$inferSelect;
+export type FinanceReversalRow = typeof financeReversals.$inferSelect;
+export type ShipmentChargeComponentRow = typeof shipmentChargeComponents.$inferSelect;
+export type ShipmentChargeAllocationRow = typeof shipmentChargeAllocations.$inferSelect;
+export type DutyEventRow = typeof dutyEvents.$inferSelect;

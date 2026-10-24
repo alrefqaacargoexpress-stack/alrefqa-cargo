@@ -48,7 +48,6 @@ import {
   type PackingCarton,
   type PackingGoods,
 } from "@shared/packing";
-import type { Shipment } from "@shared/operations";
 
 export default function ShipmentPacking() {
   const workspace = useOperationsWorkspace();
@@ -70,19 +69,6 @@ export default function ShipmentPacking() {
   const [showDeleted, setShowDeleted] = useState(false);
   const packed =
     sourceShipment && isPackedShipment(sourceShipment) ? sourceShipment : null;
-
-  if (sourceShipment?.deleted)
-    return (
-      <DeletedShipmentDetail
-        shipment={sourceShipment}
-        workspace={workspace}
-        c={c}
-        language={language}
-        onRestored={() =>
-          navigate(`/operations/shipments/${sourceShipment.id}`)
-        }
-      />
-    );
 
   if (!packed)
     return (
@@ -560,98 +546,6 @@ export default function ShipmentPacking() {
           </span>
         )}
       </div>
-    </PackingLayout>
-  );
-}
-
-function DeletedShipmentDetail({
-  shipment,
-  workspace,
-  c,
-  language,
-  onRestored,
-}: {
-  shipment: Shipment;
-  workspace: ReturnType<typeof useOperationsWorkspace>;
-  c: ReturnType<typeof copyFor>;
-  language: string;
-  onRestored: () => void;
-}) {
-  const statusLabel =
-    shipment.status === "قيد التجهيز"
-      ? c.open
-      : shipment.status === "في الطريق"
-        ? c.inTransit
-        : shipment.status === "مسلّمة"
-          ? c.delivered
-          : shipment.status;
-  return (
-    <PackingLayout
-      workspace={workspace}
-      title={c.shipmentDetails}
-      description={c.shipmentDeleted}
-    >
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <Link
-          href="/operations/shipments"
-          className="inline-flex items-center gap-1 text-sm font-bold text-[#2d6380]"
-        >
-          {language === "ar" ? (
-            <ArrowRight size={16} />
-          ) : (
-            <ArrowLeft size={16} />
-          )}
-          {c.returnToList}
-        </Link>
-        <Link
-          href="/operations/shipments?deleted=1"
-          className="text-sm font-bold text-[#2d6380] underline"
-        >
-          {c.deletedShipments}
-        </Link>
-      </div>
-      <section className="rounded-3xl border border-amber-200 bg-amber-50 p-5 shadow-sm sm:p-7">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <p className="text-sm font-black text-amber-900">
-              {c.shipmentDeleted}
-            </p>
-            <div className="mt-2 flex flex-wrap items-center gap-2">
-              <TrackingNumber value={shipment.tracking} />
-              <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-bold text-amber-900">
-                {c.deleted}
-              </span>
-            </div>
-            <p className="mt-3 text-sm text-amber-900">
-              {c.shipmentDeletionHint}
-            </p>
-          </div>
-          <ShipmentDeleteActions
-            shipment={shipment}
-            workspace={workspace}
-            c={c}
-            statusLabel={statusLabel}
-            onSuccess={onRestored}
-          />
-        </div>
-        <div className="mt-5 grid grid-cols-2 gap-3 border-y border-amber-200 py-4 text-sm sm:grid-cols-4">
-          <Metric label={c.status} value={statusLabel} />
-          <Metric label={c.route} value={shipment.route || "—"} />
-          <Metric
-            label={c.deletedAt}
-            value={
-              shipment.deleted
-                ? new Date(shipment.deleted.at).toLocaleString()
-                : "—"
-            }
-          />
-          <Metric
-            label={c.deletionReason}
-            value={shipment.deleted?.reason || "—"}
-          />
-        </div>
-        <p className="mt-4 text-xs text-amber-900">{c.deletionRetainsData}</p>
-      </section>
     </PackingLayout>
   );
 }

@@ -9,6 +9,7 @@ import { useFinanceWorkspace } from "@/hooks/useFinanceWorkspace";
 import PackingLayout from "@/components/packing/PackingLayout";
 import FinanceExcelPanel from "@/components/finance/FinanceExcelPanel";
 import InvoiceFinancialForm from "@/components/finance/InvoiceFinancialForm";
+import FinancialVoidPanel from "@/components/finance/FinancialVoidPanel";
 import { canWriteFinanceUi, invoiceCopyFor } from "@/lib/financeInvoiceCopy";
 import { canReadAnyFinance } from "@shared/permissions";
 import { trpc } from "@/lib/trpc";
@@ -542,6 +543,12 @@ export default function FinanceInvoices() {
             language={language}
             c={c}
             selectedInvoiceId={selectedInvoice?.id}
+          />
+          <FinancialVoidPanel
+            workspace={workspace}
+            language={language}
+            mode="invoice"
+            invoices={workspace.invoices}
           />
         </section>
         {!workspace.online && (

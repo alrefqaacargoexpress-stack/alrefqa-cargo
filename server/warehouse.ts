@@ -1,3 +1,4 @@
+import { loadLifecycle, recordIsActive, assertActiveEntity } from "./lifecycle";
 import { createHash } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
@@ -179,12 +180,17 @@ export async function readWarehouseSnapshot(
 ): Promise<WarehouseSnapshot> {
   const scope = await readOfficeScope(db, user);
   if (!canReadWarehouse(scope)) forbidden();
+  const retired = await loadLifecycle(db);
   const rows = await rowsFor(db);
   const shipments = (
     rows as Array<{ data: Shipment; version: number }>
   ).flatMap(row => {
     const shipment = { ...row.data, version: row.version };
-    if (!arrivedInNouakchott(shipment)) return [];
+    if (
+      !recordIsActive(retired, "shipment", shipment) ||
+      !arrivedInNouakchott(shipment)
+    )
+      return [];
     if (!recordVisible(scope, "shipment", shipment)) return [];
     return [warehousePublicShipment(shipment, scope.role, scope.offices)];
   });
@@ -226,6 +232,7 @@ export async function commitWarehouseStorage(
   if (!db.transaction) throw new Error("warehouse_transaction_required");
   return db.transaction(async tx => {
     const scope = await readOfficeScope(tx, user);
+    await assertActiveEntity(tx, "shipment", input.shipmentId);
     if (!canWriteWarehouse(scope))
       forbidden("warehouse_staff_nouakchott_required");
     const key = receiptKey(input.requestId);

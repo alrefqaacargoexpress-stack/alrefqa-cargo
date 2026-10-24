@@ -7,6 +7,16 @@ import {
   type SyncResult,
 } from "@shared/operations";
 import { workspaceSchema } from "@shared/localValidation";
+import {
+  archiveRetirementConflicts,
+  downloadRetirementArchive,
+  isRememberedRetirement,
+  rememberRetirements,
+  rememberedRetirements,
+  retirementKey,
+  type RetiredRecord,
+  type RetirementArchiveItem,
+} from "./retirementStore";
 export type {
   Account,
   Shipment,
@@ -20,6 +30,7 @@ export type Workspace = {
   queue: PendingChange[];
   revision?: number;
 };
+export type { RetiredRecord } from "./retirementStore";
 const PREFIX = "alrefqa-copy-workspace-v2-";
 const collections = {
   account: "accounts",
@@ -53,7 +64,11 @@ function parseStored(raw: string): Workspace {
 }
 export function loadWorkspace(userId: number | string): Workspace {
   const raw = storage().getItem(`${PREFIX}${userId}`);
-  return raw ? parseStored(raw) : emptyWorkspace();
+  return applyRetirements(
+    userId,
+    raw ? parseStored(raw) : emptyWorkspace(),
+    []
+  );
 }
 let lockDatabase: Promise<IDBDatabase> | null = null;
 function openLockDatabase(): Promise<IDBDatabase> {
@@ -145,8 +160,14 @@ export function stageChange(
   entity: Entity,
   data: EntityRecord,
   label: string,
-  action?: PendingChange["action"]
+  action?: PendingChange["action"],
+  userId?: number | string
 ): Workspace {
+  if (
+    userId !== undefined &&
+    isRememberedRetirement(userId, { entity, recordId: data.id })
+  )
+    throw new Error("record_permanently_retired");
   const key = collections[entity];
   const pending = workspace.queue.filter(
     change => change.entity === entity && change.recordId === data.id
@@ -194,9 +215,15 @@ export function stageChange(
 }
 export function mergeSnapshot(
   workspace: Workspace,
-  snapshot: LocalState
+  snapshot: LocalState,
+  userId?: number | string
 ): Workspace {
-  let state = clone(snapshot);
+  const { retiredRecords: _retiredRecords, ...snapshotState } =
+    snapshot as LocalState & {
+      retiredRecords?: RetiredRecord[];
+    };
+  void _retiredRecords;
+  let state = clone(snapshotState);
   for (const entity of ["account", "shipment", "invoice"] as const)
     for (const record of workspace.state[collections[entity]])
       if (record.scope === "local") state = putRecord(state, entity, record);
@@ -205,11 +232,20 @@ export function mergeSnapshot(
       ...change.data,
       scope: "pending",
     });
-  return { ...workspace, state, queue: workspace.queue };
+  const merged = { ...workspace, state, queue: workspace.queue };
+  return userId === undefined
+    ? merged
+    : applyRetirements(
+        userId,
+        merged,
+        (snapshot as LocalState & { retiredRecords?: RetiredRecord[] })
+          .retiredRecords ?? []
+      );
 }
 export function applySyncResult(
   workspace: Workspace,
-  result: SyncResult
+  result: SyncResult,
+  userId?: number | string
 ): Workspace {
   const appliedIds = new Set(result.applied.map(change => change.changeId));
   const queue = workspace.queue.filter(change => !appliedIds.has(change.id));
@@ -226,7 +262,7 @@ export function applySyncResult(
         ...acknowledged.record,
         scope: "shared",
       });
-  return {
+  const next = {
     ...workspace,
     state: {
       ...state,
@@ -236,14 +272,33 @@ export function applySyncResult(
     },
     queue,
   };
+  if (userId === undefined) return next;
+  const retired = result.applied
+    .filter(
+      change =>
+        change.entity === "shipment" &&
+        "deleted" in change.record &&
+        Boolean(change.record.deleted)
+    )
+    .map(change => ({ entity: change.entity, recordId: change.record.id }));
+  return applyRetirements(userId, next, retired);
 }
 /** Explicit retry creates a new request, never a new record or an automatic rebase. */
 export function retryPendingChange(
   workspace: Workspace,
-  changeId: string
+  changeId: string,
+  userId?: number | string
 ): Workspace {
-  if (!workspace.queue.some(change => change.id === changeId))
-    throw new Error("pending_change_not_found");
+  const change = workspace.queue.find(item => item.id === changeId);
+  if (!change) throw new Error("pending_change_not_found");
+  if (
+    userId !== undefined &&
+    isRememberedRetirement(userId, {
+      entity: change.entity,
+      recordId: change.recordId,
+    })
+  )
+    throw new Error("record_permanently_retired");
   return {
     ...workspace,
     queue: workspace.queue.map(change =>
@@ -259,12 +314,26 @@ export function retryPendingChange(
 }
 export function downloadLocalArchive(userId?: number | string): void {
   const store = storage();
+  const rawWorkspace =
+    userId === undefined ? null : store.getItem(`${PREFIX}${userId}`);
+  let workspace = rawWorkspace;
+  if (userId !== undefined && rawWorkspace) {
+    try {
+      workspace = JSON.stringify(loadWorkspace(userId));
+    } catch {
+      // Keep an unreadable original available for manual recovery.
+      workspace = rawWorkspace;
+    }
+  }
   const archive = {
     exportedAt: new Date().toISOString(),
     legacyState: store.getItem("alrefqa-copy-state-v1"),
     legacyQueue: store.getItem("alrefqa-copy-queue-v1"),
-    workspace:
-      userId === undefined ? null : store.getItem(`${PREFIX}${userId}`),
+    workspace,
+    retirementStore:
+      userId === undefined
+        ? null
+        : store.getItem(`alrefqaa-retirements-v1-${userId}`),
   };
   const url = URL.createObjectURL(
     new Blob([JSON.stringify(archive, null, 2)], { type: "application/json" })
@@ -274,6 +343,57 @@ export function downloadLocalArchive(userId?: number | string): void {
   anchor.download = "alrefqaa-local-archive.json";
   anchor.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+export { downloadRetirementArchive } from "./retirementStore";
+
+function applyRetirements(
+  userId: number | string,
+  workspace: Workspace,
+  incoming: readonly RetiredRecord[]
+): Workspace {
+  const retired = rememberRetirements(userId, incoming);
+  const retiredKeys = new Set(retired.map(retirementKey));
+  if (!retiredKeys.size) return workspace;
+  const conflicts: RetirementArchiveItem[] = [];
+  for (const item of retired) {
+    const records =
+      item.entity === "account"
+        ? workspace.state.accounts
+        : item.entity === "shipment"
+          ? workspace.state.shipments
+          : workspace.state.invoices;
+    const record = records.find(candidate => candidate.id === item.recordId);
+    const pending = workspace.queue.find(
+      change =>
+        change.entity === item.entity && change.recordId === item.recordId
+    );
+    if (record || pending)
+      conflicts.push({
+        archivedAt: new Date().toISOString(),
+        retirement: item,
+        ...(record ? { record } : {}),
+        ...(pending ? { pending } : {}),
+      });
+  }
+  archiveRetirementConflicts(userId, conflicts);
+  return {
+    ...workspace,
+    state: {
+      ...workspace.state,
+      accounts: workspace.state.accounts.filter(
+        record => !retiredKeys.has(`account:${record.id}`)
+      ),
+      shipments: workspace.state.shipments.filter(
+        record => !retiredKeys.has(`shipment:${record.id}`) && !record.deleted
+      ),
+      invoices: workspace.state.invoices.filter(
+        record => !retiredKeys.has(`invoice:${record.id}`)
+      ),
+    },
+    queue: workspace.queue.filter(
+      change => !retiredKeys.has(`${change.entity}:${change.recordId}`)
+    ),
+  };
 }
 export function formatMRU(value: number, locale = "ar-MR"): string {
   return new Intl.NumberFormat(locale, { maximumFractionDigits: 2 }).format(
