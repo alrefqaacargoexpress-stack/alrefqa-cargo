@@ -29,6 +29,7 @@ import {
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useOperationsWorkspace } from "@/hooks/useOperationsWorkspace";
 import { copyFor } from "@/lib/packingCopy";
+import { packingPricingView } from "@/lib/packingTariffPreview";
 import {
   addPackingGoods,
   changePackingStatus,
@@ -48,6 +49,7 @@ import {
   type PackingCarton,
   type PackingGoods,
 } from "@shared/packing";
+import { permissionAllowed } from "@shared/permissions";
 
 export default function ShipmentPacking() {
   const workspace = useOperationsWorkspace();
@@ -90,12 +92,22 @@ export default function ShipmentPacking() {
       </PackingLayout>
     );
 
-  const sourceRateApproved =
-    Number.isFinite(packed.packing.pricePerKg) && packed.packing.pricePerKg > 0;
-  const totals = packingTotals(
-    sourceRateApproved ? packed.packing : { ...packed.packing, pricePerKg: 0 }
-  );
-  const mruTotals = packingTotalsMRU(packed.packing);
+  const canViewFinance =
+    workspace.showFinance &&
+    permissionAllowed(
+      {
+        role: workspace.role,
+        offices: workspace.offices,
+        permissions: workspace.permissions,
+      },
+      "shipment_prices",
+      "view"
+    );
+  const pricing = packingPricingView(packed, workspace.queue, canViewFinance);
+  const packingForDisplay = pricing.packingForDisplay;
+  const sourceRateApproved = packingForDisplay.pricePerKg > 0;
+  const totals = packingTotals(packingForDisplay);
+  const mruTotals = packingTotalsMRU(packingForDisplay);
   const canEdit = workspace.canEditShipments && packed.status === "قيد التجهيز";
   const canMarkDelivered =
     workspace.canUpdateTracking && packed.status === "في الطريق";
@@ -299,50 +311,70 @@ export default function ShipmentPacking() {
           <Metric
             label={c.totalCost}
             value={
-              workspace.showFinance
+              canViewFinance
                 ? sourceRateApproved
                   ? `${formatLocalNumber(totals.amount, language, 2)} ${sourceCurrency[packed.packing.source]}`
-                  : c.sourceRateNotApproved
+                  : pricing.isPendingCreation && pricing.issue
+                    ? c.previewUnavailable
+                    : c.sourceRateNotApproved
                 : c.amountHidden
             }
           />
           <Metric
             label={c.mru}
             value={
-              workspace.showFinance && mruTotals
+              canViewFinance && mruTotals
                 ? `${formatLocalNumber(mruTotals.amount, language, 2)} ${c.mru}`
-                : workspace.showFinance
+                : canViewFinance
                   ? c.noPriceSet
                   : c.amountHidden
             }
           />
         </div>
-        {(packed.packing.service || packed.packing.rateSnapshot) && (
-          <PublishedPackingTariff
-            service={packed.packing.service}
-            snapshot={packed.packing.rateSnapshot}
-            c={c}
-            language={language}
-            confirmed={packed.scope === "shared"}
-          />
-        )}
-        {workspace.showFinance && (
+        {canViewFinance &&
+          (packed.packing.service || packed.packing.rateSnapshot) && (
+            <PublishedPackingTariff
+              service={packed.packing.service}
+              snapshot={
+                pricing.isPendingCreation
+                  ? pricing.isPreview && packed.packing.rateSnapshot
+                    ? {
+                        ...packed.packing.rateSnapshot,
+                        sourceRate: pricing.hasSourceRate
+                          ? packed.packing.rateSnapshot.sourceRate
+                          : null,
+                        nouakchottRate: pricing.hasMruRate
+                          ? packed.packing.rateSnapshot.nouakchottRate
+                          : null,
+                      }
+                    : undefined
+                  : packed.packing.rateSnapshot
+              }
+              c={c}
+              language={language}
+              confirmed={pricing.confirmed}
+              preview={pricing.isPendingCreation}
+            />
+          )}
+        {canViewFinance && (
           <div className="mt-3 flex flex-wrap gap-4 text-xs text-[#718088]">
             <span>
               {c.pricePerKg}:{" "}
               {sourceRateApproved
-                ? `${formatLocalNumber(packed.packing.pricePerKg, language, 2)} ${sourceCurrency[packed.packing.source]}`
-                : c.sourceRateNotApproved}
+                ? `${formatLocalNumber(packingForDisplay.pricePerKg, language, 2)} ${sourceCurrency[packed.packing.source]}`
+                : pricing.isPendingCreation && pricing.issue
+                  ? c.previewUnavailable
+                  : c.sourceRateNotApproved}
             </span>
             <span>
               {c.pricePerKgMRU}:{" "}
-              {packed.packing.pricePerKgMRU === undefined
+              {packingForDisplay.pricePerKgMRU === undefined
                 ? c.noPriceSet
-                : `${formatLocalNumber(packed.packing.pricePerKgMRU, language, 2)} ${c.mru}`}
+                : `${formatLocalNumber(packingForDisplay.pricePerKgMRU, language, 2)} ${c.mru}`}
             </span>
           </div>
         )}
-        {!workspace.showFinance && (
+        {!canViewFinance && (
           <p className="mt-3 rounded-xl bg-slate-50 px-3 py-2 text-xs text-[#718088]">
             {c.amountHidden}
           </p>
@@ -471,10 +503,10 @@ export default function ShipmentPacking() {
             carton={carton}
             c={c}
             language={language}
-            showFinance={workspace.showFinance}
+            showFinance={canViewFinance}
             source={packed.packing.source}
-            sourcePrice={packed.packing.pricePerKg}
-            mruPrice={packed.packing.pricePerKgMRU}
+            sourcePrice={packingForDisplay.pricePerKg}
+            mruPrice={packingForDisplay.pricePerKgMRU}
             open={
               canEdit &&
               !saving &&
@@ -493,9 +525,10 @@ export default function ShipmentPacking() {
 
       <CustomerSummary
         packed={packed}
+        packingForDisplay={packingForDisplay}
         c={c}
         language={language}
-        showFinance={workspace.showFinance}
+        showFinance={canViewFinance}
       />
       <div className="mt-5 flex flex-wrap gap-3">
         {packed.status === "قيد التجهيز" && (
@@ -705,26 +738,29 @@ function CartonCard({
 
 function CustomerSummary({
   packed,
+  packingForDisplay,
   c,
   language,
   showFinance,
 }: {
   packed: PackedShipment;
+  packingForDisplay: PackedShipment["packing"];
   c: ReturnType<typeof copyFor>;
   language: string;
   showFinance: boolean;
 }) {
-  const sourceRateApproved =
-    Number.isFinite(packed.packing.pricePerKg) && packed.packing.pricePerKg > 0;
+  const sourceRateApproved = packingForDisplay.pricePerKg > 0;
   const customers = packingCustomers(
-    sourceRateApproved ? packed.packing : { ...packed.packing, pricePerKg: 0 }
+    sourceRateApproved
+      ? packingForDisplay
+      : { ...packingForDisplay, pricePerKg: 0 }
   );
   const mruCustomers =
-    packed.packing.pricePerKgMRU === undefined
+    packingForDisplay.pricePerKgMRU === undefined
       ? null
       : packingCustomers({
-          ...packed.packing,
-          pricePerKg: packed.packing.pricePerKgMRU,
+          ...packingForDisplay,
+          pricePerKg: packingForDisplay.pricePerKgMRU,
         });
   if (!customers.length) return null;
   return (

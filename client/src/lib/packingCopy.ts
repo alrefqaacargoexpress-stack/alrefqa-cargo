@@ -15,6 +15,9 @@ export interface PackingCopy extends Record<string, string> {
   sensitive: string;
   sea: string;
   publicTariff: string;
+  previewPending: string;
+  previewNotice: string;
+  previewUnavailable: string;
   tariffUndefined: string;
   pricePerKg: string;
   sourceRateNotApproved: string;
@@ -174,6 +177,9 @@ const common: PackingCopy = {
   sensitive: "",
   sea: "",
   publicTariff: "",
+  previewPending: "",
+  previewNotice: "",
+  previewUnavailable: "",
   tariffUndefined: "",
   pricePerKg: "",
   sourceRateNotApproved: "",
@@ -336,6 +342,11 @@ export const packingCopy: Record<PackingLanguage, PackingCopy> = {
     sensitive: "حساس",
     sea: "بحري",
     publicTariff: "التعرفة المعلنة للمكتب",
+    previewPending:
+      "حسب التعرفة المعلنة — بانتظار تثبيت المزامنة. عند اعتماد التعرفة الصالحة يثبتها الخادم تلقائيًا.",
+    previewNotice: "قد يختلف الحساب عند تحقق المكتب من التعرفة على الخادم.",
+    previewUnavailable:
+      "التعرفة المعلنة غير متاحة أو غير مطابقة بعد؛ لا يعني ذلك أن السعر صفر أو أن الشحن مجاني.",
     tariffUndefined: "غير محدد",
     pricePerKg: "السعر لكل كغ",
     sourceRateNotApproved: "سعر المصدر غير معتمد",
@@ -503,6 +514,12 @@ export const packingCopy: Record<PackingLanguage, PackingCopy> = {
     sensitive: "Sensitive",
     sea: "Sea",
     publicTariff: "Published office tariff",
+    previewPending:
+      "Using the published tariff — awaiting sync confirmation. When valid, the server adopts it automatically.",
+    previewNotice:
+      "The amount may differ when the office verifies the tariff on the server.",
+    previewUnavailable:
+      "The published tariff is unavailable or does not match yet; this does not mean a zero rate or free shipping.",
     tariffUndefined: "Undefined",
     pricePerKg: "Price per kg",
     sourceRateNotApproved: "Source rate not approved",
@@ -670,6 +687,11 @@ export const packingCopy: Record<PackingLanguage, PackingCopy> = {
     sensitive: "敏感货",
     sea: "海运",
     publicTariff: "办公室公布的费率",
+    previewPending:
+      "按公布费率计算 — 等待同步确认。有效费率会由服务器自动采用。",
+    previewNotice: "办公室在服务器上核验费率时，金额可能会有所不同。",
+    previewUnavailable:
+      "公布的费率尚不可用或不匹配；这不表示费率为零或免费运输。",
     tariffUndefined: "未定义",
     pricePerKg: "每公斤价格",
     sourceRateNotApproved: "来源费率未获批准",
@@ -834,6 +856,12 @@ export const packingCopy: Record<PackingLanguage, PackingCopy> = {
     sensitive: "Hassas",
     sea: "Deniz",
     publicTariff: "İlan edilen ofis tarifesi",
+    previewPending:
+      "İlan edilen tarifeye göre — senkronizasyon onayı bekleniyor. Geçerli tarife sunucu tarafından otomatik uygulanır.",
+    previewNotice:
+      "Ofis tarifeyi sunucuda doğruladığında tutar farklı olabilir.",
+    previewUnavailable:
+      "İlan edilen tarife henüz kullanılamıyor veya eşleşmiyor; bu, oranın sıfır ya da gönderinin ücretsiz olduğu anlamına gelmez.",
     tariffUndefined: "Tanımsız",
     pricePerKg: "Kg başına fiyat",
     sourceRateNotApproved: "Kaynak ücreti onaylanmadı",

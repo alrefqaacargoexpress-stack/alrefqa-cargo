@@ -9,12 +9,14 @@ export default function PublishedPackingTariff({
   c,
   language,
   confirmed = false,
+  preview = false,
 }: {
   snapshot?: PackingSession["rateSnapshot"];
   service?: PackingService;
   c: Copy;
   language: "ar" | "en" | "zh" | "tr";
   confirmed?: boolean;
+  preview?: boolean;
 }) {
   const labels = {
     ar: {
@@ -101,9 +103,16 @@ export default function PublishedPackingTariff({
       {nonKg && (
         <p className="mt-2 text-xs text-amber-900">{labels.different}</p>
       )}
-      <p className="mt-3 text-xs text-[#52636e]">
-        {confirmed && snapshot ? labels.fixed : labels.pending}
-      </p>
+      {preview ? (
+        <div className="mt-3 space-y-1 text-xs text-[#52636e]">
+          <p>{c.previewPending}</p>
+          <p>{c.previewNotice}</p>
+        </div>
+      ) : (
+        <p className="mt-3 text-xs text-[#52636e]">
+          {confirmed && snapshot ? labels.fixed : labels.pending}
+        </p>
+      )}
     </section>
   );
 }

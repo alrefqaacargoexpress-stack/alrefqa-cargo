@@ -17,6 +17,7 @@ import {
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useOperationsWorkspace } from "@/hooks/useOperationsWorkspace";
 import { copyFor } from "@/lib/packingCopy";
+import { packingPricingView } from "@/lib/packingTariffPreview";
 import { trpc } from "@/lib/trpc";
 import {
   defaultOfficeProfile,
@@ -39,6 +40,7 @@ import {
   type PackingService,
   type PackingSource,
 } from "@shared/packing";
+import { permissionAllowed } from "@shared/permissions";
 
 const sources: PackingSource[] = ["dubai", "turkey", "china"];
 
@@ -46,6 +48,17 @@ export default function PackingHub() {
   const workspace = useOperationsWorkspace();
   const { language } = useLanguage();
   const c = copyFor(language);
+  const canViewFinance =
+    workspace.showFinance &&
+    permissionAllowed(
+      {
+        role: workspace.role,
+        offices: workspace.offices,
+        permissions: workspace.permissions,
+      },
+      "shipment_prices",
+      "view"
+    );
   const publicProfiles = trpc.branches.public.useQuery(undefined, {
     retry: false,
     refetchOnWindowFocus: false,
@@ -176,29 +189,35 @@ export default function PackingHub() {
     savingRef.current = true;
     setSaving(true);
     try {
-      const shipment = createPackedShipment({
-        tracking: cleanTracking,
-        source,
-        officeId: source,
-        // Generic shipment creation never writes finance fields. Finance commands
-        // are reviewed and posted from the accountant finance workspace only.
-        pricePerKg: 0,
-        service,
-        ...(publicProfiles.data
-          ? {
-              rateSnapshot: tariffForPackingProfiles({
-                source,
-                service,
-                sourceProfile:
-                  publicProfiles.data.find(p => p.officeId === source) ??
-                  defaultOfficeProfile(source),
-                nouakchottProfile:
-                  publicProfiles.data.find(p => p.officeId === "nouakchott") ??
-                  defaultOfficeProfile("nouakchott"),
-              }).snapshot,
-            }
-          : {}),
-      });
+      const now = new Date().toISOString();
+      const shipment = createPackedShipment(
+        {
+          tracking: cleanTracking,
+          source,
+          officeId: source,
+          // Generic shipment creation never writes finance fields. Finance commands
+          // are reviewed and posted from the accountant finance workspace only.
+          pricePerKg: 0,
+          service,
+          ...(publicProfiles.data
+            ? {
+                rateSnapshot: tariffForPackingProfiles({
+                  source,
+                  service,
+                  sourceProfile:
+                    publicProfiles.data.find(p => p.officeId === source) ??
+                    defaultOfficeProfile(source),
+                  nouakchottProfile:
+                    publicProfiles.data.find(
+                      p => p.officeId === "nouakchott"
+                    ) ?? defaultOfficeProfile("nouakchott"),
+                  capturedAt: now,
+                }).snapshot,
+              }
+            : {}),
+        },
+        now
+      );
       const saved = await workspace.saveShipment(
         shipment,
         `${c.createShipment}: ${cleanTracking}`
@@ -351,7 +370,7 @@ export default function PackingHub() {
                   shipment={shipment}
                   c={c}
                   language={language}
-                  showFinance={workspace.showFinance}
+                  canViewFinance={canViewFinance}
                   workspace={workspace}
                   officeQuery={query}
                 />
@@ -410,7 +429,7 @@ export default function PackingHub() {
         <NewShipmentForm
           c={c}
           canEdit={workspace.canEditShipments}
-          showFinance={false}
+          showFinance={canViewFinance}
           tracking={tracking}
           setTracking={setTracking}
           source={source}
@@ -535,23 +554,28 @@ function NewShipmentForm({
           </select>
         </PackingField>
       </div>
-      <PublishedPackingTariff
-        service={service}
-        snapshot={
-          tariffForPackingProfiles({
-            source,
-            service,
-            sourceProfile:
-              publicProfiles.find(p => p.officeId === source) ??
-              defaultOfficeProfile(source),
-            nouakchottProfile:
-              publicProfiles.find(p => p.officeId === "nouakchott") ??
-              defaultOfficeProfile("nouakchott"),
-          }).snapshot
-        }
-        c={c}
-        language={language}
-      />
+      {showFinance ? (
+        <PublishedPackingTariff
+          service={service}
+          snapshot={
+            tariffForPackingProfiles({
+              source,
+              service,
+              sourceProfile:
+                publicProfiles.find(p => p.officeId === source) ??
+                defaultOfficeProfile(source),
+              nouakchottProfile:
+                publicProfiles.find(p => p.officeId === "nouakchott") ??
+                defaultOfficeProfile("nouakchott"),
+            }).snapshot
+          }
+          c={c}
+          language={language}
+          preview
+        />
+      ) : (
+        <p className="mt-3 text-xs text-[#718088]">{c.amountHidden}</p>
+      )}
       {!canEdit && (
         <p className="mt-4 rounded-xl bg-slate-50 px-3 py-2 text-sm text-[#718088]">
           {c.canNotEdit}
@@ -581,26 +605,22 @@ function ShipmentRow({
   shipment,
   c,
   language,
-  showFinance,
+  canViewFinance,
   workspace,
   officeQuery,
 }: {
   shipment: ReturnType<typeof import("@shared/packing").createPackedShipment>;
   c: ReturnType<typeof copyFor>;
   language: string;
-  showFinance: boolean;
+  canViewFinance: boolean;
   workspace: ReturnType<typeof useOperationsWorkspace>;
   officeQuery: string;
 }) {
-  const sourceRateApproved =
-    Number.isFinite(shipment.packing.pricePerKg) &&
-    shipment.packing.pricePerKg > 0;
-  const totals = packingTotals(
-    sourceRateApproved
-      ? shipment.packing
-      : { ...shipment.packing, pricePerKg: 0 }
-  );
-  const mruTotals = packingTotalsMRU(shipment.packing);
+  const pricing = packingPricingView(shipment, workspace.queue, canViewFinance);
+  const packingForDisplay = pricing.packingForDisplay;
+  const sourceRateApproved = packingForDisplay.pricePerKg > 0;
+  const totals = packingTotals(packingForDisplay);
+  const mruTotals = packingTotalsMRU(packingForDisplay);
   return (
     <article className="rounded-2xl border border-[#dce4e7] bg-white p-4 shadow-sm transition">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -655,24 +675,31 @@ function ShipmentRow({
         <Metric
           label={c.totalCost}
           value={
-            showFinance
+            canViewFinance
               ? sourceRateApproved
                 ? `${formatLocalNumber(totals.amount, language, 2)} ${sourceCurrency[shipment.packing.source]}`
-                : c.sourceRateNotApproved
+                : pricing.isPendingCreation && pricing.issue
+                  ? c.previewUnavailable
+                  : c.sourceRateNotApproved
               : c.amountHidden
           }
         />
         <Metric
           label={c.mru}
           value={
-            showFinance && mruTotals
+            canViewFinance && mruTotals
               ? `${formatLocalNumber(mruTotals.amount, language, 2)} ${c.mru}`
-              : showFinance
+              : canViewFinance
                 ? c.noPriceSet
                 : c.amountHidden
           }
         />
       </div>
+      {canViewFinance && pricing.isPreview && (
+        <p className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-900">
+          <strong>{c.previewPending}</strong> {c.previewNotice}
+        </p>
+      )}
     </article>
   );
 }
