@@ -6,6 +6,7 @@ import {
   blankPermissions,
   defaultPermissions,
   permissionMapSchema,
+  intersectPermissions,
   permissionAllowed,
   permissionsFor,
   withinPermissionCeiling,
@@ -142,23 +143,35 @@ export async function assignPermissionMembership(
         input.offices[0] !== "nouakchott" &&
         (input.canUpdateTracking ?? old?.canUpdateTracking)
     );
+    const automaticDefaults =
+      input.permissions === undefined &&
+      (old?.role !== input.role || !old?.permissions);
+    const roleDefaults = defaultPermissions({
+      role: input.role,
+      offices: input.offices,
+      homeOffice,
+      canUpdateTracking,
+    });
+    const retained = old?.permissions
+      ? { ...blankPermissions(), ...old.permissions }
+      : null;
     const requestedSource =
       input.permissions ??
-      (old?.role === input.role ? old?.permissions : null) ??
-      defaultPermissions({
-        role: input.role,
-        offices: input.offices,
-        homeOffice,
-        canUpdateTracking,
-      });
+      (retained
+        ? old.role === input.role
+          ? retained
+          : intersectPermissions(retained, roleDefaults)
+        : roleDefaults);
     const parsedRequested = permissionMapSchema.safeParse(requestedSource);
     if (!parsedRequested.success) forbidden("invalid_permission_map");
-    const requested = {
+    let requested = {
       ...blankPermissions(),
       ...parsedRequested.data,
     };
     if (rootOnlyPermissions.some(key => requested[key] !== "none"))
       forbidden("global_permission_not_delegable");
+    if (scope.role === "office_manager" && automaticDefaults)
+      requested = intersectPermissions(requested, permissionsFor(scope));
     if (
       scope.role === "office_manager" &&
       !withinPermissionCeiling(requested, permissionsFor(scope))

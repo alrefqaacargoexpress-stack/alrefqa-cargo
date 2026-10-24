@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MySqlDialect } from "drizzle-orm/mysql-core";
 import { memberRoles, users, type User } from "../drizzle/schema";
-import { blankPermissions, type PermissionMap } from "@shared/permissions";
+import { blankPermissions, type PermissionMap } from "../shared/permissions";
 import { assignPermissionMembership } from "./permissionMemberships";
 import { readOfficeScope } from "./branches";
 import { appendAudit } from "./audit";
@@ -213,5 +213,70 @@ describe("Scoped delegation and revocation", () => {
     ).rejects.toThrow("Audit unavailable");
     expect(f.rows[1].version).toBe(1);
     expect(f.rows[1].delegatedBy).toBeUndefined();
+  });
+  it("assigns an office manager's necessary settings automatically from role and office", async () => {
+    const f = fixture();
+    f.rows[1].permissions = null;
+    const result = await assignPermissionMembership(f.db, root, {
+      userId: 20,
+      role: "office_manager",
+      offices: ["dubai"],
+      expectedVersion: 1,
+    });
+    expect(result.permissions.office_settings).toBe("manage");
+    expect(result.permissions.office_assign).toBe("none");
+  });
+  it("clamps automatic role defaults to a manager's ceiling without manual flags", async () => {
+    const f = fixture();
+    f.rows[1].permissions = null;
+    const result = await assignPermissionMembership(f.db, manager, {
+      userId: 20,
+      role: "source_warehouse",
+      offices: ["dubai"],
+      expectedVersion: 1,
+    });
+    expect(result.permissions.shipments).toBe("manage");
+    expect(result.permissions.shipment_send).toBe("none");
+    expect(result.permissions.tracking).toBe("view");
+    expect(result.delegatedBy).toBe(manager.id);
+  });
+  it("does not erase an existing explicit denial on unchanged-role automatic save", async () => {
+    const f = fixture();
+    const result = await assignPermissionMembership(f.db, root, {
+      userId: 20,
+      role: "staff",
+      offices: ["dubai"],
+      expectedVersion: 1,
+    });
+    expect(result.permissions.shipments).toBe("none");
+    expect(result.permissions.shipment_send).toBe("none");
+  });
+  it("retains explicit denials after automatic role change", async () => {
+    const f = fixture();
+    const result = await assignPermissionMembership(f.db, root, {
+      userId: 20,
+      role: "source_warehouse",
+      offices: ["dubai"],
+      expectedVersion: 1,
+    });
+    expect(result.permissions.shipments).toBe("none");
+    expect(result.permissions.shipment_send).toBe("none");
+  });
+  it("does not carry finance-management privileges into a viewer downgrade", async () => {
+    const f = fixture();
+    f.rows[1].role = "accountant";
+    f.rows[1].permissions = {
+      ...blankPermissions(),
+      invoices: "manage",
+      expenses: "manage",
+    };
+    const result = await assignPermissionMembership(f.db, root, {
+      userId: 20,
+      role: "viewer",
+      offices: ["dubai"],
+      expectedVersion: 1,
+    });
+    expect(result.permissions.invoices).not.toBe("manage");
+    expect(result.permissions.expenses).not.toBe("manage");
   });
 });

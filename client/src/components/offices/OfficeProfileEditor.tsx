@@ -6,6 +6,10 @@ import {
   type OfficeId,
   type VersionedOfficeProfile,
 } from "@shared/branches";
+import {
+  changedOfficeRateViolations,
+  officeRateCurrencies,
+} from "@shared/officeRatePolicy";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { branchSettingsCopyFor } from "@/lib/branchSettingsCopy";
 import {
@@ -46,6 +50,7 @@ type Draft = {
   timezone: OfficeProfile["timezone"];
   mapUrl: string;
   seaAddress: string;
+  employees: OfficeProfile["employees"];
   shippingRates: ShippingRateDrafts;
   sourceRates: NouakchottSourceRateDrafts;
   days: DraftDay[];
@@ -139,6 +144,7 @@ function draftFrom(profile: VersionedOfficeProfile | OfficeProfile): Draft {
     timezone: profile.timezone,
     mapUrl: profile.mapUrl ?? "",
     seaAddress: profile.seaAddress ?? "",
+    employees: profile.employees.map(employee => ({ ...employee })),
     shippingRates: shippingRateDraftsFrom(
       profile.shippingRates,
       profile.officeId
@@ -156,6 +162,11 @@ function toProfile(draft: Draft, baseProfile: OfficeProfile): OfficeProfile {
     timezone: draft.timezone,
     mapUrl: draft.mapUrl.trim() || null,
     seaAddress: draft.seaAddress.trim(),
+    employees: draft.employees.map(employee => ({
+      id: employee.id,
+      name: employee.name.trim(),
+      phone: employee.phone.trim(),
+    })),
     shippingRates: shippingRatesFromDrafts(draft.shippingRates),
     hours: draft.days.flatMap((day, index) => {
       if (!day.enabled) return [];
@@ -204,7 +215,28 @@ function errorCode(caught: unknown): string | undefined {
   return undefined;
 }
 
-function errorCopy(caught: unknown, c: PublicShippingCopy) {
+function errorDetail(caught: unknown): string | undefined {
+  if (!caught || typeof caught !== "object") return undefined;
+  const value = caught as {
+    message?: unknown;
+    data?: { message?: unknown };
+    shape?: { data?: { message?: unknown } };
+  };
+  for (const message of [
+    value.message,
+    value.data?.message,
+    value.shape?.data?.message,
+  ]) {
+    if (typeof message === "string") return message;
+  }
+  return undefined;
+}
+
+function errorCopy(caught: unknown, c: PublicShippingCopy, officeId: OfficeId) {
+  const detail = errorDetail(caught);
+  if (detail === "office_rate_currency_required")
+    return c.rateCurrencyRequired(officeRateCurrencies[officeId]);
+  if (detail === "office_rate_kg_required") return c.rateUnitRequired("kg");
   switch (errorCode(caught)) {
     case "CONFLICT":
       return c.conflictError;
@@ -212,11 +244,27 @@ function errorCopy(caught: unknown, c: PublicShippingCopy) {
       return c.permissionError;
     case "BAD_REQUEST":
       return c.validationError;
+    case "office_rate_currency_required":
+      return c.rateCurrencyRequired(officeRateCurrencies[officeId]);
+    case "office_rate_kg_required":
+      return c.rateUnitRequired("kg");
     case "UNAUTHORIZED":
       return c.authError;
     default:
       return c.saveFailed;
   }
+}
+
+export function changedOfficeRateValidationError(
+  next: OfficeProfile,
+  saved: OfficeProfile,
+  c: PublicShippingCopy
+) {
+  const violation = changedOfficeRateViolations(next, saved)[0];
+  if (!violation) return "";
+  return violation.code === "office_rate_currency_required"
+    ? c.rateCurrencyRequired(violation.expectedCurrency)
+    : c.rateUnitRequired("kg");
 }
 
 export default function OfficeProfileEditor({
@@ -299,6 +347,41 @@ export default function OfficeProfileEditor({
     });
   };
 
+  const updateContact = (
+    index: number,
+    patch: Partial<OfficeProfile["employees"][number]>
+  ) => {
+    setChanged({
+      ...draft,
+      employees: draft.employees.map((employee, employeeIndex) =>
+        employeeIndex === index ? { ...employee, ...patch } : employee
+      ),
+    });
+  };
+
+  const addContact = () => {
+    const used = new Set(draft.employees.map(employee => employee.id));
+    let suffix = draft.employees.length + 1;
+    let id = `public-contact-${suffix}`;
+    while (used.has(id)) {
+      suffix += 1;
+      id = `public-contact-${suffix}`;
+    }
+    setChanged({
+      ...draft,
+      employees: [...draft.employees, { id, name: "", phone: "" }],
+    });
+  };
+
+  const removeContact = (index: number) => {
+    setChanged({
+      ...draft,
+      employees: draft.employees.filter(
+        (_, employeeIndex) => employeeIndex !== index
+      ),
+    });
+  };
+
   const validate = () => {
     if (draft.phone.trim() && !validPhone(draft.phone.trim()))
       return c.phoneInvalid;
@@ -320,6 +403,10 @@ export default function OfficeProfileEditor({
           day.breakEnd > day.end)
       )
         return c.hoursInvalid;
+    }
+    for (const employee of draft.employees) {
+      if (!employee.name.trim() || !validPhone(employee.phone.trim()))
+        return c.contactRequired;
     }
     for (const rate of Object.values(
       shippingRatesFromDrafts(draft.shippingRates)
@@ -378,6 +465,15 @@ export default function OfficeProfileEditor({
       setError(shippingCopy.validationError);
       return;
     }
+    const ratePolicyError = changedOfficeRateValidationError(
+      parsed.data,
+      baseProfile,
+      shippingCopy
+    );
+    if (ratePolicyError) {
+      setError(ratePolicyError);
+      return;
+    }
     if (!window.confirm(`${c.saveConfirm}\n\n${c.noSchedule}`)) return;
     saveLock.current = true;
     try {
@@ -395,7 +491,7 @@ export default function OfficeProfileEditor({
       setNotice(c.saved);
       setError("");
     } catch (caught) {
-      setError(errorCopy(caught, shippingCopy));
+      setError(errorCopy(caught, shippingCopy, baseProfile.officeId));
     } finally {
       saveLock.current = false;
     }
@@ -422,7 +518,7 @@ export default function OfficeProfileEditor({
       setError("");
       setNotice(shippingCopy.reloadLatestDiscarded);
     } catch (caught) {
-      setError(errorCopy(caught, shippingCopy));
+      setError(errorCopy(caught, shippingCopy, baseProfile.officeId));
     } finally {
       saveLock.current = false;
     }
@@ -485,6 +581,63 @@ export default function OfficeProfileEditor({
       </div>
 
       <div className="mt-5 rounded-2xl border border-[#dce4e7] bg-[#f7fbfa] p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="font-black text-[#092d50]">{c.employees}</h3>
+            <p className="mt-1 text-xs text-[#718088]">
+              {c.publicContactsNotice}
+            </p>
+          </div>
+          <button
+            type="button"
+            className={packingSecondaryClass}
+            disabled={!canEdit || pending}
+            onClick={addContact}
+          >
+            {c.addContact}
+          </button>
+        </div>
+        <div className="mt-4 grid gap-3">
+          {draft.employees.map((employee, index) => (
+            <div
+              key={employee.id}
+              className="grid gap-3 rounded-xl border border-[#e5ecee] bg-white p-3 md:grid-cols-[1fr_1fr_auto] md:items-end"
+            >
+              <PackingField label={c.employeeName}>
+                <input
+                  className={packingInputClass}
+                  value={employee.name}
+                  disabled={!canEdit || pending}
+                  onChange={event =>
+                    updateContact(index, { name: event.target.value })
+                  }
+                />
+              </PackingField>
+              <PackingField label={c.employeePhone}>
+                <input
+                  className={packingInputClass}
+                  dir="ltr"
+                  value={employee.phone}
+                  disabled={!canEdit || pending}
+                  onChange={event =>
+                    updateContact(index, { phone: event.target.value })
+                  }
+                />
+              </PackingField>
+              <button
+                type="button"
+                className={packingSecondaryClass}
+                disabled={!canEdit || pending}
+                onClick={() => removeContact(index)}
+              >
+                {c.deleteContact}
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="mt-5 rounded-2xl border border-[#dce4e7] bg-[#f7fbfa] p-4">
         <h3 className="font-black text-[#092d50]">
           {baseProfile.officeId === "nouakchott"
             ? shippingCopy.seaAddress
@@ -514,6 +667,8 @@ export default function OfficeProfileEditor({
               value={draft.shippingRates}
               copy={shippingCopy}
               officeId={baseProfile.officeId}
+              fixedCurrency={officeRateCurrencies[baseProfile.officeId]}
+              requiredUnit="kg"
               disabled={!canEdit || pending}
               onChange={shippingRates =>
                 setChanged({ ...draft, shippingRates })

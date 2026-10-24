@@ -11,6 +11,11 @@ export type PublicShippingCopy = {
   seaAddressHint: string;
   ratesTitle: string;
   ratesHint: string;
+  legacyRateWarning: string;
+  adoptRate: string;
+  adoptRatePreview: string;
+  rateCurrencyRequired: (currency: string) => string;
+  rateUnitRequired: (unit: string) => string;
   serviceLabels: Record<ShippingRateKey, string>;
   amount: string;
   currency: string;
@@ -41,6 +46,14 @@ const ar: PublicShippingCopy = {
   seaAddressHint: "اتركه فارغاً إذا لم يُؤكد العنوان بعد.",
   ratesTitle: "أسعار الشحن العامة",
   ratesHint: "الخانة الفارغة تحفظ null، ولا نضع سعراً افتراضياً أو صفراً.",
+  legacyRateWarning:
+    "هذا سعر قديم محفوظ كما هو، ولا يطابق سياسة الإعلان الجديدة. لن يتغير عند حفظ العنوان فقط.",
+  adoptRate: "اعتماد سعر جديد بهذه العملة والوحدة",
+  adoptRatePreview: "المعاينة",
+  rateCurrencyRequired: (currency: string) =>
+    `السعر المعدل يجب أن يكون بعملة المكتب: ${currency}. السعر القديم لم يتغير.`,
+  rateUnitRequired: (unit: string) =>
+    `السعر المعدل يجب أن يكون بوحدة ${unit}. السعر القديم لم يتغير.`,
   serviceLabels: {
     airRegular: "الجوي العادي",
     airExpress: "الجوي السريع",
@@ -87,6 +100,14 @@ const en: PublicShippingCopy = {
   seaAddressHint: "Leave it empty until the address is confirmed.",
   ratesTitle: "Public shipping rates",
   ratesHint: "An empty field saves null; no default or zero price is added.",
+  legacyRateWarning:
+    "This is a saved legacy rate and does not match the new publication policy. It stays unchanged when you save only the address.",
+  adoptRate: "Adopt a new rate with this currency and unit",
+  adoptRatePreview: "Preview",
+  rateCurrencyRequired: (currency: string) =>
+    `An edited rate must use the office currency: ${currency}. The legacy rate was not changed.`,
+  rateUnitRequired: (unit: string) =>
+    `An edited rate must use ${unit}. The legacy rate was not changed.`,
   serviceLabels: {
     airRegular: "Regular air",
     airExpress: "Express air",
@@ -134,6 +155,14 @@ const zh: PublicShippingCopy = {
   seaAddressHint: "地址确认前请留空。",
   ratesTitle: "公开运输价格",
   ratesHint: "空白输入会保存为 null；不会添加默认价格或零。",
+  legacyRateWarning:
+    "这是已保存的旧价格，不符合新的发布政策。只保存地址时不会更改它。",
+  adoptRate: "采用此货币和单位的新价格",
+  adoptRatePreview: "预览",
+  rateCurrencyRequired: (currency: string) =>
+    `修改后的价格必须使用办公室货币：${currency}。旧价格未更改。`,
+  rateUnitRequired: (unit: string) =>
+    `修改后的价格必须使用${unit}。旧价格未更改。`,
   serviceLabels: {
     airRegular: "普通空运",
     airExpress: "快速空运",
@@ -180,6 +209,14 @@ const tr: PublicShippingCopy = {
   ratesTitle: "Herkese açık kargo ücretleri",
   ratesHint:
     "Boş alan null olarak kaydedilir; varsayılan veya sıfır ücret eklenmez.",
+  legacyRateWarning:
+    "Bu, yeni yayın politikasına uymayan kayıtlı eski bir ücrettir. Yalnızca adresi kaydettiğinizde değişmez.",
+  adoptRate: "Bu para birimi ve birimle yeni ücreti kabul et",
+  adoptRatePreview: "Önizleme",
+  rateCurrencyRequired: (currency: string) =>
+    `Düzenlenen ücret ofis para birimini kullanmalıdır: ${currency}. Eski ücret değiştirilmedi.`,
+  rateUnitRequired: (unit: string) =>
+    `Düzenlenen ücret ${unit} kullanmalıdır. Eski ücret değiştirilmedi.`,
   serviceLabels: {
     airRegular: "Standart hava",
     airExpress: "Ekspres hava",

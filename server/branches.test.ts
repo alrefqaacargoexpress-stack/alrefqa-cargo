@@ -15,8 +15,8 @@ import {
   memberRoles,
   type User,
 } from "../drizzle/schema";
-import { createPackedShipment } from "@shared/packing";
-import { defaultOfficeProfile } from "@shared/branches";
+import { createPackedShipment } from "../shared/packing";
+import { defaultOfficeProfile } from "../shared/branches";
 import { appendAudit } from "./audit";
 vi.mock("./audit", () => ({ appendAudit: vi.fn(async () => {}) }));
 const user = {
@@ -261,7 +261,12 @@ describe("Office backend protection and warehouse arrival", () => {
     ).toBe(10);
   });
   it("saves only supplied public profile fields with a checked version and audit entry", async () => {
-    const f = fixture();
+    const f = fixture({
+      ...scope,
+      role: "office_manager",
+      offices: ["china"],
+      homeOffice: "china",
+    });
     const { version, ...profile } = defaultOfficeProfile("china");
     const result = await updateProfile(f.db, user, {
       ...profile,
@@ -282,7 +287,12 @@ describe("Office backend protection and warehouse arrival", () => {
     expect(appendAudit).toHaveBeenCalledOnce();
   });
   it("rejects stale office settings rather than replacing a newer profile", async () => {
-    const f = fixture();
+    const f = fixture({
+      ...scope,
+      role: "office_manager",
+      offices: ["china"],
+      homeOffice: "china",
+    });
     const { version, ...profile } = defaultOfficeProfile("china");
     f.profiles.push({
       officeId: "china",

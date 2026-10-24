@@ -105,4 +105,39 @@ describe("Nouakchott source rates", () => {
     expect(html).toContain("per shipment");
     expect(html).not.toContain("From: China");
   });
+
+  it("shows a legacy source unit as MRU/m³ and offers an explicit kg adoption", () => {
+    const rates = nouakchottSourceRateDraftsFrom({
+      dubai: {
+        airRegular: { amount: 1200, currency: "MRU", unit: "m3" },
+        airExpress: null,
+        sensitive: null,
+        sea: null,
+      },
+      turkey: {
+        airRegular: null,
+        airExpress: null,
+        sensitive: null,
+        sea: null,
+      },
+      china: {
+        airRegular: null,
+        airExpress: null,
+        sensitive: null,
+        sea: null,
+      },
+    });
+    const html = renderToStaticMarkup(
+      <NouakchottSourceRatesEditor
+        value={rates}
+        shippingCopy={publicShippingCopy.en}
+        copy={nouakchottRatesCopy.en}
+        onChange={() => undefined}
+      />
+    );
+    expect(html).toContain("1200 MRU per m³ → 1200 MRU per kg");
+    expect(html).toContain("Adopt a new rate with this currency and unit");
+    expect(html).toContain('option value="m3" selected="">per m³</option>');
+    expect(html).toContain('option value="MRU" selected="">MRU</option>');
+  });
 });

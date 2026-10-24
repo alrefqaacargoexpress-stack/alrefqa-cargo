@@ -7,6 +7,7 @@ import {
 } from "../shared/publicShipping";
 import { appendAudit } from "./audit";
 import type { User } from "../drizzle/schema";
+import { officeProfiles } from "../drizzle/schema";
 vi.mock("./audit", () => ({ appendAudit: vi.fn(async () => 1) }));
 import { rememberOfficeTariff } from "./officeTariffs";
 vi.mock("./officeTariffs", () => ({
@@ -27,11 +28,17 @@ function fixture() {
   let writes = 0;
   const tx: any = {
     select: () => {
+      let selected: any[] = [];
       const builder: any = {
-        from: () => builder,
+        from: (table: any) => {
+          selected = table === officeProfiles && row ? [row] : [];
+          return builder;
+        },
         where: () => builder,
         limit: () => builder,
-        for: async () => (row ? [row] : []),
+        for: async () => selected,
+        then: (resolve: any, reject: any) =>
+          Promise.resolve(selected).then(resolve, reject),
       };
       return builder;
     },
@@ -71,7 +78,7 @@ describe("Acknowledged office profile persistence", () => {
         currency: "MRU" as const,
         unit: "kg" as const,
       },
-      sea: { amount: 1200, currency: "MRU" as const, unit: "m3" as const },
+      sea: { amount: 1200, currency: "MRU" as const, unit: "kg" as const },
     };
     const saved = await updateProfile(f.db, admin, {
       ...base,
@@ -179,7 +186,7 @@ describe("Acknowledged office profile persistence", () => {
     sourceShippingRates.china.sea = {
       amount: 1300,
       currency: "MRU",
-      unit: "m3",
+      unit: "kg",
     };
     const request = {
       ...base,

@@ -64,6 +64,7 @@ import { appendAudit } from "./audit";
 import { hideFinance, publicRecord, roleForUser } from "./operations";
 import { actorFromUser } from "./tracking";
 import { rememberOfficeTariff } from "./officeTariffs";
+import { changedOfficeRateViolations } from "@shared/officeRatePolicy";
 
 export type OfficeScope = {
   role: AppRole | null;
@@ -107,13 +108,15 @@ export function rootAdmin(user: Pick<User, "openId" | "role">): boolean {
 export async function readOfficeScope(
   db: any,
   user: Pick<User, "id" | "openId" | "role">,
-  visited = new Set<number>()
+  visited = new Set<number>(),
+  forWrite = false
 ): Promise<OfficeScope> {
-  const rows = await db
+  const query = db
     .select()
     .from(memberRoles)
     .where(eq(memberRoles.userId, user.id))
     .limit(1);
+  const rows = forWrite ? await query.for("update") : await query;
   const membership = rows[0] as typeof memberRoles.$inferSelect | undefined;
   const role = roleForUser(user, membership?.role ?? null);
   if (role === "admin" || rootAdmin(user))
@@ -187,14 +190,22 @@ export async function readOfficeScope(
       scope.permissions = blankPermissions();
     else {
       visited.add(user.id);
-      const grantors = await db
+      const grantorQuery = db
         .select()
         .from(users)
         .where(eq(users.id, scope.delegatedBy))
         .limit(1);
+      const grantors = forWrite
+        ? await grantorQuery.for("update")
+        : await grantorQuery;
       if (!grantors[0]) scope.permissions = blankPermissions();
       else {
-        const grantor = await readOfficeScope(db, grantors[0], visited);
+        const grantor = await readOfficeScope(
+          db,
+          grantors[0],
+          visited,
+          forWrite
+        );
         scope.permissions =
           grantor.role === "office_manager" &&
           grantor.offices?.length === 1 &&
@@ -476,9 +487,17 @@ export async function updateProfile(
   db: any,
   user: User,
   input: z.infer<typeof officeProfileUpdateSchema>,
-  actorRole: AppRole = "admin"
+  _actorRole?: AppRole
 ) {
   return db.transaction(async (tx: any) => {
+    // Membership updates/deactivation also lock this user. Recheck actual
+    // permissions after the profile lock; never trust a role supplied by callers.
+    await tx
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.id, user.id))
+      .limit(1)
+      .for("update");
     const rows = await tx
       .select()
       .from(officeProfiles)
@@ -486,6 +505,14 @@ export async function updateProfile(
       .limit(1)
       .for("update");
     const current = rows[0];
+    if (await isEmployeeDisabled(tx, user.id))
+      throw branchForbidden("employee_disabled");
+    const scope = await readOfficeScope(tx, user, new Set<number>(), true);
+    if (
+      !permissionAllowed(scope, "office_settings", "manage") ||
+      !officeIsAssigned(scope, input.officeId)
+    )
+      throw branchForbidden("office_settings_permission_required");
     const expected = current?.version ?? 0;
     const {
       expectedVersion: _expectedVersion,
@@ -525,6 +552,9 @@ export async function updateProfile(
         });
       throw error;
     }
+    const violation = changedOfficeRateViolations(profile, saved)[0];
+    if (violation)
+      throw new TRPCError({ code: "BAD_REQUEST", message: violation.code });
     if (current && sameOfficeProfile(saved, profile))
       return { ...saved, version: expected };
     const nextVersion = expected + 1;
@@ -555,7 +585,7 @@ export async function updateProfile(
       actor: {
         id: user.id,
         name: user.name?.trim() || `user-${user.id}`,
-        role: actorRole,
+        role: scope.role!,
       },
       entity: "office_profile",
       recordId: input.officeId,

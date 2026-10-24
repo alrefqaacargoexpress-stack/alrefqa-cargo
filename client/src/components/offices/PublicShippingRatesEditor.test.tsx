@@ -73,4 +73,59 @@ describe("PublicShippingRatesEditor", () => {
       unit: "kg",
     });
   });
+
+  it("locks new Dubai announcements while showing a legacy rate truthfully", () => {
+    const html = renderToStaticMarkup(
+      <PublicShippingRatesEditor
+        value={shippingRateDraftsFrom(
+          {
+            airRegular: { amount: 500, currency: "MRU", unit: "m3" },
+            airExpress: null,
+            sensitive: null,
+            sea: null,
+          },
+          "dubai"
+        )}
+        copy={publicShippingCopy.en}
+        officeId="dubai"
+        fixedCurrency="AED"
+        requiredUnit="kg"
+        onChange={() => undefined}
+      />
+    );
+    expect(html).toContain('value="MRU"');
+    expect(html).toContain('value="m3"');
+    expect(html).toMatch(/<input[^>]*disabled=""[^>]*value="500"/);
+    expect(html).toContain("This is a saved legacy rate");
+    expect(html).toContain("500 MRU per m³ → 500 AED per kg");
+    expect(html).toContain("Adopt a new rate with this currency and unit");
+    expect(html).toContain('<option value="AED" selected="">AED</option>');
+    expect(html).toContain('<option value="kg" selected="">per kg</option>');
+    expect(
+      html.match(/<select[^>]*disabled=""[^>]*>\<option value="AED"/g)
+    ).toHaveLength(3);
+  });
+
+  it("keeps legacy adoption disabled in read-only mode", () => {
+    const html = renderToStaticMarkup(
+      <PublicShippingRatesEditor
+        value={shippingRateDraftsFrom({
+          airRegular: { amount: 37, currency: "MRU", unit: "kg" },
+          airExpress: null,
+          sensitive: null,
+          sea: null,
+        })}
+        copy={publicShippingCopy.en}
+        fixedCurrency="AED"
+        requiredUnit="kg"
+        disabled
+        onChange={() => undefined}
+      />
+    );
+    expect(html).toContain("This is a saved legacy rate");
+    expect(html).toContain(
+      "Adopt a new rate with this currency and unit</button>"
+    );
+    expect(html).toContain('disabled="">Adopt a new rate');
+  });
 });

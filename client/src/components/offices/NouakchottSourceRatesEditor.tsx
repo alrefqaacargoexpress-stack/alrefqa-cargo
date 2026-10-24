@@ -72,6 +72,7 @@ export default function NouakchottSourceRatesEditor({
               value={value[source]}
               copy={shippingCopy}
               fixedCurrency="MRU"
+              requiredUnit="kg"
               ariaLabelPrefix={copy.sourceLabels[source]}
               disabled={disabled}
               onChange={next => onChange({ ...value, [source]: next })}

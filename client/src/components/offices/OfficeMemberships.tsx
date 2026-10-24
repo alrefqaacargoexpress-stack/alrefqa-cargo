@@ -53,6 +53,7 @@ type MemberDraft = {
   homeOffice: OfficeId | null;
   canUpdateTracking: boolean;
   permissions: PermissionMap;
+  permissionsMode: "automatic" | "manual";
   dirty: boolean;
   version: number;
 };
@@ -163,6 +164,29 @@ const permissionCopy = {
   },
 } as const;
 
+const automaticPermissionCopy = {
+  ar: {
+    label: "الصلاحيات الضرورية تُطبَّق تلقائيًا حسب الدور والمكتب.",
+    details: "تعديل الصلاحيات المتقدم",
+    hint: "افتح التفاصيل فقط إذا أردت مراجعة الصلاحيات يدويًا وتعديلها ضمن الحد المسموح.",
+  },
+  en: {
+    label: "Required permissions are applied automatically by role and office.",
+    details: "Advanced permission editing",
+    hint: "Open the details only when you want to review or edit permissions within the allowed ceiling.",
+  },
+  zh: {
+    label: "必要权限会根据角色和办公室自动应用。",
+    details: "高级权限编辑",
+    hint: "只有需要在允许上限内检查或修改权限时才打开详情。",
+  },
+  tr: {
+    label: "Gerekli izinler rol ve ofise göre otomatik uygulanır.",
+    details: "Gelişmiş izin düzenleme",
+    hint: "Ayrıntıları yalnızca izinleri izin verilen sınır içinde incelemek veya değiştirmek istediğinizde açın.",
+  },
+} as const;
+
 const singleOfficeRole = (role: string) =>
   [
     "office_manager",
@@ -188,6 +212,39 @@ const roleOfficeIds = (role: string, allowed: readonly OfficeId[]) => {
   return [...allowed];
 };
 
+export function automaticPermissionPreview(
+  role: AssignableRole,
+  offices: readonly OfficeId[],
+  homeOffice: OfficeId | null,
+  canUpdateTracking: boolean,
+  ceiling: PermissionMap,
+  retainedPermissions?: PermissionMap | null,
+  previousRole?: AppRole | null
+): PermissionMap {
+  const defaults = defaultPermissions({
+    role,
+    offices,
+    homeOffice,
+    canUpdateTracking,
+  });
+  const retained = retainedPermissions
+    ? completePermissions(retainedPermissions)
+    : null;
+  const intended = retained
+    ? previousRole === role
+      ? retained
+      : intersectPermissions(retained, defaults)
+    : defaults;
+  return intersectPermissions(intended, ceiling);
+}
+
+export function permissionPayloadForSave(draft: {
+  permissions: PermissionMap;
+  permissionsMode: "automatic" | "manual";
+}): PermissionMap | undefined {
+  return draft.permissionsMode === "manual" ? draft.permissions : undefined;
+}
+
 function draftFrom(
   member: EditableOfficeMember,
   actorRole: AppRole | null,
@@ -212,15 +269,21 @@ function draftFrom(
             .filter(office => roleOfficeIds(role, allowed).includes(office))
             .slice(0, 1)
         : source.filter(office => allowed.includes(office));
-  const raw =
+  const hasCustomizedPermissions = Boolean(member.permissionsCustomized);
+  const raw = automaticPermissionPreview(
+    role,
+    offices,
+    member.homeOffice && offices.includes(member.homeOffice)
+      ? member.homeOffice
+      : null,
+    Boolean(member.canUpdateTracking),
+    ceiling,
     member.permissions ??
-    member.effectivePermissions ??
-    defaultPermissions({
-      role,
-      offices,
-      homeOffice: member.homeOffice,
-      canUpdateTracking: member.canUpdateTracking,
-    });
+      (hasCustomizedPermissions
+        ? (member.effectivePermissions ?? blankPermissions())
+        : null),
+    member.role
+  );
   return {
     role,
     offices,
@@ -235,7 +298,8 @@ function draftFrom(
         ["staff", "source_warehouse"].includes(role) &&
         offices[0] !== "nouakchott"
     ),
-    permissions: intersectPermissions(completePermissions(raw), ceiling),
+    permissions: completePermissions(raw),
+    permissionsMode: "automatic",
     dirty: false,
     version: member.version,
   };
@@ -435,7 +499,9 @@ export default function OfficeMemberships({
             draft.offices[0] !== "nouakchott" &&
             draft.canUpdateTracking
         ),
-        permissions: intersectPermissions(draft.permissions, permissionCeiling),
+        ...(permissionPayloadForSave(draft)
+          ? { permissions: permissionPayloadForSave(draft) }
+          : {}),
         expectedVersion: draft.version,
       });
       if (result) {
@@ -536,21 +602,34 @@ export default function OfficeMemberships({
                       const office =
                         draft.offices.find(id => roleOffices.includes(id)) ??
                         roleOffices[0];
+                      const nextOffices = singleOfficeRole(nextRole)
+                        ? office
+                          ? [office]
+                          : []
+                        : draft.offices;
+                      const nextHomeOffice = singleOfficeRole(nextRole)
+                        ? (office ?? null)
+                        : draft.homeOffice;
+                      const nextCanUpdateTracking =
+                        ["staff", "source_warehouse"].includes(nextRole) &&
+                        office !== "nouakchott"
+                          ? draft.canUpdateTracking
+                          : false;
                       patch(member, {
                         role: nextRole,
-                        offices: singleOfficeRole(nextRole)
-                          ? office
-                            ? [office]
-                            : []
-                          : draft.offices,
-                        homeOffice: singleOfficeRole(nextRole)
-                          ? (office ?? null)
-                          : draft.homeOffice,
-                        canUpdateTracking:
-                          ["staff", "source_warehouse"].includes(nextRole) &&
-                          office !== "nouakchott"
-                            ? draft.canUpdateTracking
-                            : false,
+                        offices: nextOffices,
+                        homeOffice: nextHomeOffice,
+                        canUpdateTracking: nextCanUpdateTracking,
+                        permissions: automaticPermissionPreview(
+                          nextRole,
+                          nextOffices,
+                          nextHomeOffice,
+                          nextCanUpdateTracking,
+                          permissionCeiling,
+                          member.permissions,
+                          member.role
+                        ),
+                        permissionsMode: "automatic",
                       });
                     }}
                   >
@@ -603,6 +682,32 @@ export default function OfficeMemberships({
                                 )
                                   ? draft.canUpdateTracking
                                   : false,
+                              permissions: automaticPermissionPreview(
+                                draft.role,
+                                singleOfficeRole(draft.role)
+                                  ? [officeId]
+                                  : event.target.checked
+                                    ? [...draft.offices, officeId]
+                                    : draft.offices.filter(
+                                        id => id !== officeId
+                                      ),
+                                singleOfficeRole(draft.role)
+                                  ? officeId
+                                  : !event.target.checked &&
+                                      draft.homeOffice === officeId
+                                    ? null
+                                    : draft.homeOffice,
+                                officeId !== "nouakchott" &&
+                                  ["staff", "source_warehouse"].includes(
+                                    draft.role
+                                  )
+                                  ? draft.canUpdateTracking
+                                  : false,
+                                permissionCeiling,
+                                member.permissions,
+                                member.role
+                              ),
+                              permissionsMode: "automatic",
                             })
                           }
                         />
@@ -615,29 +720,6 @@ export default function OfficeMemberships({
                   </p>
                 </fieldset>
               </div>
-              {["staff", "source_warehouse"].includes(draft.role) && (
-                <label className="mt-4 flex items-start gap-3 rounded-xl border border-slate-200 bg-white p-3 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={draft.canUpdateTracking}
-                    disabled={
-                      !canEditMember ||
-                      pending ||
-                      draft.offices.length !== 1 ||
-                      draft.offices[0] === "nouakchott"
-                    }
-                    onChange={event =>
-                      patch(member, { canUpdateTracking: event.target.checked })
-                    }
-                  />
-                  <span>
-                    <strong>{permissionCopy[language].label}</strong>
-                    <span className="mt-1 block text-xs leading-5 text-slate-600">
-                      {permissionCopy[language].hint}
-                    </span>
-                  </span>
-                </label>
-              )}
               <label className="mt-4 grid max-w-xl gap-1.5 text-sm font-semibold text-[#243f52]">
                 <span>{homeOfficeCopy[language].label}</span>
                 <select
@@ -670,13 +752,65 @@ export default function OfficeMemberships({
                   {homeOfficeCopy[language].hint}
                 </span>
               </label>
-              <NewPermissionsMatrix
-                value={draft.permissions}
-                ceiling={permissionCeiling}
-                canEdit={canEditMember}
-                pending={pending}
-                onChange={permissions => patch(member, { permissions })}
-              />
+              <p className="mt-4 rounded-xl bg-[#f7faf9] p-3 text-sm font-semibold text-[#315b5a]">
+                {automaticPermissionCopy[language].label}
+              </p>
+              <details className="mt-3 rounded-2xl border border-[#dce4e7] bg-[#fbfcfb] p-4">
+                <summary className="cursor-pointer text-sm font-black text-[#243f52]">
+                  {automaticPermissionCopy[language].details}
+                </summary>
+                <p className="mt-2 text-xs leading-5 text-[#718088]">
+                  {automaticPermissionCopy[language].hint}
+                </p>
+                {["staff", "source_warehouse"].includes(draft.role) && (
+                  <label className="mt-4 flex items-start gap-3 rounded-xl border border-slate-200 bg-white p-3 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={draft.canUpdateTracking}
+                      disabled={
+                        !canEditMember ||
+                        pending ||
+                        draft.offices.length !== 1 ||
+                        draft.offices[0] === "nouakchott"
+                      }
+                      onChange={event => {
+                        const nextTracking = event.target.checked;
+                        patch(member, {
+                          canUpdateTracking: nextTracking,
+                          permissions: automaticPermissionPreview(
+                            draft.role,
+                            draft.offices,
+                            draft.homeOffice,
+                            nextTracking,
+                            permissionCeiling,
+                            member.permissions,
+                            member.role
+                          ),
+                          permissionsMode: "automatic",
+                        });
+                      }}
+                    />
+                    <span>
+                      <strong>{permissionCopy[language].label}</strong>
+                      <span className="mt-1 block text-xs leading-5 text-slate-600">
+                        {permissionCopy[language].hint}
+                      </span>
+                    </span>
+                  </label>
+                )}
+                <NewPermissionsMatrix
+                  value={draft.permissions}
+                  ceiling={permissionCeiling}
+                  canEdit={canEditMember}
+                  pending={pending}
+                  onChange={permissions =>
+                    patch(member, {
+                      permissions,
+                      permissionsMode: "manual",
+                    })
+                  }
+                />
+              </details>
               {canEditMember && (
                 <div className="mt-4 flex justify-end">
                   <button

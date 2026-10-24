@@ -6,7 +6,9 @@ import {
   emptyPublicShippingRates,
 } from "@shared/publicShipping";
 import { publicShippingCopy } from "@/lib/publicShippingCopy";
-import OfficeProfileEditor from "./OfficeProfileEditor";
+import OfficeProfileEditor, {
+  changedOfficeRateValidationError,
+} from "./OfficeProfileEditor";
 import PublicOfficeCards from "./PublicOfficeCards";
 vi.mock("@/contexts/LanguageContext", () => ({
   useLanguage: () => ({ language: "en", dir: "ltr" }),
@@ -92,5 +94,86 @@ describe("Nouakchott old rates section removal is presentation-only", () => {
     );
     expect(editor).toContain('value="99.75"');
     expect(editor).toContain('value="TRY"');
+  });
+
+  it("keeps an unchanged legacy rate on address-only saves and rejects a changed one locally", () => {
+    const saved = {
+      ...defaultOfficeProfile("dubai"),
+      shippingRates: {
+        ...emptyPublicShippingRates(),
+        sea: { amount: 500, currency: "MRU" as const, unit: "m3" as const },
+      },
+    };
+    expect(
+      changedOfficeRateValidationError(
+        { ...saved, address: "New office address" },
+        saved,
+        publicShippingCopy.en
+      )
+    ).toBe("");
+    expect(
+      changedOfficeRateValidationError(
+        {
+          ...saved,
+          shippingRates: {
+            ...saved.shippingRates,
+            sea: { amount: 550, currency: "MRU", unit: "m3" },
+          },
+        },
+        saved,
+        publicShippingCopy.en
+      )
+    ).toContain("office currency: AED");
+  });
+
+  it("renders the legacy adoption action disabled for a read-only office", () => {
+    const profile = {
+      ...defaultOfficeProfile("dubai"),
+      version: 2,
+      shippingRates: {
+        ...emptyPublicShippingRates(),
+        airRegular: {
+          amount: 37,
+          currency: "MRU" as const,
+          unit: "m3" as const,
+        },
+      },
+    };
+    const html = renderToStaticMarkup(
+      <OfficeProfileEditor
+        profile={profile}
+        canEdit={false}
+        online
+        onSave={async () => null}
+      />
+    );
+    expect(html).toContain("This is a saved legacy rate");
+    expect(html).toContain(
+      'disabled="">Adopt a new rate with this currency and unit'
+    );
+    expect(html).toContain("Read-only mode");
+  });
+
+  it("keeps public contacts in the existing profile editor without exposing account fields", () => {
+    const profile = {
+      ...defaultOfficeProfile("dubai"),
+      version: 3,
+      employees: [
+        { id: "public-contact-1", name: "Dubai desk", phone: "+971501234567" },
+      ],
+    };
+    const html = renderToStaticMarkup(
+      <OfficeProfileEditor
+        profile={profile}
+        canEdit
+        online
+        onSave={async () => null}
+      />
+    );
+    expect(html).toContain("Public office employees");
+    expect(html).toContain('value="Dubai desk"');
+    expect(html).toContain('value="+971501234567"');
+    expect(html).toContain("Add public employee");
+    expect(html).not.toContain("userId");
   });
 });

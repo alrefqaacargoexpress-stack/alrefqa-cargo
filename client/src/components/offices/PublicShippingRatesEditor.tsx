@@ -27,6 +27,7 @@ const currencies: PublicShippingRate["currency"][] = [
   "EUR",
 ];
 const units: PublicShippingRate["unit"][] = ["kg", "m3", "shipment"];
+
 export function fallbackCurrencyForOffice(
   officeId?: OfficeId
 ): PublicShippingRate["currency"] {
@@ -94,6 +95,7 @@ export default function PublicShippingRatesEditor({
   copy,
   officeId,
   fixedCurrency,
+  requiredUnit,
   ariaLabelPrefix,
   disabled,
   onChange,
@@ -101,11 +103,16 @@ export default function PublicShippingRatesEditor({
   value: ShippingRateDrafts;
   copy: PublicShippingCopy;
   officeId?: OfficeId;
+  /** Required currency for newly published or explicitly adopted rates. */
   fixedCurrency?: PublicShippingRate["currency"];
+  /** Required unit for newly published or explicitly adopted rates. */
+  requiredUnit?: PublicShippingRate["unit"];
   ariaLabelPrefix?: string;
   disabled?: boolean;
   onChange: (value: ShippingRateDrafts) => void;
 }) {
+  const policyUnit = fixedCurrency ? (requiredUnit ?? "kg") : requiredUnit;
+
   return (
     <div className="mt-5 rounded-2xl border border-[#edf1f1] bg-[#fbfcfb] p-4">
       <h3 className="font-black text-[#092d50]">{copy.ratesTitle}</h3>
@@ -113,9 +120,37 @@ export default function PublicShippingRatesEditor({
       <div className="mt-4 grid gap-3">
         {shippingRateKeys.map(key => {
           const rate = value[key];
+          const hasAmount = rate.amount.trim() !== "";
+          const legacy = Boolean(
+            hasAmount &&
+              fixedCurrency &&
+              (rate.currency !== fixedCurrency ||
+                (policyUnit && rate.unit !== policyUnit))
+          );
           const fieldLabel = ariaLabelPrefix
             ? `${ariaLabelPrefix} ${copy.serviceLabels[key]}`
             : undefined;
+          const currencyOptions = legacy
+            ? [rate.currency]
+            : fixedCurrency
+              ? [fixedCurrency]
+              : currencies;
+          const unitOptions = legacy
+            ? [rate.unit]
+            : policyUnit
+              ? [policyUnit]
+              : units;
+          const adoptLegacyRate = () => {
+            if (disabled || !fixedCurrency || !policyUnit) return;
+            onChange({
+              ...value,
+              [key]: {
+                ...rate,
+                currency: fixedCurrency,
+                unit: policyUnit,
+              },
+            });
+          };
           return (
             <div
               key={key}
@@ -135,13 +170,17 @@ export default function PublicShippingRatesEditor({
                       fieldLabel ? `${fieldLabel} ${copy.amount}` : undefined
                     }
                     value={rate.amount}
-                    disabled={disabled}
-                    onChange={event =>
+                    disabled={disabled || legacy}
+                    onChange={event => {
+                      if (disabled || legacy) return;
                       onChange({
                         ...value,
-                        [key]: { ...rate, amount: event.target.value },
-                      })
-                    }
+                        [key]: {
+                          ...rate,
+                          amount: event.target.value,
+                        },
+                      });
+                    }}
                   />
                 </PackingField>
                 <PackingField label={copy.currency}>
@@ -150,8 +189,8 @@ export default function PublicShippingRatesEditor({
                       fieldLabel ? `${fieldLabel} ${copy.currency}` : undefined
                     }
                     className={packingInputClass}
-                    value={fixedCurrency ?? rate.currency}
-                    disabled={disabled || Boolean(fixedCurrency)}
+                    value={rate.currency}
+                    disabled={disabled || Boolean(fixedCurrency) || legacy}
                     onChange={event =>
                       onChange({
                         ...value,
@@ -163,13 +202,11 @@ export default function PublicShippingRatesEditor({
                       })
                     }
                   >
-                    {(fixedCurrency ? [fixedCurrency] : currencies).map(
-                      currency => (
-                        <option key={currency} value={currency}>
-                          {copy.currencies[currency]}
-                        </option>
-                      )
-                    )}
+                    {currencyOptions.map(currency => (
+                      <option key={currency} value={currency}>
+                        {copy.currencies[currency] ?? currency}
+                      </option>
+                    ))}
                   </select>
                 </PackingField>
                 <PackingField label={copy.unit}>
@@ -179,7 +216,7 @@ export default function PublicShippingRatesEditor({
                     }
                     className={packingInputClass}
                     value={rate.unit}
-                    disabled={disabled}
+                    disabled={disabled || Boolean(policyUnit) || legacy}
                     onChange={event =>
                       onChange({
                         ...value,
@@ -190,7 +227,7 @@ export default function PublicShippingRatesEditor({
                       })
                     }
                   >
-                    {units.map(unit => (
+                    {unitOptions.map(unit => (
                       <option key={unit} value={unit}>
                         {copy.units[unit]}
                       </option>
@@ -198,6 +235,29 @@ export default function PublicShippingRatesEditor({
                   </select>
                 </PackingField>
               </div>
+              {legacy && fixedCurrency && policyUnit && (
+                <div
+                  role="alert"
+                  className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-950"
+                >
+                  <p>{copy.legacyRateWarning}</p>
+                  <p className="mt-1 font-bold" dir="ltr">
+                    {copy.adoptRatePreview}: {rate.amount}{" "}
+                    {copy.currencies[rate.currency] ?? rate.currency}{" "}
+                    {copy.units[rate.unit]} → {rate.amount}{" "}
+                    {copy.currencies[fixedCurrency] ?? fixedCurrency}{" "}
+                    {copy.units[policyUnit]}
+                  </p>
+                  <button
+                    type="button"
+                    className="mt-2 rounded-lg border border-amber-300 bg-white px-3 py-2 font-bold text-amber-900 disabled:cursor-not-allowed disabled:opacity-60"
+                    disabled={disabled}
+                    onClick={adoptLegacyRate}
+                  >
+                    {copy.adoptRate}
+                  </button>
+                </div>
+              )}
             </div>
           );
         })}
