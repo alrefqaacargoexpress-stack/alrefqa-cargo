@@ -11,6 +11,7 @@ import {
   syncReceipts,
   financeEntries,
   memberRoles,
+  users,
 } from "../drizzle/schema";
 import type { User } from "../drizzle/schema";
 import type { TrpcContext } from "./_core/context";
@@ -20,6 +21,7 @@ let requestId = "";
 const receipts: any[] = [];
 const updates = vi.fn();
 const inserts = vi.fn();
+let userLockTail: Promise<void> = Promise.resolve();
 const db: any = {
   select: () => ({
     from: (table: unknown) => {
@@ -52,11 +54,47 @@ const db: any = {
     values: async (data: any) => {
       if (table === financeEntries)
         throw new Error("An archive must not write a ledger");
-      if (table === syncReceipts) receipts.push(structuredClone(data));
+      if (table === syncReceipts) {
+        if (
+          receipts.some(
+            r => r.userId === data.userId && r.changeId === data.changeId
+          )
+        )
+          throw new Error("duplicate_receipt");
+        receipts.push(structuredClone(data));
+      }
       inserts(table, data);
     },
   }),
-  transaction: async (callback: any) => callback(db),
+  transaction: async (callback: any) => {
+    let release: (() => void) | undefined;
+    const tx = {
+      ...db,
+      select: () => ({
+        from: (table: unknown) => {
+          if (table !== users) return db.select().from(table);
+          const query: any = {
+            where: () => query,
+            limit: () => query,
+            for: async () => {
+              const previous = userLockTail;
+              userLockTail = new Promise<void>(resolve => {
+                release = resolve;
+              });
+              await previous;
+              return [{ id: 8008 }];
+            },
+          };
+          return query;
+        },
+      }),
+    };
+    try {
+      return await callback(tx);
+    } finally {
+      release?.();
+    }
+  },
 };
 vi.mock("./db", () => ({ getDb: async () => db }));
 vi.mock("./audit", () => ({ appendAudit: vi.fn() }));
@@ -117,9 +155,22 @@ beforeEach(() => {
   receipts.length = 0;
   updates.mockReset();
   inserts.mockReset();
+  userLockTail = Promise.resolve();
   vi.mocked(appendAudit).mockReset();
 });
 describe("Safe generic archive receipts", () => {
+  it("replays two concurrent first-use requests with one write and one receipt", async () => {
+    const request = change();
+    const [first, second] = await Promise.all([
+      sync(request),
+      sync(structuredClone(request)),
+    ]);
+    expect(first.conflicts).toEqual([]);
+    expect(second).toEqual(first);
+    expect(receipts).toHaveLength(1);
+    expect(updates).toHaveBeenCalledTimes(1);
+    expect(appendAudit).toHaveBeenCalledTimes(1);
+  });
   it("records a payload hash and acknowledges an exact successful retry without another write", async () => {
     const request = change();
     const first = await sync(request);

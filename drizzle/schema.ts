@@ -446,3 +446,23 @@ export type CashRegisterRow = typeof cashRegisters.$inferSelect;
 export type CashMovementRow = typeof cashMovements.$inferSelect;
 export type ShipmentTariffSnapshotRow = typeof shipmentTariffSnapshots.$inferSelect;
 export type WarehouseLocationEventRow = typeof warehouseLocationEvents.$inferSelect;
+
+/** Append-only published rate versions, used to verify creation-time tariffs. */
+export const officeTariffHistory = mysqlTable(
+  "office_tariff_history",
+  {
+    id: varchar("id", { length: 128 }).primaryKey(),
+    officeId: varchar("officeId", { length: 32 }).notNull(),
+    profileVersion: int("profileVersion").notNull(),
+    announcedAt: timestamp("announcedAt", { fsp: 3 }).notNull(),
+    shippingRates: json("shippingRates"),
+    sourceShippingRates: json("sourceShippingRates"),
+    recordedBy: int("recordedBy"),
+    recordedAt: timestamp("recordedAt").defaultNow().notNull(),
+  },
+  table => [
+    uniqueIndex("office_tariff_history_version_unique").on(table.officeId, table.profileVersion),
+    index("office_tariff_history_effective_idx").on(table.officeId, table.announcedAt),
+  ]
+);
+export type OfficeTariffHistoryRow = typeof officeTariffHistory.$inferSelect;

@@ -321,12 +321,18 @@ export const financeSnapshotSchema = z
             officeId: officeIdSchema,
             currency: currencySchema,
             total: financeMoneySchema,
+            soldTotal: financeMoneySchema.optional(),
+            remainingTotal: financeMoneySchema.optional(),
+            unpricedShipments: z.number().int().nonnegative().optional(),
             shipments: z.array(
               z
                 .object({
                   shipmentId: id,
                   tracking: z.string().trim().min(1).max(240),
                   amount: financeMoneySchema,
+                  soldAmount: financeMoneySchema.optional(),
+                  remainingAmount: financeMoneySchema.optional(),
+                  pricingStatus: z.enum(["priced", "unpriced"]).optional(),
                 })
                 .strict()
             ),
@@ -344,12 +350,18 @@ export const financeSnapshotSchema = z
             officeId: officeIdSchema,
             currency: currencySchema,
             total: financeMoneySchema,
+            soldTotal: financeMoneySchema.optional(),
+            remainingTotal: financeMoneySchema.optional(),
+            unpricedShipments: z.number().int().nonnegative().optional(),
             shipments: z.array(
               z
                 .object({
                   shipmentId: id,
                   tracking: z.string().trim().min(1).max(240),
                   amount: financeMoneySchema,
+                  soldAmount: financeMoneySchema.optional(),
+                  remainingAmount: financeMoneySchema.optional(),
+                  pricingStatus: z.enum(["priced", "unpriced"]).optional(),
                 })
                 .strict()
             ),
@@ -373,12 +385,18 @@ export type FinanceReceivableShipment = {
   shipmentId: string;
   tracking: string;
   amount: number;
+  soldAmount?: number;
+  remainingAmount?: number;
+  pricingStatus?: "priced" | "unpriced";
 };
 export type FinanceReceivable = {
   officeId: OfficeId;
   currency: FinanceCurrency;
   total: number;
   shipments: FinanceReceivableShipment[];
+  soldTotal?: number;
+  remainingTotal?: number;
+  unpricedShipments?: number;
 };
 export type FinanceSyncResult = {
   applied: Array<{
@@ -492,12 +510,9 @@ export function employeeFinanceOffice(
   requested?: OfficeId
 ): OfficeId {
   if (
-    [
-      "accountant",
-      "general_accountant",
-      "cashier",
-      "office_manager",
-    ].includes(scope.role ?? "") &&
+    ["accountant", "general_accountant", "cashier", "office_manager"].includes(
+      scope.role ?? ""
+    ) &&
     !scope.offices?.length
   )
     throw new Error("employee_office_required");
@@ -631,9 +646,10 @@ export function isShipmentSent(shipment: Shipment): boolean {
       Boolean(shipment.journey && shipment.journey.stage !== "preparing"))
   );
 }
-export function deriveShipmentReceivables(
+export function sourceReceivable(
   shipments: readonly Shipment[],
-  allowedOffices: readonly OfficeId[] | null = null
+  allowedOffices: readonly OfficeId[] | null = null,
+  invoices: readonly Invoice[] = []
 ): FinanceReceivable[] {
   const grouped = new Map<string, FinanceReceivable>();
   for (const shipment of shipments) {
@@ -641,22 +657,56 @@ export function deriveShipmentReceivables(
     const officeId = shipment.packing.source as OfficeId;
     if (allowedOffices && !allowedOffices.includes(officeId)) continue;
     const currency = sourceCurrency[shipment.packing.source] as FinanceCurrency;
-    const amount = goodsTotals(
-      shipment.packing.cartons.flatMap(carton => carton.goods),
+    const sourceGoods = shipment.packing.cartons
+      .flatMap(carton => carton.goods)
+      .filter(g => !g.deleted);
+    const amount = goodsTotals(sourceGoods, shipment.packing.pricePerKg).amount;
+    const soldGoodsIds = new Set<string>();
+    for (const invoice of invoices) {
+      const finance = invoice.finance;
+      if (
+        finance?.chargeKind !== "shipping" ||
+        finance.shipmentId !== shipment.id ||
+        finance.financialOfficeId !== officeId ||
+        finance.currency !== currency
+      )
+        continue;
+      for (const good of finance.goods) soldGoodsIds.add(good.goodsId);
+    }
+    const soldAmount = goodsTotals(
+      sourceGoods.filter(g => soldGoodsIds.has(g.id)),
       shipment.packing.pricePerKg
     ).amount;
+    const remainingAmount = Math.round((amount - soldAmount) * 100) / 100;
+    const pricingStatus =
+      shipment.packing.pricePerKg > 0 ? "priced" : "unpriced";
     const key = `${officeId}:${currency}`;
     const row = grouped.get(key) ?? {
       officeId,
       currency,
       total: 0,
       shipments: [],
+      soldTotal: 0,
+      remainingTotal: 0,
+      unpricedShipments: 0,
     };
     row.total = (Math.round(row.total * 100) + Math.round(amount * 100)) / 100;
+    row.soldTotal =
+      (Math.round((row.soldTotal ?? 0) * 100) + Math.round(soldAmount * 100)) /
+      100;
+    row.remainingTotal =
+      (Math.round((row.remainingTotal ?? 0) * 100) +
+        Math.round(remainingAmount * 100)) /
+      100;
+    if (pricingStatus === "unpriced")
+      row.unpricedShipments = (row.unpricedShipments ?? 0) + 1;
     row.shipments.push({
       shipmentId: shipment.id,
       tracking: shipment.tracking,
       amount,
+      soldAmount,
+      remainingAmount,
+      pricingStatus,
     });
     grouped.set(key, row);
   }
@@ -666,6 +716,15 @@ export function deriveShipmentReceivables(
       a.tracking.localeCompare(b.tracking)
     ),
   }));
+}
+
+/** Backwards-compatible name retained for callers and cached snapshots. */
+export function deriveShipmentReceivables(
+  shipments: readonly Shipment[],
+  allowedOffices: readonly OfficeId[] | null = null,
+  invoices: readonly Invoice[] = []
+): FinanceReceivable[] {
+  return sourceReceivable(shipments, allowedOffices, invoices);
 }
 export type OfficeFinanceSummary = {
   officeId: OfficeId;

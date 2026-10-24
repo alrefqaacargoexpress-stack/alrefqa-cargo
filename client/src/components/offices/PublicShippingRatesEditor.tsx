@@ -2,6 +2,7 @@ import type {
   PublicShippingRate,
   ShippingRateKey,
 } from "@shared/publicShipping";
+import type { OfficeId } from "@shared/branches";
 import { shippingRateKeys } from "@shared/publicShipping";
 import type { PublicShippingCopy } from "@/lib/publicShippingCopy";
 import {
@@ -26,14 +27,27 @@ const currencies: PublicShippingRate["currency"][] = [
   "EUR",
 ];
 const units: PublicShippingRate["unit"][] = ["kg", "m3", "shipment"];
-const fallbackDraft = (): ShippingRateDraft => ({
+export function fallbackCurrencyForOffice(
+  officeId?: OfficeId
+): PublicShippingRate["currency"] {
+  return officeId === "dubai"
+    ? "AED"
+    : officeId === "china"
+      ? "CNY"
+      : officeId === "turkey"
+        ? "TRY"
+        : "MRU";
+}
+
+const fallbackDraft = (officeId?: OfficeId): ShippingRateDraft => ({
   amount: "",
-  currency: "MRU",
+  currency: fallbackCurrencyForOffice(officeId),
   unit: "kg",
 });
 
 export function shippingRateDraftsFrom(
-  value: PublicShippingRateMap | undefined
+  value: PublicShippingRateMap | undefined,
+  officeId?: OfficeId
 ): ShippingRateDrafts {
   return Object.fromEntries(
     shippingRateKeys.map(key => {
@@ -46,7 +60,7 @@ export function shippingRateDraftsFrom(
               currency: rate.currency,
               unit: rate.unit,
             }
-          : fallbackDraft(),
+          : fallbackDraft(officeId),
       ];
     })
   ) as ShippingRateDrafts;
@@ -78,6 +92,7 @@ export function shippingRatesFromDrafts(
 export default function PublicShippingRatesEditor({
   value,
   copy,
+  officeId,
   fixedCurrency,
   ariaLabelPrefix,
   disabled,
@@ -85,6 +100,7 @@ export default function PublicShippingRatesEditor({
 }: {
   value: ShippingRateDrafts;
   copy: PublicShippingCopy;
+  officeId?: OfficeId;
   fixedCurrency?: PublicShippingRate["currency"];
   ariaLabelPrefix?: string;
   disabled?: boolean;

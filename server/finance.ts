@@ -221,11 +221,13 @@ export async function financeSnapshot(
 ): Promise<FinanceSnapshot> {
   assertFinance(scope);
   const invoices: Invoice[] = [];
+  const persistedInvoices: Invoice[] = [];
   for (const row of await db
     .select()
     .from(records)
     .where(eq(records.entity, "invoice"))) {
     const invoice = row.data as Invoice;
+    persistedInvoices.push(invoice);
     if (!financeCan(permissionSubject(scope), "invoices", "view")) continue;
     if (!canReadOfficeRecord(scope.role, scope.offices, "invoice", invoice))
       continue;
@@ -258,7 +260,8 @@ export async function financeSnapshot(
     receivables: financeCan(permissionSubject(scope), "shipment_prices", "view")
       ? deriveShipmentReceivables(
           shipments,
-          scope.offices === null ? null : scope.offices
+          scope.offices === null ? null : scope.offices,
+          persistedInvoices
         )
       : [],
     shipmentReceivables: financeCan(
@@ -268,7 +271,8 @@ export async function financeSnapshot(
     )
       ? deriveShipmentReceivables(
           shipments,
-          scope.offices === null ? null : scope.offices
+          scope.offices === null ? null : scope.offices,
+          persistedInvoices
         )
       : [],
   } satisfies FinanceSnapshot;
@@ -281,6 +285,26 @@ function totalOf(finance: FinancialInvoiceDetails) {
 function invoiceFinance(invoice: Invoice): FinancialInvoiceDetails {
   if (!invoice.finance) throw new Error("finance_invoice_required");
   return invoice.finance;
+}
+
+function assertNewShippingPriceApproved(
+  input: Extract<FinanceMutationCommand, { kind: "invoice" }>["payload"],
+  shipment: Shipment
+) {
+  if (input.chargeKind !== "shipping") return;
+  const packing = shipment.packing;
+  if (!packing) throw new Error("shipment_price_unapproved");
+  const selectedPerKg =
+    input.currency === "MRU"
+      ? packing.pricePerKgMRU
+      : input.currency === sourceCurrency[packing.source]
+        ? packing.pricePerKg
+        : undefined;
+  if (!(selectedPerKg !== undefined && selectedPerKg > 0))
+    throw new Error("shipment_price_unapproved");
+  // The stored rate is authoritative: creation and explicit finance commands
+  // validate it. Preserve positive legacy/manual rates without inventing or
+  // requiring a publication snapshot retroactively.
 }
 
 async function claimGoods(
@@ -349,6 +373,7 @@ async function applyInvoice(
       )
     )
       throw new Error("finance_forbidden");
+    assertNewShippingPriceApproved(input, shipment);
   }
   const calculated = calculateFinanceInvoice(input, shipment);
   const total = calculated.totalAmount;
@@ -814,6 +839,25 @@ async function applyShipmentPrice(
   employeeFinanceOffice(scope, sourceOffice);
   if ((found.row.version as number) !== input.expectedVersion)
     throw new Error("version_conflict");
+  const sourceSnapshot = shipment.packing.rateSnapshot?.sourceRate;
+  if (
+    shipment.packing.pricePerKg > 0 &&
+    sourceSnapshot?.currency === sourceCurrency[shipment.packing.source] &&
+    sourceSnapshot.unit === "kg" &&
+    sourceSnapshot.amount === shipment.packing.pricePerKg &&
+    input.pricePerKg !== shipment.packing.pricePerKg
+  )
+    throw new Error("shipment_tariff_frozen");
+  const mruSnapshot = shipment.packing.rateSnapshot?.nouakchottRate;
+  if (
+    input.pricePerKgMRU !== undefined &&
+    (shipment.packing.pricePerKgMRU ?? 0) > 0 &&
+    mruSnapshot?.currency === "MRU" &&
+    mruSnapshot.unit === "kg" &&
+    mruSnapshot.amount === shipment.packing.pricePerKgMRU &&
+    input.pricePerKgMRU !== shipment.packing.pricePerKgMRU
+  )
+    throw new Error("shipment_tariff_frozen");
   if (
     shipment.status !== "قيد التجهيز" &&
     ((shipment.packing.pricePerKg > 0 &&
@@ -844,9 +888,7 @@ async function applyShipmentPrice(
     currency: sourceCurrency[shipment.packing.source],
     pricePerKg: input.pricePerKg.toFixed(2),
     pricePerKgMRU:
-      input.pricePerKgMRU === undefined
-        ? null
-        : input.pricePerKgMRU.toFixed(2),
+      input.pricePerKgMRU === undefined ? null : input.pricePerKgMRU.toFixed(2),
     capturedBy: user.id,
     data: { commandId: command.id, expectedVersion: input.expectedVersion },
   });

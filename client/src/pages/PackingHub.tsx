@@ -646,7 +646,14 @@ function ShipmentRow({
   workspace: ReturnType<typeof useOperationsWorkspace>;
   officeQuery: string;
 }) {
-  const totals = packingTotals(shipment.packing);
+  const sourceRateApproved =
+    Number.isFinite(shipment.packing.pricePerKg) &&
+    shipment.packing.pricePerKg > 0;
+  const totals = packingTotals(
+    sourceRateApproved
+      ? shipment.packing
+      : { ...shipment.packing, pricePerKg: 0 }
+  );
   const mruTotals = packingTotalsMRU(shipment.packing);
   return (
     <article
@@ -716,7 +723,9 @@ function ShipmentRow({
           label={c.totalCost}
           value={
             showFinance
-              ? `${formatLocalNumber(totals.amount, language, 2)} ${sourceCurrency[shipment.packing.source]}`
+              ? sourceRateApproved
+                ? `${formatLocalNumber(totals.amount, language, 2)} ${sourceCurrency[shipment.packing.source]}`
+                : c.sourceRateNotApproved
               : c.amountHidden
           }
         />

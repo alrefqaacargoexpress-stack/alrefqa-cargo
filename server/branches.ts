@@ -52,6 +52,7 @@ import { ENV } from "./_core/env";
 import { appendAudit } from "./audit";
 import { hideFinance, publicRecord, roleForUser } from "./operations";
 import { actorFromUser } from "./tracking";
+import { rememberOfficeTariff } from "./officeTariffs";
 
 export type OfficeScope = {
   role: AppRole | null;
@@ -479,11 +480,22 @@ export async function updateProfile(
     if (current && sameOfficeProfile(saved, profile))
       return { ...saved, version: expected };
     const nextVersion = expected + 1;
+    const publishedAt = new Date();
+    if (current?.updatedAt)
+      await rememberOfficeTariff(
+        tx,
+        saved,
+        expected,
+        new Date(current.updatedAt),
+        current.updatedBy ?? null
+      );
+    await rememberOfficeTariff(tx, profile, nextVersion, publishedAt, user.id);
     const values = {
       officeId: input.officeId,
       version: nextVersion,
       profile,
       updatedBy: user.id,
+      updatedAt: publishedAt,
     };
     if (current)
       await tx

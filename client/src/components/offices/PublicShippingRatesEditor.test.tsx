@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import PublicShippingRatesEditor, {
+  fallbackCurrencyForOffice,
   shippingRateDraftsFrom,
   shippingRatesFromDrafts,
 } from "./PublicShippingRatesEditor";
@@ -37,5 +38,39 @@ describe("PublicShippingRatesEditor", () => {
     );
     expect(html).toContain("Leave empty to keep unpublished");
     expect(html).not.toContain('value="0"');
+  });
+
+  it("uses the office currency only for new blank drafts", () => {
+    expect(fallbackCurrencyForOffice("dubai")).toBe("AED");
+    expect(fallbackCurrencyForOffice("china")).toBe("CNY");
+    expect(fallbackCurrencyForOffice("turkey")).toBe("TRY");
+    expect(fallbackCurrencyForOffice("nouakchott")).toBe("MRU");
+    expect(shippingRateDraftsFrom(undefined, "dubai").airRegular).toEqual({
+      amount: "",
+      currency: "AED",
+      unit: "kg",
+    });
+  });
+
+  it("does not reinterpret a saved legacy MRU rate by office", () => {
+    const drafts = shippingRateDraftsFrom(
+      {
+        airRegular: { amount: 37, currency: "MRU", unit: "kg" },
+        airExpress: null,
+        sensitive: null,
+        sea: null,
+      },
+      "dubai"
+    );
+    expect(drafts.airRegular).toEqual({
+      amount: "37",
+      currency: "MRU",
+      unit: "kg",
+    });
+    expect(shippingRatesFromDrafts(drafts).airRegular).toEqual({
+      amount: 37,
+      currency: "MRU",
+      unit: "kg",
+    });
   });
 });

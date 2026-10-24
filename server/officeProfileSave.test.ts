@@ -1,13 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { updateProfile } from "./branches";
-import { defaultOfficeProfile } from "@shared/branches";
+import { defaultOfficeProfile } from "../shared/branches";
 import {
   emptyPublicShippingRates,
   emptyNouakchottSourceRates,
-} from "@shared/publicShipping";
+} from "../shared/publicShipping";
 import { appendAudit } from "./audit";
 import type { User } from "../drizzle/schema";
 vi.mock("./audit", () => ({ appendAudit: vi.fn(async () => 1) }));
+import { rememberOfficeTariff } from "./officeTariffs";
+vi.mock("./officeTariffs", () => ({
+  rememberOfficeTariff: vi.fn(async () => undefined),
+}));
 const admin = {
   id: 91,
   openId: "test-only",
@@ -191,5 +195,30 @@ describe("Acknowledged office profile persistence", () => {
     expect(f.writes()).toBe(1);
     expect(appendAudit).toHaveBeenCalledOnce();
     expect(f.get().profile.shippingRates).toBeUndefined();
+  });
+  it("records the previous publication time and the new version without replacing history", async () => {
+    const f = fixture();
+    const base = initial();
+    const previousTime = new Date("2026-10-23T12:00:00Z");
+    f.set({
+      officeId: base.officeId,
+      version: 1,
+      profile: base,
+      updatedAt: previousTime,
+      updatedBy: admin.id,
+    });
+    await updateProfile(f.db, admin, {
+      ...base,
+      address: "New address",
+      expectedVersion: 1,
+    });
+    const calls = vi.mocked(rememberOfficeTariff).mock.calls;
+    expect(calls).toHaveLength(2);
+    expect(calls[0][2]).toBe(1);
+    expect(calls[0][3]).toEqual(previousTime);
+    expect(calls[1][2]).toBe(2);
+    expect(calls[1][3]).toBeInstanceOf(Date);
+    expect(f.get().profile.address).toBe("New address");
+    expect(appendAudit).toHaveBeenCalledOnce();
   });
 });

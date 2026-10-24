@@ -8,6 +8,8 @@ import {
   summarizeOfficeFinance,
   type FinanceCurrency,
   type FinanceEntry,
+  type FinanceReceivable,
+  type FinanceSnapshot,
   canWriteFinance,
 } from "@shared/finance";
 import { canReadAnyFinance } from "@shared/permissions";
@@ -24,6 +26,7 @@ import {
   officeFinanceCopyFor,
   type OfficeFinanceCopy,
 } from "@/lib/officeFinanceCopy";
+import { hasSyncReasonCopy, syncReasonMessage } from "@/lib/syncReasonCopy";
 import {
   PackingField,
   packingInputClass,
@@ -86,6 +89,10 @@ export function createShipmentPriceCommand(input: {
   };
 }
 
+function moneyRound(value: number) {
+  return Math.round(value * 100) / 100;
+}
+
 export function financeCashBalance(
   entries: readonly FinanceEntry[],
   officeId: OfficeId,
@@ -112,6 +119,59 @@ export function financeCashBalance(
     cents += Math.round(signed * 100);
   }
   return cents / 100;
+}
+
+/** Prefer the explicit API field, but keep older cached snapshots readable. */
+export function receivablesForSnapshot(
+  snapshot: Pick<FinanceSnapshot, "receivables" | "shipmentReceivables">
+): FinanceReceivable[] {
+  const rows = snapshot.shipmentReceivables?.length
+    ? snapshot.shipmentReceivables
+    : (snapshot.receivables ?? []);
+  return rows.map(row => {
+    const hasSoldAmounts = row.shipments.some(
+      shipment => shipment.soldAmount !== undefined
+    );
+    const hasRemainingAmounts = row.shipments.some(
+      shipment => shipment.remainingAmount !== undefined
+    );
+    const soldTotal =
+      row.soldTotal ??
+      (hasSoldAmounts
+        ? moneyRound(
+            row.shipments.reduce(
+              (sum, shipment) => sum + (shipment.soldAmount ?? 0),
+              0
+            )
+          )
+        : 0);
+    const remainingTotal =
+      row.remainingTotal ??
+      (hasRemainingAmounts
+        ? moneyRound(
+            row.shipments.reduce(
+              (sum, shipment) => sum + (shipment.remainingAmount ?? 0),
+              0
+            )
+          )
+        : moneyRound(row.total - soldTotal));
+    return {
+      ...row,
+      soldTotal,
+      remainingTotal,
+      unpricedShipments:
+        row.unpricedShipments ??
+        row.shipments.filter(shipment => shipment.pricingStatus === "unpriced")
+          .length,
+      shipments: row.shipments.map(shipment => ({
+        ...shipment,
+        soldAmount: shipment.soldAmount ?? (hasSoldAmounts ? 0 : undefined),
+        remainingAmount:
+          shipment.remainingAmount ??
+          (hasRemainingAmounts ? 0 : shipment.amount),
+      })),
+    };
+  });
 }
 
 const kindLabels = (
@@ -241,8 +301,9 @@ export default function OfficeFinance() {
   });
   const shipmentSource = finance.base.state.shipments;
   const snapshot = finance.store?.snapshot;
-  const shipmentReceivables =
-    snapshot?.shipmentReceivables ?? snapshot?.receivables ?? [];
+  const shipmentReceivables = receivablesForSnapshot(
+    snapshot ?? { receivables: [], shipmentReceivables: [] }
+  );
   const accountantHomeOnly =
     canWrite && finance.role === "accountant" && allowedOffices.length === 1;
   const [openingCurrency, setOpeningCurrency] =
@@ -397,7 +458,9 @@ export default function OfficeFinance() {
     if (!result) return;
     setSyncNotice(
       result.conflicts.length
-        ? c.syncConflicts
+        ? hasSyncReasonCopy(result.conflicts[0].code)
+          ? syncReasonMessage(result.conflicts[0].code, language)
+          : c.syncConflicts
         : result.applied.length
           ? `${c.syncDone}: ${result.applied.length}`
           : c.syncNoResult
@@ -633,9 +696,35 @@ export default function OfficeFinance() {
                   >
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <strong>{officeName(language, row.officeId)}</strong>
-                      <span className="font-black" dir="ltr">
-                        {formatMoney(row.total, row.currency, language)}
-                      </span>
+                      {row.unpricedShipments ? (
+                        <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-bold text-amber-900">
+                          {c.unpriced}: {row.unpricedShipments}
+                        </span>
+                      ) : null}
+                    </div>
+                    <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
+                      <Metric
+                        label={c.totalGross}
+                        value={formatMoney(row.total, row.currency, language)}
+                      />
+                      <Metric
+                        label={c.sold}
+                        value={formatMoney(
+                          row.soldTotal ?? 0,
+                          row.currency,
+                          language
+                        )}
+                        tone="green"
+                      />
+                      <Metric
+                        label={c.remaining}
+                        value={formatMoney(
+                          row.remainingTotal ?? row.total,
+                          row.currency,
+                          language
+                        )}
+                        tone="blue"
+                      />
                     </div>
                     <div className="mt-3 space-y-2 text-sm">
                       {row.shipments.map(shipment => (
@@ -643,15 +732,37 @@ export default function OfficeFinance() {
                           key={shipment.shipmentId}
                           className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-white px-3 py-2"
                         >
-                          <span>
+                          <span className="flex flex-wrap items-center gap-2">
                             <b>{shipment.tracking}</b>
                             <span className="ms-2 text-xs text-[#718088]">
                               {shipment.shipmentId}
                             </span>
+                            {shipment.pricingStatus === "unpriced" && (
+                              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-bold text-amber-900">
+                                {c.unpriced}
+                              </span>
+                            )}
                           </span>
-                          <span className="font-mono font-bold" dir="ltr">
+                          <span
+                            className="text-end font-mono text-xs"
+                            dir="ltr"
+                          >
+                            {c.totalGross}:{" "}
                             {formatMoney(
                               shipment.amount,
+                              row.currency,
+                              language
+                            )}
+                            <br />
+                            {c.sold}:{" "}
+                            {formatMoney(
+                              shipment.soldAmount ?? 0,
+                              row.currency,
+                              language
+                            )}{" "}
+                            · {c.remaining}:{" "}
+                            {formatMoney(
+                              shipment.remainingAmount ?? shipment.amount,
                               row.currency,
                               language
                             )}

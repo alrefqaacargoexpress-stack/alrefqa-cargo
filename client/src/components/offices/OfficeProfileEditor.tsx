@@ -139,7 +139,10 @@ function draftFrom(profile: VersionedOfficeProfile | OfficeProfile): Draft {
     timezone: profile.timezone,
     mapUrl: profile.mapUrl ?? "",
     seaAddress: profile.seaAddress ?? "",
-    shippingRates: shippingRateDraftsFrom(profile.shippingRates),
+    shippingRates: shippingRateDraftsFrom(
+      profile.shippingRates,
+      profile.officeId
+    ),
     sourceRates: nouakchottSourceRateDraftsFrom(profile.sourceShippingRates),
     days,
   };
@@ -510,6 +513,7 @@ export default function OfficeProfileEditor({
             <PublicShippingRatesEditor
               value={draft.shippingRates}
               copy={shippingCopy}
+              officeId={baseProfile.officeId}
               disabled={!canEdit || pending}
               onChange={shippingRates =>
                 setChanged({ ...draft, shippingRates })

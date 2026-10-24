@@ -104,7 +104,11 @@ export default function ShipmentPacking() {
       </PackingLayout>
     );
 
-  const totals = packingTotals(packed.packing);
+  const sourceRateApproved =
+    Number.isFinite(packed.packing.pricePerKg) && packed.packing.pricePerKg > 0;
+  const totals = packingTotals(
+    sourceRateApproved ? packed.packing : { ...packed.packing, pricePerKg: 0 }
+  );
   const mruTotals = packingTotalsMRU(packed.packing);
   const canEdit = workspace.canEditShipments && packed.status === "قيد التجهيز";
   const canMarkDelivered =
@@ -116,8 +120,7 @@ export default function ShipmentPacking() {
   const hasGoods = packed.packing.cartons.some(carton =>
     carton.goods.some(goods => !goods.deleted)
   );
-  const sendReady =
-    canSend && hasGoods && openCartonsWithGoods.length === 0;
+  const sendReady = canSend && hasGoods && openCartonsWithGoods.length === 0;
   const errorText = (value: unknown) => {
     const code = value instanceof Error ? value.message : "";
     if (code === "carton_empty" || code === "carton_closed")
@@ -220,8 +223,7 @@ export default function ShipmentPacking() {
   const send = async () => {
     if (!canSend) return setError(c.canNotEdit);
     if (!hasGoods) return setError(c.noGoods);
-    if (openCartonsWithGoods.length > 0)
-      return setError(c.sendBlocked);
+    if (openCartonsWithGoods.length > 0) return setError(c.sendBlocked);
     if (!window.confirm(c.confirmSend)) return;
     try {
       await save(
@@ -312,7 +314,9 @@ export default function ShipmentPacking() {
             label={c.totalCost}
             value={
               workspace.showFinance
-                ? `${formatLocalNumber(totals.amount, language, 2)} ${sourceCurrency[packed.packing.source]}`
+                ? sourceRateApproved
+                  ? `${formatLocalNumber(totals.amount, language, 2)} ${sourceCurrency[packed.packing.source]}`
+                  : c.sourceRateNotApproved
                 : c.amountHidden
             }
           />
@@ -340,8 +344,9 @@ export default function ShipmentPacking() {
           <div className="mt-3 flex flex-wrap gap-4 text-xs text-[#718088]">
             <span>
               {c.pricePerKg}:{" "}
-              {formatLocalNumber(packed.packing.pricePerKg, language, 2)}{" "}
-              {sourceCurrency[packed.packing.source]}
+              {sourceRateApproved
+                ? `${formatLocalNumber(packed.packing.pricePerKg, language, 2)} ${sourceCurrency[packed.packing.source]}`
+                : c.sourceRateNotApproved}
             </span>
             <span>
               {c.pricePerKgMRU}:{" "}
@@ -710,12 +715,14 @@ function CartonCard({
   onDelete: (entry: PackingGoods) => void;
   onRestore: (entry: PackingGoods) => void;
 }) {
+  const sourceRateApproved = Number.isFinite(sourcePrice) && sourcePrice > 0;
+  const safeSourcePrice = sourceRateApproved ? sourcePrice : 0;
   const groups = useMemo(
-    () => makeGroups(carton, sourcePrice, query, showDeleted),
-    [carton, sourcePrice, query, showDeleted]
+    () => makeGroups(carton, safeSourcePrice, query, showDeleted),
+    [carton, safeSourcePrice, query, showDeleted]
   );
-  const uniqueGroupCount = cartonGroups(carton, sourcePrice).length;
-  const totals = goodsTotals(carton.goods, sourcePrice);
+  const uniqueGroupCount = cartonGroups(carton, safeSourcePrice).length;
+  const totals = goodsTotals(carton.goods, safeSourcePrice);
   const mruTotals =
     mruPrice === undefined ? null : goodsTotals(carton.goods, mruPrice);
   return (
@@ -756,6 +763,7 @@ function CartonCard({
               language={language}
               showFinance={showFinance}
               sourceCurrency={sourceCurrency[source]}
+              sourceRateApproved={sourceRateApproved}
               canEdit={canEdit}
               onDelete={onDelete}
               onRestore={onRestore}
@@ -780,7 +788,9 @@ function CartonCard({
           label={c.totalCost}
           value={
             showFinance
-              ? `${formatLocalNumber(totals.amount, language, 2)} ${sourceCurrency[source]}`
+              ? sourceRateApproved
+                ? `${formatLocalNumber(totals.amount, language, 2)} ${sourceCurrency[source]}`
+                : c.sourceRateNotApproved
               : c.amountHidden
           }
         />
@@ -810,7 +820,11 @@ function CustomerSummary({
   language: string;
   showFinance: boolean;
 }) {
-  const customers = packingCustomers(packed.packing);
+  const sourceRateApproved =
+    Number.isFinite(packed.packing.pricePerKg) && packed.packing.pricePerKg > 0;
+  const customers = packingCustomers(
+    sourceRateApproved ? packed.packing : { ...packed.packing, pricePerKg: 0 }
+  );
   const mruCustomers =
     packed.packing.pricePerKgMRU === undefined
       ? null
@@ -852,8 +866,9 @@ function CustomerSummary({
                 {showFinance && (
                   <>
                     <p className="text-sm font-bold text-[#092d50]">
-                      {formatLocalNumber(customer.amount, language, 2)}{" "}
-                      {sourceCurrency[packed.packing.source]}
+                      {sourceRateApproved
+                        ? `${formatLocalNumber(customer.amount, language, 2)} ${sourceCurrency[packed.packing.source]}`
+                        : c.sourceRateNotApproved}
                     </p>
                     <p className="text-xs font-bold text-[#2d6380]">
                       {mru

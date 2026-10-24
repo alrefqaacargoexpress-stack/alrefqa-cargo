@@ -74,6 +74,10 @@ export type OfficeFinanceCopy = {
   shipmentPriceHint: string;
   saveShipmentPrice: string;
   readOnlyFinance: string;
+  totalGross: string;
+  sold: string;
+  remaining: string;
+  unpriced: string;
   cashBalance: string;
   sourceReceivables: string;
   sourceReceivablesHint: string;
@@ -174,10 +178,14 @@ const ar: OfficeFinanceCopy = {
   saveShipmentPrice: "حفظ السعر",
   readOnlyFinance:
     "هذه الصفحة للقراءة والإشراف؛ الكتابة للمحاسب المعين في مكتبه فقط.",
+  totalGross: "الإجمالي قبل الفواتير",
+  sold: "المباع بالفواتير",
+  remaining: "المتبقي غير المباع",
+  unpriced: "غير مسعّر",
   cashBalance: "الرصيد النقدي",
   sourceReceivables: "مستحقات المصدر حسب الشحنة",
   sourceReceivablesHint:
-    "مشتقة من لقطة الشحنات الرسمية؛ تعرض التتبع والمبلغ والعملة ولا تنشئ قيداً نقدياً تلقائياً.",
+    "من مكتب المصدر وبعملة المصدر؛ تخفّض الفواتير قيمة غير المباع عند إصدارها، ويبقى الدين دينَ العميل. لا يوجد تحويل تلقائي إلى MRU.",
   noSourceReceivables: "لا توجد مستحقات مصدر في هذا النطاق.",
   addOpeningBalance: "إضافة رصيد افتتاحي",
   openingOnceHint:
@@ -280,10 +288,14 @@ const en: OfficeFinanceCopy = {
   saveShipmentPrice: "Save price",
   readOnlyFinance:
     "This page is read-only for oversight; only the assigned accountant can post in the home office.",
+  totalGross: "Gross shipment value",
+  sold: "Sold on invoices",
+  remaining: "Remaining unsold",
+  unpriced: "Unpriced",
   cashBalance: "Cash balance",
   sourceReceivables: "Source receivables by shipment",
   sourceReceivablesHint:
-    "Derived from the official shipment snapshot; tracking, amount, and currency are shown without creating cash entries.",
+    "From the source office in its source currency; issued invoices reduce unsold value, while the debt remains customer debt. No automatic MRU conversion.",
   noSourceReceivables: "No source receivables in this scope.",
   addOpeningBalance: "Add opening balance",
   openingOnceHint:
@@ -380,10 +392,14 @@ const zh: OfficeFinanceCopy = {
   shipmentPriceHint: "由货件来源办公室的会计设置，不修改货物。",
   saveShipmentPrice: "保存价格",
   readOnlyFinance: "此页面仅供读取和监督；只有指定会计可在其办公室登记。",
+  totalGross: "发货总值",
+  sold: "发票已售",
+  remaining: "未售剩余",
+  unpriced: "未定价",
   cashBalance: "现金余额",
   sourceReceivables: "按货件的来源地应收款",
   sourceReceivablesHint:
-    "来自正式货件快照；显示追踪号、金额和币种，不会自动创建现金账目。",
+    "来自来源办公室并使用来源币种；开具发票时会减少未售价值，债务仍属于客户债务。不自动换算为 MRU。",
   noSourceReceivables: "此范围没有来源地应收款。",
   addOpeningBalance: "添加期初余额",
   openingOnceHint: "会计每个办公室和币种只登记一次期初余额；禁止重放或替换。",
@@ -485,10 +501,14 @@ const tr: OfficeFinanceCopy = {
   saveShipmentPrice: "Fiyatı kaydet",
   readOnlyFinance:
     "Bu sayfa denetim için salt okunurdur; yalnızca atanmış muhasebeci kendi ofisinde kayıt yapabilir.",
+  totalGross: "Brüt gönderi değeri",
+  sold: "Faturalarda satılan",
+  remaining: "Kalan satılmamış",
+  unpriced: "Fiyatlandırılmamış",
   cashBalance: "Nakit bakiyesi",
   sourceReceivables: "Gönderiye göre kaynak alacakları",
   sourceReceivablesHint:
-    "Resmi gönderi görüntüsünden türetilir; takip, tutar ve para birimi gösterilir, otomatik nakit kaydı oluşturulmaz.",
+    "Kaynak ofisten ve kaynak para biriminde gösterilir; fatura kesilince satılmamış değer azalır, borç müşteri borcu olarak kalır. MRU'ya otomatik dönüşüm yoktur.",
   noSourceReceivables: "Bu kapsamda kaynak alacağı yok.",
   addOpeningBalance: "Açılış bakiyesi ekle",
   openingOnceHint:

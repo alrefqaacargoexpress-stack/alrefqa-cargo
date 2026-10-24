@@ -17,6 +17,7 @@ export interface PackingCopy extends Record<string, string> {
   publicTariff: string;
   tariffUndefined: string;
   pricePerKg: string;
+  sourceRateNotApproved: string;
   dubai: string;
   turkey: string;
   china: string;
@@ -175,6 +176,7 @@ const common: PackingCopy = {
   publicTariff: "",
   tariffUndefined: "",
   pricePerKg: "",
+  sourceRateNotApproved: "",
   dubai: "",
   turkey: "",
   china: "",
@@ -336,6 +338,7 @@ export const packingCopy: Record<PackingLanguage, PackingCopy> = {
     publicTariff: "التعرفة المعلنة للمكتب",
     tariffUndefined: "غير محدد",
     pricePerKg: "السعر لكل كغ",
+    sourceRateNotApproved: "سعر المصدر غير معتمد",
     dubai: "دبي",
     turkey: "تركيا",
     china: "الصين",
@@ -502,6 +505,7 @@ export const packingCopy: Record<PackingLanguage, PackingCopy> = {
     publicTariff: "Published office tariff",
     tariffUndefined: "Undefined",
     pricePerKg: "Price per kg",
+    sourceRateNotApproved: "Source rate not approved",
     dubai: "Dubai",
     turkey: "Turkey",
     china: "China",
@@ -668,6 +672,7 @@ export const packingCopy: Record<PackingLanguage, PackingCopy> = {
     publicTariff: "办公室公布的费率",
     tariffUndefined: "未定义",
     pricePerKg: "每公斤价格",
+    sourceRateNotApproved: "来源费率未获批准",
     dubai: "迪拜",
     turkey: "土耳其",
     china: "中国",
@@ -831,6 +836,7 @@ export const packingCopy: Record<PackingLanguage, PackingCopy> = {
     publicTariff: "İlan edilen ofis tarifesi",
     tariffUndefined: "Tanımsız",
     pricePerKg: "Kg başına fiyat",
+    sourceRateNotApproved: "Kaynak ücreti onaylanmadı",
     dubai: "Dubai",
     turkey: "Türkiye",
     china: "Çin",

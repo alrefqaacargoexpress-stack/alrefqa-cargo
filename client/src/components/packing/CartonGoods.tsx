@@ -21,6 +21,7 @@ export default function CartonGoods({
   language,
   showFinance,
   sourceCurrency,
+  sourceRateApproved,
   canEdit,
   onDelete,
   onRestore,
@@ -31,6 +32,7 @@ export default function CartonGoods({
   language: string;
   showFinance: boolean;
   sourceCurrency: string;
+  sourceRateApproved: boolean;
   canEdit: boolean;
   onDelete: (entry: PackingGoods) => void;
   onRestore: (entry: PackingGoods) => void;
@@ -74,7 +76,9 @@ export default function CartonGoods({
             <div>{formatLocalNumber(group.weight, language, 3)} kg</div>
             <div className="font-bold text-[#092d50]">
               {showFinance
-                ? `${formatLocalNumber(group.amount, language, 2)} ${sourceCurrency}`
+                ? sourceRateApproved
+                  ? `${formatLocalNumber(group.amount, language, 2)} ${sourceCurrency}`
+                  : c.sourceRateNotApproved
                 : c.amountHidden}
             </div>
           </div>

@@ -194,6 +194,36 @@ const reasons: Record<string, Copy> = {
     zh: "您无权更新货运阶段。总经理可在员工设置中授予此权限。",
     tr: "Gönderi aşamasını güncelleme yetkiniz yok. Genel müdür bunu personel ayarlarından verebilir.",
   },
+  tariff_history_unavailable: {
+    ar: "لا تتوفر نسخة تاريخية موثوقة لتعرفة المكتب وقت إنشاء الشحنة. راجع تاريخ الشحنة وتعرفة المكتب قبل المزامنة.",
+    en: "A trusted historical office tariff is unavailable for the shipment creation time. Review the shipment date and office tariff before syncing.",
+    zh: "无法取得货件创建时可信的办公室历史费率。请在同步前检查货件日期和办公室费率。",
+    tr: "Gönderinin oluşturulduğu zamana ait güvenilir ofis tarife geçmişi yok. Eşitlemeden önce gönderi tarihini ve ofis tarifesini inceleyin.",
+  },
+  shipment_creation_date_invalid: {
+    ar: "تاريخ إنشاء الشحنة غير صالح أو يقع في المستقبل. صحح بيانات الشحنة قبل المزامنة.",
+    en: "The shipment creation date is invalid or in the future. Correct the shipment data before syncing.",
+    zh: "货件创建日期无效或位于未来。请在同步前更正货件数据。",
+    tr: "Gönderi oluşturma tarihi geçersiz veya gelecekte. Eşitlemeden önce gönderi verilerini düzeltin.",
+  },
+  office_tariff_history_conflict: {
+    ar: "تتعارض نسخة تعرفة المكتب مع سجل النشر التاريخي. راجع النسخة المنشورة ولا تستبدلها تلقائيًا.",
+    en: "The office tariff conflicts with its publication history. Review the published version; it will not be overwritten automatically.",
+    zh: "办公室费率与发布历史冲突。请检查已发布版本；系统不会自动覆盖它。",
+    tr: "Ofis tarifesi yayın geçmişiyle çakışıyor. Yayınlanan sürümü inceleyin; otomatik olarak üzerine yazılmaz.",
+  },
+  shipment_price_unapproved: {
+    ar: "سعر الشحنة غير معتمد للتسوية. اطلب من محاسب مكتب المصدر اعتماد سعر موجب لكل كيلو.",
+    en: "The shipment price is not approved for settlement. Ask the source-office accountant to approve a positive per-kg price.",
+    zh: "货件价格尚未获准结算。请来源办公室会计批准正数的每公斤价格。",
+    tr: "Gönderi fiyatı tahsilat için onaylanmadı. Kaynak ofis muhasebecisinden pozitif kg fiyatını onaylamasını isteyin.",
+  },
+  shipment_tariff_frozen: {
+    ar: "تعرفة الشحنة مثبتة من سجل النشر ولا يمكن تغييرها بعد ذلك. راجع النسخة المنشورة.",
+    en: "The shipment tariff is frozen by its publication record and cannot be changed. Review the published version.",
+    zh: "货件费率已由发布记录冻结，不能更改。请检查已发布版本。",
+    tr: "Gönderi tarifesi yayın kaydıyla donduruldu ve değiştirilemez. Yayınlanan sürümü inceleyin.",
+  },
   invalid_status_transition: {
     ar: "لا يمكن الانتقال إلى هذه الحالة من الحالة الحالية للشحنة.",
     en: "The shipment cannot move to this status from its current status.",

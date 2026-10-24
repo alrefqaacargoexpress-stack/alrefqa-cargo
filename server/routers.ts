@@ -23,11 +23,12 @@ import { z } from "zod";
 import { createHash } from "node:crypto";
 import { TRPCError } from "@trpc/server";
 import { COOKIE_NAME } from "@shared/const";
+import { creationTariff } from "./officeTariffs";
 import { ONE_YEAR_MS } from "@shared/const";
 import {
   normalizeTracking,
   packingServiceSchema,
-  tariffForPackingProfiles,
+  sourceCurrency,
 } from "@shared/packing";
 import {
   trackingRequestSchema,
@@ -55,6 +56,7 @@ import {
   syncReceipts,
   users,
   officeSettings,
+  shipmentTariffSnapshots,
 } from "../drizzle/schema";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
@@ -584,6 +586,15 @@ export const appRouter = router({
         const scope = await readOfficeScope(db, ctx.user);
         const output: SyncResult = { applied: [], conflicts: [] };
         await db.transaction(async tx => {
+          // The user row always exists for a real session. Lock it before any
+          // snapshot read so concurrent first-use requests cannot both observe
+          // a missing receipt and perform the same shipment mutation.
+          await tx
+            .select({ id: users.id })
+            .from(users)
+            .where(eq(users.id, ctx.user.id))
+            .limit(1)
+            .for("update");
           const scope = await readOfficeScope(tx, ctx.user);
           const role = scope.role;
           if (!role) throw forbidden();
@@ -881,23 +892,12 @@ export const appRouter = router({
                   const service = packingServiceSchema.parse(
                     packing.service ?? "airRegular"
                   );
-                  // Read immediately before preparing the record. Client prices,
-                  // snapshots, and timestamps are never trusted here.
-                  const tariffProfiles = await publicProfiles(tx);
-                  const sourceProfile = tariffProfiles.find(
-                    profile => profile.officeId === packing.source
-                  );
-                  const nouakchottProfile = tariffProfiles.find(
-                    profile => profile.officeId === "nouakchott"
-                  );
-                  if (!sourceProfile || !nouakchottProfile)
-                    throw new Error("shipping_profile_unavailable");
-                  const tariff = tariffForPackingProfiles({
-                    source: packing.source,
+                  // Prices and versions are resolved from server publication history.
+                  // An offline draft keeps its creation-time rate, never a guessed
+                  // newer rate or an arbitrary rate supplied by the browser.
+                  const tariff = await creationTariff(tx, {
+                    ...packing,
                     service,
-                    sourceProfile,
-                    nouakchottProfile,
-                    capturedAt: new Date().toISOString(),
                   });
                   const { pricePerKgMRU: _ignoredMru, ...withoutMru } = packing;
                   candidate = {
@@ -1111,6 +1111,32 @@ export const appRouter = router({
                   conflicts: [],
                 };
               }
+            }
+            if (
+              change.entity === "shipment" &&
+              !current &&
+              result.applied.length &&
+              financeShipment?.packing
+            ) {
+              const packing = financeShipment.packing;
+              await tx.insert(shipmentTariffSnapshots).values({
+                id: `shipment-created-tariff:${change.id}`,
+                shipmentId: financeShipment.id,
+                officeId: packing.source,
+                serviceType: packing.service ?? "airRegular",
+                currency: sourceCurrency[packing.source] as
+                  | "AED"
+                  | "CNY"
+                  | "TRY",
+                pricePerKg: packing.pricePerKg.toFixed(2),
+                pricePerKgMRU: packing.pricePerKgMRU?.toFixed(2) ?? null,
+                capturedBy: ctx.user.id,
+                data: {
+                  origin: "published_at_creation",
+                  creationDate: packing.createdAt,
+                  snapshot: packing.rateSnapshot,
+                },
+              });
             }
             await tx.insert(syncReceipts).values({
               userId: ctx.user.id,
