@@ -44,6 +44,10 @@ import {
   financeEntries,
   financeReceipts,
   financeGoods,
+  invoiceAdjustments,
+  cashRegisters,
+  cashMovements,
+  shipmentTariffSnapshots,
 } from "../drizzle/schema";
 import type { User } from "../drizzle/schema";
 
@@ -147,6 +151,40 @@ async function insertEntry(tx: any, value: FinanceEntry) {
     actorId: value.actorId,
   });
 }
+
+async function ensureOpenCashRegister(
+  tx: any,
+  officeId: OfficeId,
+  currency: FinanceEntry["currency"],
+  userId: number,
+  requestId: string
+) {
+  const current = await tx
+    .select()
+    .from(cashRegisters)
+    .where(
+      and(
+        eq(cashRegisters.officeId, officeId),
+        eq(cashRegisters.currency, currency),
+        eq(cashRegisters.status, "open")
+      )
+    )
+    .limit(1)
+    .for("update");
+  if (current[0]) return current[0].id as string;
+  const id = `cash-register:${officeId}:${currency}:${requestId}`;
+  await tx.insert(cashRegisters).values({
+    id,
+    officeId,
+    currency,
+    openingBalance: "0.00",
+    status: "open",
+    openedBy: userId,
+    version: 1,
+  });
+  return id;
+}
+
 function publicInvoice(row: any): Invoice {
   const data = row.data as Invoice;
   return { ...data, version: row.version, scope: "shared" };
@@ -420,6 +458,37 @@ async function applyInvoice(
     data: invoice,
     updatedBy: user.id,
   });
+  if (input.adjustment.amount > 0) {
+    await tx.insert(invoiceAdjustments).values({
+      id: `invoice-adjustment:${command.id}`,
+      invoiceId: invoice.id,
+      officeId: financialOfficeId,
+      direction: input.adjustment.direction,
+      amount: input.adjustment.amount.toFixed(2),
+      reason: "invoice_adjustment",
+      actorId: user.id,
+    });
+  }
+  if (input.paymentMode === "cash") {
+    const registerId = await ensureOpenCashRegister(
+      tx,
+      financialOfficeId,
+      input.currency,
+      user.id,
+      command.id
+    );
+    await tx.insert(cashMovements).values({
+      id: `cash-movement:${command.id}`,
+      registerId,
+      officeId: financialOfficeId,
+      kind: "receipt",
+      amount: total.toFixed(2),
+      currency: input.currency,
+      invoiceId: invoice.id,
+      actorId: user.id,
+      data: { source: "invoice" },
+    });
+  }
   for (const row of rows) await insertEntry(tx, row);
   await appendAudit(tx, {
     actor: { id: user.id, name: actorName(user), role: scope.role! },
@@ -478,6 +547,23 @@ async function applyExpense(
     }
   );
   await insertEntry(tx, row);
+  const registerId = await ensureOpenCashRegister(
+    tx,
+    financialOfficeId,
+    input.currency,
+    user.id,
+    command.id
+  );
+  await tx.insert(cashMovements).values({
+    id: `cash-movement:${command.id}`,
+    registerId,
+    officeId: financialOfficeId,
+    kind: "expense",
+    amount: input.amount.toFixed(2),
+    currency: input.currency,
+    actorId: user.id,
+    data: { source: "expense", category: input.category },
+  });
   await appendAudit(tx, {
     actor: { id: user.id, name: actorName(user), role: scope.role! },
     entity: "finance_entry",
@@ -553,6 +639,26 @@ async function applySettlement(
     .set({ version: rows[0].version + 1, data: next, updatedBy: user.id })
     .where(eq(records.id, rows[0].id));
   await insertEntry(tx, ledger);
+  if (payment?.methodId === "cash") {
+    const registerId = await ensureOpenCashRegister(
+      tx,
+      finance.financialOfficeId,
+      finance.currency,
+      user.id,
+      command.id
+    );
+    await tx.insert(cashMovements).values({
+      id: `cash-movement:${command.id}`,
+      registerId,
+      officeId: finance.financialOfficeId,
+      kind: "receipt",
+      amount: input.amount.toFixed(2),
+      currency: finance.currency,
+      invoiceId: current.id,
+      actorId: user.id,
+      data: { source: "settlement" },
+    });
+  }
   await appendAudit(tx, {
     actor: { id: user.id, name: actorName(user), role: scope.role! },
     entity: "invoice",
@@ -730,6 +836,20 @@ async function applyShipmentPrice(
     .update(records)
     .set({ version: found.row.version + 1, data: next, updatedBy: user.id })
     .where(eq(records.id, found.row.id));
+  await tx.insert(shipmentTariffSnapshots).values({
+    id: `shipment-tariff:${command.id}`,
+    shipmentId: shipment.id,
+    officeId: input.sourceOfficeId,
+    serviceType: shipment.packing.service ?? "airRegular",
+    currency: sourceCurrency[shipment.packing.source],
+    pricePerKg: input.pricePerKg.toFixed(2),
+    pricePerKgMRU:
+      input.pricePerKgMRU === undefined
+        ? null
+        : input.pricePerKgMRU.toFixed(2),
+    capturedBy: user.id,
+    data: { commandId: command.id, expectedVersion: input.expectedVersion },
+  });
   await appendAudit(tx, {
     actor: { id: user.id, name: actorName(user), role: scope.role! },
     entity: "shipment",

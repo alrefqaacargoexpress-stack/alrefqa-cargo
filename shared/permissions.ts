@@ -95,14 +95,20 @@ export function defaultPermissions(subject: PermissionSubject): PermissionMap {
     );
     if (subject.offices?.includes("nouakchott"))
       put(["storage", "arrival"], "manage");
-  } else if (subject.role === "staff") {
+  } else if (
+    subject.role === "staff" ||
+    subject.role === "source_warehouse"
+  ) {
     if (subject.offices?.length === 1 && subject.offices[0] === "nouakchott")
       put(["storage", "arrival"], "manage");
     else if (subject.offices?.length === 1) {
       put(["shipments", "shipment_send"], "manage");
       if (subject.canUpdateTracking) put(["tracking"], "manage");
     }
-  } else if (subject.role === "accountant") {
+  } else if (
+    subject.role === "accountant" ||
+    subject.role === "general_accountant"
+  ) {
     put(
       [
         "customers",
@@ -118,6 +124,12 @@ export function defaultPermissions(subject: PermissionSubject): PermissionMap {
     put(["reports", "finance_reports"], "view");
     if (subject.offices?.includes("nouakchott"))
       put(["office_wallets"], "manage");
+  } else if (subject.role === "cashier") {
+    put(["customers", "invoices", "payments", "expenses"], "manage");
+    put(["reports"], "view");
+  } else if (subject.role === "destination_warehouse") {
+    if (subject.offices?.includes("nouakchott"))
+      put(["storage", "arrival"], "manage");
   } else if (subject.role === "supervisor") {
     put(["tracking"], "manage");
     put(["reports", "audit", "storage", "excel"], "view");
@@ -200,16 +212,18 @@ export function actionRole(
   if (subject.role === "admin") return "admin";
   if (!subject.permissions || subject.permissionsCustomized === false)
     return subject.role;
-  if (financialPermissionKeys.includes(key)) return "accountant";
+  if (financialPermissionKeys.includes(key))
+    return subject.role === "cashier" ? "cashier" : "accountant";
   if (["tracking", "arrival"].includes(key))
     return level === "manage" ? "supervisor" : "tracking_staff";
-  if (key === "storage") return "staff";
+  if (key === "storage")
+    return subject.role === "destination_warehouse" ? "destination_warehouse" : "staff";
   if (
     key === "shipments" ||
     key === "shipment_send" ||
     key === "shipment_delete"
   )
-    return "office_manager";
+    return subject.role === "source_warehouse" ? "source_warehouse" : "office_manager";
   return subject.role;
 }
 

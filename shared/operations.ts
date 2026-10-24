@@ -9,6 +9,10 @@ export const APP_ROLES = [
   "office_manager",
   "staff",
   "accountant",
+  "general_accountant",
+  "cashier",
+  "source_warehouse",
+  "destination_warehouse",
   "viewer",
   "tracking_staff",
   "supervisor",
@@ -97,9 +101,21 @@ export const EMPTY_STATE: LocalState = {
 export function canWrite(role: AppRole | null, entity: Entity): boolean {
   // All invoices and monetary facts use the dedicated accountant command API.
   if (entity === "invoice") return false;
-  if (entity === "account") return role === "accountant";
-  return role === "admin" || role === "office_manager" || role === "staff";
+  if (entity === "account")
+    return role === "accountant" || role === "general_accountant";
+  return (
+    role === "admin" ||
+    role === "office_manager" ||
+    role === "staff" ||
+    role === "source_warehouse"
+  );
 }
 export function canViewFinance(role: AppRole | null): boolean {
-  return role === "admin" || role === "accountant" || role === "office_manager";
+  return (
+    role === "admin" ||
+    role === "accountant" ||
+    role === "general_accountant" ||
+    role === "cashier" ||
+    role === "office_manager"
+  );
 }

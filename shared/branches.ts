@@ -133,6 +133,10 @@ export const assignedRoles = [
   "office_manager",
   "staff",
   "accountant",
+  "general_accountant",
+  "cashier",
+  "source_warehouse",
+  "destination_warehouse",
   "viewer",
   "tracking_staff",
   "supervisor",
@@ -156,7 +160,14 @@ export const officeMembershipSchema = z
   })
   .refine(
     v =>
-      !["staff", "accountant"].includes(v.role) ||
+      ![
+        "staff",
+        "accountant",
+        "general_accountant",
+        "cashier",
+        "source_warehouse",
+        "destination_warehouse",
+      ].includes(v.role) ||
       (v.offices.length === 1 &&
         (!v.homeOffice || v.homeOffice === v.offices[0])),
     { message: "employee_single_office_required" }

@@ -21,7 +21,11 @@ import NewPermissionsMatrix from "./newPermissionsMatrix";
 const assignableRoles = [
   "office_manager",
   "staff",
+  "source_warehouse",
+  "destination_warehouse",
   "accountant",
+  "general_accountant",
+  "cashier",
   "viewer",
   "tracking_staff",
   "supervisor",
@@ -52,7 +56,11 @@ const roleLabels = {
     admin: "المدير الجذري",
     office_manager: "مدير مكتب",
     staff: "موظف مستودع",
-    accountant: "موظف حسابات",
+    source_warehouse: "موظف مخزن المصدر",
+    destination_warehouse: "مسؤول مستودع نواكشوط",
+    accountant: "محاسب فرع",
+    general_accountant: "محاسب عام",
+    cashier: "محاسب كاش",
     viewer: "مشاهد",
     tracking_staff: "موظف تتبع",
     supervisor: "مشرف",
@@ -61,7 +69,11 @@ const roleLabels = {
     admin: "Root administrator",
     office_manager: "Office manager",
     staff: "Warehouse employee",
-    accountant: "Accounts employee",
+    source_warehouse: "Source warehouse employee",
+    destination_warehouse: "Nouakchott warehouse officer",
+    accountant: "Branch accountant",
+    general_accountant: "General accountant",
+    cashier: "Cashier",
     viewer: "Viewer",
     tracking_staff: "Tracking employee",
     supervisor: "Supervisor",
@@ -70,7 +82,11 @@ const roleLabels = {
     admin: "根管理员",
     office_manager: "办公室经理",
     staff: "仓库员工",
-    accountant: "会计员工",
+    source_warehouse: "始发仓员工",
+    destination_warehouse: "努瓦克肖特仓库负责人",
+    accountant: "分支会计",
+    general_accountant: "总会计",
+    cashier: "出纳",
     viewer: "查看者",
     tracking_staff: "追踪员工",
     supervisor: "主管",
@@ -79,7 +95,11 @@ const roleLabels = {
     admin: "Kök yönetici",
     office_manager: "Ofis müdürü",
     staff: "Depo çalışanı",
-    accountant: "Muhasebe çalışanı",
+    source_warehouse: "Çıkış deposu çalışanı",
+    destination_warehouse: "Nuakşot depo sorumlusu",
+    accountant: "Şube muhasebecisi",
+    general_accountant: "Genel muhasebeci",
+    cashier: "Kasiyer",
     viewer: "Görüntüleyici",
     tracking_staff: "Takip çalışanı",
     supervisor: "Süpervizör",
@@ -133,7 +153,7 @@ const permissionCopy = {
 } as const;
 
 const singleOfficeRole = (role: string) =>
-  ["office_manager", "staff", "accountant"].includes(role);
+  ["office_manager", "staff", "source_warehouse", "destination_warehouse", "accountant", "general_accountant", "cashier"].includes(role);
 const completePermissions = (
   value: PermissionMap | null | undefined
 ): PermissionMap => ({ ...blankPermissions(), ...(value ?? {}) });
@@ -182,7 +202,7 @@ function draftFrom(
           : null,
     canUpdateTracking: Boolean(
       member.canUpdateTracking &&
-        role === "staff" &&
+        ["staff", "source_warehouse"].includes(role) &&
         offices[0] !== "nouakchott"
     ),
     permissions: intersectPermissions(completePermissions(raw), ceiling),
@@ -314,7 +334,7 @@ export default function OfficeMemberships({
         offices: [...draft.offices],
         homeOffice: draft.homeOffice,
         canUpdateTracking: Boolean(
-          draft.role === "staff" &&
+          ["staff", "source_warehouse"].includes(draft.role) &&
             draft.offices[0] !== "nouakchott" &&
             draft.canUpdateTracking
         ),
@@ -424,7 +444,7 @@ export default function OfficeMemberships({
                           ? (office ?? null)
                           : draft.homeOffice,
                         canUpdateTracking:
-                          nextRole === "staff" && office !== "nouakchott"
+                          ["staff", "source_warehouse"].includes(nextRole) && office !== "nouakchott"
                             ? draft.canUpdateTracking
                             : false,
                       });
@@ -477,7 +497,7 @@ export default function OfficeMemberships({
                                   : draft.homeOffice,
                               canUpdateTracking:
                                 officeId !== "nouakchott" &&
-                                draft.role === "staff"
+                                ["staff", "source_warehouse"].includes(draft.role)
                                   ? draft.canUpdateTracking
                                   : false,
                             })
@@ -492,7 +512,7 @@ export default function OfficeMemberships({
                   </p>
                 </fieldset>
               </div>
-              {draft.role === "staff" && (
+              {["staff", "source_warehouse"].includes(draft.role) && (
                 <label className="mt-4 flex items-start gap-3 rounded-xl border border-slate-200 bg-white p-3 text-sm">
                   <input
                     type="checkbox"

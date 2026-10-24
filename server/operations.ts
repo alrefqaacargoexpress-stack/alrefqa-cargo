@@ -117,6 +117,10 @@ export const setRoleInputSchema = z
       "admin",
       "staff",
       "accountant",
+      "general_accountant",
+      "cashier",
+      "source_warehouse",
+      "destination_warehouse",
       "viewer",
       "tracking_staff",
       "supervisor",
@@ -265,14 +269,14 @@ export function prepareRecordForWrite(
         next.packing.pricePerKg !== old.packing.pricePerKg ||
         next.packing.pricePerKgMRU !== old.packing.pricePerKgMRU;
       const staffMaskedPrices =
-        role === "staff" &&
+        ["staff", "source_warehouse"].includes(role ?? "") &&
         next.packing.pricePerKg === 0 &&
         (old.packing.pricePerKg !== 0 ||
           old.packing.pricePerKgMRU !== undefined) &&
         (old.packing.pricePerKgMRU === undefined ||
           next.packing.pricePerKgMRU === 0);
       const staffUnmaskedPrices =
-        role === "staff" &&
+        ["staff", "source_warehouse"].includes(role ?? "") &&
         !staffMaskedPrices &&
         (old.packing.pricePerKg !== 0 ||
           old.packing.pricePerKgMRU !== undefined);
@@ -284,14 +288,14 @@ export function prepareRecordForWrite(
             JSON.stringify(old.packing.rateSnapshot));
       if (priceChanged && !staffMaskedPrices)
         throw new Error(
-          role === "staff"
+          ["staff", "source_warehouse"].includes(role ?? "")
             ? "financial_write_forbidden"
             : "finance_command_required"
         );
       if (staffUnmaskedPrices) throw new Error("financial_write_forbidden");
       if (metadataChanged)
         throw new Error(
-          role === "staff"
+          ["staff", "source_warehouse"].includes(role ?? "")
             ? "financial_write_forbidden"
             : "finance_command_required"
         );
@@ -327,7 +331,7 @@ export function prepareRecordForWrite(
       };
     if (
       next.packing &&
-      role !== "staff" &&
+      !["staff", "source_warehouse"].includes(role ?? "") &&
       !approvedServerTariff &&
       (next.packing.pricePerKg !== (old?.packing?.pricePerKg ?? 0) ||
         next.packing.pricePerKgMRU !== old?.packing?.pricePerKgMRU)
@@ -341,7 +345,7 @@ export function prepareRecordForWrite(
         (next.packing?.pricePerKgMRU ?? 0) !== 0)
     )
       throw new Error("financial_write_forbidden");
-    if (role === "staff") {
+    if (["staff", "source_warehouse"].includes(role ?? "")) {
       if (!next.packing) throw new Error("warehouse_packing_required");
       if (!old && next.status !== "قيد التجهيز")
         throw new Error("warehouse_create_preparing_required");
@@ -472,7 +476,7 @@ export function prepareRecordForWrite(
   if (!("tracking" in result) || !result.packing) return result;
   if (!canWrite(role, "shipment")) throw new Error("forbidden");
   if (
-    role === "staff" &&
+    ["staff", "source_warehouse"].includes(role ?? "") &&
     !current &&
     !approvedServerTariff &&
     "tracking" in next &&
@@ -491,7 +495,7 @@ export function prepareRecordForWrite(
     )
       throw new Error("shipment_not_open");
     if (
-      role === "staff" &&
+      ["staff", "source_warehouse"].includes(role ?? "") &&
       previous.pricePerKgMRU === undefined &&
       "tracking" in next &&
       next.packing?.pricePerKgMRU !== undefined
@@ -591,12 +595,12 @@ export function assertOfficeRecordWrite(
       throw new Error("shipment_source_office_mismatch");
   }
   if (
-    (role === "staff" || role === "accountant") &&
+    (["staff", "source_warehouse"].includes(role ?? "") || role === "accountant") &&
     (!offices || offices.length !== 1)
   )
     throw new Error("employee_single_office_required");
   if (
-    role === "staff" &&
+    ["staff", "source_warehouse"].includes(role ?? "") &&
     (entity !== "shipment" || offices?.[0] === "nouakchott")
   )
     throw new Error("warehouse_scope_forbidden");
@@ -652,7 +656,7 @@ export function applyChangeInMemory(
       },
     };
   }
-  if (role === "staff" && !current && isFinancialPayloadNonZero(change)) {
+  if (["staff", "source_warehouse"].includes(role ?? "") && !current && isFinancialPayloadNonZero(change)) {
     return {
       nextState,
       result: {

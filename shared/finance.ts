@@ -492,7 +492,12 @@ export function employeeFinanceOffice(
   requested?: OfficeId
 ): OfficeId {
   if (
-    ["accountant", "office_manager"].includes(scope.role ?? "") &&
+    [
+      "accountant",
+      "general_accountant",
+      "cashier",
+      "office_manager",
+    ].includes(scope.role ?? "") &&
     !scope.offices?.length
   )
     throw new Error("employee_office_required");

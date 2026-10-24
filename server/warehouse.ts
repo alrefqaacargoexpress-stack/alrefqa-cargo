@@ -2,7 +2,11 @@ import { createHash } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import type { User } from "../drizzle/schema";
-import { records, syncReceipts } from "../drizzle/schema";
+import {
+  records,
+  syncReceipts,
+  warehouseLocationEvents,
+} from "../drizzle/schema";
 import { appendAudit } from "./audit";
 import {
   readOfficeScope,
@@ -315,6 +319,19 @@ export async function commitWarehouseStorage(
       .update(records)
       .set({ version: nextVersion, data: next, updatedBy: user.id })
       .where(eq(records.id, row.id));
+    await tx.insert(warehouseLocationEvents).values({
+      id: `warehouse-location:${key}`,
+      shipmentId: input.shipmentId,
+      goodsId: input.goodsId,
+      officeId: "nouakchott",
+      warehouseCode: input.warehouse,
+      shelfCode: input.shelf,
+      locationCode: `${input.warehouse} - ${input.shelf}`,
+      action: "shelve",
+      expectedVersion: row.version,
+      actorId: user.id,
+      requestKey: key,
+    });
     const actorRole = scope.role as AppRole;
     await appendAudit(tx as any, {
       actor: actorFromUser(user, actorRole),

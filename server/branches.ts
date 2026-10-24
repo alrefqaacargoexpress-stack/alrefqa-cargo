@@ -120,7 +120,15 @@ export async function readOfficeScope(
     ? (rawOffices.filter((id: any) => officeIds.includes(id)) as OfficeId[])
     : [];
   if (
-    ["office_manager", "staff", "accountant"].includes(role ?? "") &&
+    [
+      "office_manager",
+      "staff",
+      "accountant",
+      "general_accountant",
+      "cashier",
+      "source_warehouse",
+      "destination_warehouse",
+    ].includes(role ?? "") &&
     (offices.length !== 1 ||
       (membership?.homeOffice && membership.homeOffice !== offices[0]))
   )
@@ -142,7 +150,7 @@ export async function readOfficeScope(
       role === "supervisor" ||
       role === "tracking_staff" ||
       Boolean(
-        role === "staff" &&
+        ["staff", "source_warehouse"].includes(role ?? "") &&
           offices.length === 1 &&
           offices[0] !== "nouakchott" &&
           membership?.canUpdateTracking

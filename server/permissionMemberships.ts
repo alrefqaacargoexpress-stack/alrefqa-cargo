@@ -10,7 +10,12 @@ import {
   withinPermissionCeiling,
   rootOnlyPermissions,
 } from "@shared/permissions";
-import { memberRoles, users, type User } from "../drizzle/schema";
+import {
+  memberRoles,
+  permissionDelegations,
+  users,
+  type User,
+} from "../drizzle/schema";
 import { appendAudit } from "./audit";
 import { readOfficeScope, rootAdmin, listMembers } from "./branches";
 
@@ -108,9 +113,16 @@ export async function assignPermissionMembership(
       )
         forbidden("employee_outside_office");
     }
-    const homeOffice = ["office_manager", "staff", "accountant"].includes(
-      input.role
-    )
+    const homeOffice =
+      [
+        "office_manager",
+        "staff",
+        "accountant",
+        "general_accountant",
+        "cashier",
+        "source_warehouse",
+        "destination_warehouse",
+      ].includes(input.role)
       ? input.offices[0]
       : (input.homeOffice ?? input.offices[0]);
     if (!input.offices.includes(homeOffice))
@@ -119,7 +131,7 @@ export async function assignPermissionMembership(
         message: "home_office_outside_scope",
       });
     const canUpdateTracking = Boolean(
-      input.role === "staff" &&
+      ["staff", "source_warehouse"].includes(input.role) &&
         input.offices.length === 1 &&
         input.offices[0] !== "nouakchott" &&
         (input.canUpdateTracking ?? old?.canUpdateTracking)
@@ -158,6 +170,29 @@ export async function assignPermissionMembership(
         .where(eq(memberRoles.userId, input.userId));
     else
       await tx.insert(memberRoles).values({ userId: input.userId, ...values });
+    await tx
+      .update(permissionDelegations)
+      .set({ status: "revoked", revokedAt: new Date() })
+      .where(
+        and(
+          eq(permissionDelegations.targetUserId, input.userId),
+          eq(permissionDelegations.status, "active")
+        )
+      );
+    const delegationRows = Object.entries(requested)
+      .filter(([, level]) => level !== "none")
+      .map(([permissionKey, level]) => ({
+        targetUserId: input.userId,
+        officeId: homeOffice,
+        permissionKey,
+        level,
+        delegatedBy: user.id,
+        status: "active" as const,
+        reason: "membership_assignment",
+        version,
+      }));
+    if (delegationRows.length)
+      await tx.insert(permissionDelegations).values(delegationRows);
     await appendAudit(tx, {
       actor: {
         id: user.id,
