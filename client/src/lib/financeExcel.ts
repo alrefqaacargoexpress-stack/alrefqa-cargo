@@ -65,6 +65,15 @@ const openingHeaders = [
 ];
 const shipmentPriceHeaders = [
   "الشحنة",
+  "الجانب",
+  "سعر الكيلو",
+  "سبب التعديل",
+  "نسخة التسعير المتوقعة",
+  "النسخة المتوقعة",
+  "مكتب المصدر (للعرض فقط)",
+];
+const legacyShipmentPriceHeaders = [
+  "الشحنة",
   "مكتب المصدر",
   "سعر الكيلو",
   "سعر الكيلو MRU",
@@ -148,10 +157,12 @@ export function buildFinanceWorkbook(
       const p = c.payload;
       shipmentPriceRows.push([
         p.shipmentId,
-        p.sourceOfficeId,
+        p.side ?? "",
         p.pricePerKg,
-        p.pricePerKgMRU ?? "",
+        p.reason ?? "",
+        p.expectedPricingRevision ?? "",
         p.expectedVersion,
+        p.sourceOfficeId ?? "",
       ]);
     }
   }
@@ -385,6 +396,31 @@ export function parseFinanceBuffer(
       throw new Error(`invalid_headers:${name}`);
     return rows.slice(1);
   }
+  function priceGrid(): {
+    rows: unknown[][];
+    legacy: boolean;
+  } {
+    const name = "مسودات أسعار الشحنات";
+    const sheet = wb.Sheets[name];
+    if (!sheet) return { rows: [], legacy: false };
+    if (sheet["!ref"] && XLSX.utils.decode_range(sheet["!ref"]).e.r > 5000)
+      throw new Error("too_many_rows");
+    const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
+      header: 1,
+      defval: "",
+      blankrows: true,
+    });
+    if (!rows.length) return { rows: [], legacy: false };
+    const h = rows[0].map(v => String(v).trim());
+    const matches = (headers: string[]) =>
+      headers.every((value, index) => h[index] === value) &&
+      new Set(h.filter(Boolean)).size === h.filter(Boolean).length;
+    if (matches(shipmentPriceHeaders))
+      return { rows: rows.slice(1), legacy: false };
+    if (matches(legacyShipmentPriceHeaders))
+      return { rows: rows.slice(1), legacy: true };
+    throw new Error(`invalid_headers:${name}`);
+  }
   const formulas = (name: string, row: number) => {
     const sheet = wb.Sheets[name];
     if (!sheet?.["!ref"]) return false;
@@ -605,10 +641,8 @@ export function parseFinanceBuffer(
     }
   };
   const acceptShipmentPrice = () => {
-    for (const [index, row] of grid(
-      "مسودات أسعار الشحنات",
-      shipmentPriceHeaders
-    ).entries()) {
+    const priceSheet = priceGrid();
+    for (const [index, row] of priceSheet.rows.entries()) {
       if (row.every(v => String(v ?? "").trim() === "")) continue;
       result.total++;
       const s = (i: number) => String(row[i] ?? "").trim();
@@ -620,16 +654,25 @@ export function parseFinanceBuffer(
         });
         continue;
       }
+      if (priceSheet.legacy) {
+        result.rejected.push({
+          sheet: "مسودات أسعار الشحنات",
+          row: index + 2,
+          reason: "shipment_price_override_fields_required",
+        });
+        continue;
+      }
       const parsed = financeCommandSchema.safeParse({
         id: crypto.randomUUID(),
         createdAt: new Date().toISOString(),
         kind: "shipment_price",
         payload: {
           shipmentId: s(0),
-          sourceOfficeId: s(1),
+          side: s(1),
           pricePerKg: numeric(row[2]),
-          ...(s(3) ? { pricePerKgMRU: numeric(row[3]) } : {}),
-          expectedVersion: Number(row[4]),
+          reason: s(3),
+          ...(s(4) ? { expectedPricingRevision: Number(row[4]) } : {}),
+          expectedVersion: Number(row[5]),
         },
       });
       const id = s(0);

@@ -9,7 +9,6 @@ import {
   parseTrackingSummaries,
   queueTrackingCommand,
   readLastTrackingProfile,
-  removeAcknowledged,
   saveTrackingCache,
   writeLastTrackingProfile,
   type TrackingCache,
@@ -69,17 +68,23 @@ export function useTrackingWorkspace(
     refetchOnWindowFocus: false,
   });
   const activeId = me.data?.id == null ? null : String(me.data.id);
-  const access = trpc.operations.access.useQuery(undefined, {
-    enabled: Boolean(activeId),
-    retry: false,
-    refetchOnWindowFocus: false,
-  });
-  const serverRole = activeId ? (access.data?.role ?? null) : null;
+  const access = trpc.operations.access.useQuery(
+    activeId ? { clientUserId: activeId } : undefined,
+    {
+      enabled: Boolean(activeId),
+      retry: false,
+      refetchOnWindowFocus: false,
+    }
+  );
+  const accessUserId =
+    access.data?.userId == null ? null : String(access.data.userId);
+  const boundAccess = accessUserId === activeId ? access.data : undefined;
+  const serverRole = activeId ? (boundAccess?.role ?? null) : null;
   const accessPermissions = (
-    access.data as { permissions?: PermissionMap | null } | undefined
+    boundAccess as { permissions?: PermissionMap | null } | undefined
   )?.permissions;
-  const accessOffices = access.data?.offices ?? null;
-  const accessHomeOffice = access.data?.homeOffice ?? null;
+  const accessOffices = boundAccess?.offices ?? null;
+  const accessHomeOffice = boundAccess?.homeOffice ?? null;
   const permissionSubject = {
     role: serverRole,
     offices: accessOffices,
@@ -115,8 +120,8 @@ export function useTrackingWorkspace(
   const canUpdateWarehouseStage = Boolean(
     role === "staff" &&
       canManageTracking &&
-      access.data?.offices?.length === 1 &&
-      access.data?.homeOffice !== "nouakchott"
+      boundAccess?.offices?.length === 1 &&
+      boundAccess?.homeOffice !== "nouakchott"
   );
   const listEnabled = Boolean(activeId && role && canReadTracking);
   const listQuery = api.tracking.list.useQuery(
@@ -174,6 +179,32 @@ export function useTrackingWorkspace(
       setCache(null);
       setCacheError("tracking_cache_read");
     }
+  }, [userId, role]);
+  useEffect(() => {
+    if (!userId || !role) return;
+    const refreshFromStorage = () => {
+      try {
+        setCache(loadTrackingCache(userId, role));
+        setCacheError(null);
+      } catch {
+        setCacheError("tracking_cache_read");
+      }
+    };
+    const onWorkspaceChanged = (event: Event) => {
+      const changedUserId = (event as CustomEvent<{ userId?: string }>).detail
+        ?.userId;
+      if (!changedUserId || changedUserId === userId) refreshFromStorage();
+    };
+    const onStorage = (event: StorageEvent) => {
+      if (event.key?.startsWith(`alrefqaa-tracking-cache-v2-${userId}-`))
+        refreshFromStorage();
+    };
+    addEventListener("alrefqaa-workspace-changed", onWorkspaceChanged);
+    addEventListener("storage", onStorage);
+    return () => {
+      removeEventListener("alrefqaa-workspace-changed", onWorkspaceChanged);
+      removeEventListener("storage", onStorage);
+    };
   }, [userId, role]);
   useEffect(() => {
     if (!activeId || !serverRole || !me.data) return;
@@ -359,35 +390,12 @@ export function useTrackingWorkspace(
       !canManageTracking
     )
       return { applied: 0, stopped: false };
-    const ownerRole = serverRole;
-    let applied = 0;
-    for (const pending of cache.pending.slice(0, 500)) {
-      if (serverRole !== ownerRole) return { applied, stopped: true };
-      try {
-        const result = await commit.mutateAsync({
-          requestId: pending.requestId,
-          shipmentId: pending.shipmentId,
-          expectedVersion: pending.expectedVersion,
-          command: pending.command,
-        });
-        const parsed = result as {
-          requestId: string;
-          shipment: unknown;
-          version: number;
-        };
-        const current = loadTrackingCache(activeId, ownerRole);
-        const next = removeAcknowledged(current, pending.requestId, parsed);
-        const saved = await saveTrackingCache(next);
-        setCache(saved);
-        applied++;
-      } catch {
-        setNotice("tracking_conflict");
-        return { applied, stopped: true };
-      }
-    }
-    setNotice("tracking_synced");
-    return { applied, stopped: false };
-  }, [activeId, serverRole, online, cache, commit, canManageTracking]);
+    // The root coordinator is the only ordinary sync path. Keep this method
+    // as a compatibility/manual-review surface for callers that still render
+    // it, but never bypass the coordinator or ask for a second confirmation.
+    setNotice("tracking_pending");
+    return { applied: 0, stopped: false };
+  }, [activeId, serverRole, online, cache, canManageTracking]);
   return {
     language,
     me,

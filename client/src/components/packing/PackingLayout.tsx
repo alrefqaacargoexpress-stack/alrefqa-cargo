@@ -16,8 +16,15 @@ import { useOperationsWorkspace } from "@/hooks/useOperationsWorkspace";
 import { startLogin } from "@/const";
 import { downloadLocalArchive } from "@/lib/offlineStore";
 import { copyFor } from "@/lib/packingCopy";
+import { roleWorkspaceCopy } from "@/lib/roleWorkspaceCopy";
+import {
+  roleWorkspaceTasks,
+  workspaceSyncStatus,
+} from "@/lib/roleWorkspace";
 import { canUseOperations } from "@shared/tracking";
 import { permissionAllowed } from "@shared/permissions";
+import { trpc } from "@/lib/trpc";
+import RoleWorkspaceShell from "@/components/roleWorkspace/RoleWorkspaceShell";
 import SyncConflictPanel from "./SyncConflictPanel";
 import DutyAvailability from "./DutyAvailability";
 import {
@@ -41,7 +48,12 @@ export default function PackingLayout({
 }) {
   const { language } = useLanguage();
   const c = copyFor(language);
+  const roleCopy = roleWorkspaceCopy[language];
   const [, navigate] = useLocation();
+  const me = trpc.auth.me.useQuery(undefined, {
+    retry: false,
+    refetchOnWindowFocus: false,
+  });
   const [notice, setNotice] = useState<{
     text: string;
     success: boolean;
@@ -60,6 +72,12 @@ export default function PackingLayout({
     "office_settings",
     "manage"
   );
+  const roleTasks = roleWorkspaceTasks({
+    role: workspace.role,
+    offices: workspace.offices,
+    permissions: workspace.permissions,
+    canUpdateTracking: workspace.canUpdateTracking,
+  });
   const routeLinks = [
     { href: "/", label: <Home size={15} />, text: c.title },
     {
@@ -67,75 +85,20 @@ export default function PackingLayout({
       label: <ShieldAlert size={15} />,
       text: c.operations,
     },
-    ...(!workspace.warehouseOnly && canViewShipments
-      ? [
-          {
-            href: "/operations/shipments",
-            label: <Package size={15} />,
-            text: c.shipments,
-          },
-        ]
+    ...(roleTasks.some(task => task.id === "shipments")
+      ? [{ href: "/operations/shipments", label: <Package size={15} />, text: c.shipments }]
       : []),
-    ...(workspace.warehouseOnly
-      ? [
-          {
-            href: "/operations/warehouse",
-            label: <Package size={15} />,
-            text: {
-              ar: "مخزن نواكشوط",
-              en: "Nouakchott warehouse",
-              zh: "努瓦克肖特仓库",
-              tr: "Nuakşot deposu",
-            }[language],
-          },
-        ]
-      : []),
-    ...(!workspace.warehouseOnly && canViewCustomers
+    ...(roleTasks.some(task => task.id === "customers")
       ? [{ href: "/operations/customers", label: null, text: c.customers }]
       : []),
-    ...(canViewInvoices
-      ? [
-          {
-            href: "/operations/billing",
-            label: null,
-            text: {
-              ar: "الفواتير",
-              en: "Invoices",
-              zh: "发票",
-              tr: "Faturalar",
-            }[language],
-          },
-        ]
+    ...(roleTasks.some(task => task.id === "invoices")
+      ? [{ href: "/operations/billing", label: null, text: roleCopy.tasks.invoices }]
       : []),
-    ...(workspace.canUpdateTracking
-      ? [
-          {
-            href: "/operations/tracking",
-            label: null,
-            text: {
-              ar: "تتبع الشحنات",
-              en: "Shipment tracking",
-              zh: "货运追踪",
-              tr: "Gönderi takibi",
-            }[language],
-          },
-        ]
+    ...(roleTasks.some(task => task.id === "tracking")
+      ? [{ href: "/operations/tracking", label: null, text: roleCopy.tasks.tracking }]
       : []),
-    ...(["admin", "office_manager"].includes(workspace.role ?? "") ||
-    permissionAllowed(subject, "office_settings", "view") ||
-    permissionAllowed(subject, "employees", "view")
-      ? [
-          {
-            href: "/operations/settings",
-            label: <ShieldAlert size={15} />,
-            text: {
-              ar: "الصلاحيات وإعدادات المكتب",
-              en: "Permissions and office settings",
-              zh: "权限和办公室设置",
-              tr: "Yetkiler ve ofis ayarları",
-            }[language],
-          },
-        ]
+    ...(roleTasks.some(task => task.id === "settings") || roleTasks.some(task => task.id === "employees")
+      ? [{ href: "/operations/settings", label: <ShieldAlert size={15} />, text: roleCopy.tasks.settings }]
       : []),
     {
       href: "/account/security",
@@ -215,7 +178,7 @@ export default function PackingLayout({
         />
       );
     if (workspace.role === null && !workspace.localOnly)
-      return <StatePanel title={c.noAccess} detail={c.noPermission} />;
+      return <StatePanel title={roleCopy.roles.unassigned} detail={roleCopy.waiting} />;
     if (
       !canUseOperations(workspace.role) &&
       !canViewShipments &&
@@ -243,6 +206,13 @@ export default function PackingLayout({
     return null;
   };
   const blocked = shellState();
+  const syncStatus = workspaceSyncStatus({
+    online: workspace.online,
+    localOnly: workspace.localOnly,
+    pendingCount: workspace.queue.length,
+    syncing: workspace.busy,
+    conflictCount: workspace.conflicts.length,
+  });
 
   return (
     <div
@@ -306,6 +276,15 @@ export default function PackingLayout({
             </button>
           </div>
         )}
+        {workspace.authenticated && !workspace.loading && (
+          <RoleWorkspaceShell
+            language={language}
+            dir={language === "ar" ? "rtl" : "ltr"}
+            name={me.data?.name}
+            subject={subject}
+            tasks={roleTasks}
+          />
+        )}
         {!blocked && (
           <>
             <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
@@ -330,18 +309,18 @@ export default function PackingLayout({
                   }
                   c={c}
                 />
-                {workspace.queue.length > 0 && (
-                  <button
-                    className={`${packingSecondaryClass} gap-2`}
-                    disabled={
-                      workspace.busy || !workspace.online || workspace.localOnly
-                    }
-                    onClick={() => void reviewAndSync()}
-                  >
-                    <RefreshCw size={15} />
-                    {c.sync} ({workspace.queue.length})
-                  </button>
-                )}
+                <button
+                  type="button"
+                  className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-bold ${syncStatus === "pending" || syncStatus === "review" ? "bg-amber-50 text-amber-800 underline" : syncStatus === "offline" ? "bg-blue-50 text-blue-800" : syncStatus === "syncing" ? "bg-sky-50 text-sky-800" : "bg-emerald-50 text-emerald-800"}`}
+                  disabled={syncStatus !== "pending" && syncStatus !== "review"}
+                  onClick={() => {
+                    if (window.confirm(roleCopy.confirmSync)) void reviewAndSync();
+                  }}
+                >
+                  {syncStatus === "syncing" ? <RefreshCw className="animate-spin" size={13} /> : <Cloud size={13} />}
+                  {roleCopy.status[syncStatus]}
+                  {workspace.queue.length > 0 ? ` · ${workspace.queue.length}` : ""}
+                </button>
               </div>
             </div>
             <p className="mb-4 text-xs text-[#52636e]">

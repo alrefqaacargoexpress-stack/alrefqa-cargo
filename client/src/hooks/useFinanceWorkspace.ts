@@ -3,6 +3,8 @@ import {
   selectedFinanceCommands,
 } from "@shared/financeCommands";
 import { useEffect, useRef, useState } from "react";
+import { useWorkspaceSyncCoordinator } from "@/components/providers/WorkspaceSyncContext";
+import type { SyncResult } from "@shared/operations";
 import { useOperationsWorkspace } from "./useOperationsWorkspace";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { trpc } from "@/lib/trpc";
@@ -100,6 +102,7 @@ const words = {
   },
 };
 export function useFinanceWorkspace() {
+  const coordinator = useWorkspaceSyncCoordinator();
   const base = useOperationsWorkspace();
   const { language } = useLanguage();
   const w = words[language];
@@ -115,6 +118,7 @@ export function useFinanceWorkspace() {
   const financeCacheUser = base.userId
     ? `${base.userId}:${base.permissionFingerprint ?? "no-permission-fingerprint"}`
     : null;
+  const scopeFingerprint = base.permissionFingerprint ?? null;
   const officeSettingsReadable = permissionAllowed(
     subject,
     "office_wallets",
@@ -190,7 +194,10 @@ export function useFinanceWorkspace() {
   for (const result of settingsQueries)
     if (result.data) settingsByOffice.set(result.data.office, result.data);
   const query = trpc.finance.snapshot.useQuery(
-    { clientUserId: base.userId ?? "not-logged-in" },
+    {
+      clientUserId: base.userId ?? "not-logged-in",
+      ...(scopeFingerprint ? { cacheScope: scopeFingerprint } : {}),
+    },
     {
       enabled: Boolean(
         base.userId &&
@@ -208,6 +215,8 @@ export function useFinanceWorkspace() {
   const ref = useRef<FinanceWorkspace | null>(null);
   const currentUser = useRef(base.userId);
   currentUser.current = base.userId;
+  const currentScope = useRef(scopeFingerprint);
+  currentScope.current = scopeFingerprint;
   const workspaceOwner = useRef<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -223,11 +232,10 @@ export function useFinanceWorkspace() {
     const office = financeCommandOffice(
       command,
       workspace?.snapshot.invoices ?? [],
-      workspace?.snapshot.homeOffice ?? null
+      workspace?.snapshot.homeOffice ?? null,
+      base.state.shipments
     );
     if (office) return office;
-    if (command.kind === "shipment_price")
-      return command.payload.sourceOfficeId;
     if (command.kind === "opening_balance") return command.payload.officeId;
     return undefined;
   };
@@ -271,11 +279,22 @@ export function useFinanceWorkspace() {
     if (!base.userId || !query.data || !ref.current || denied) return;
     let cancelled = false;
     const userId = base.userId;
+    const responseScope = scopeFingerprint;
     void (async () => {
       try {
         const next = mergeFinanceSnapshot(ref.current!, query.data, userId);
+        if (
+          cancelled ||
+          currentUser.current !== userId ||
+          currentScope.current !== responseScope
+        )
+          return;
         await saveFinanceWorkspace(financeCacheUser ?? userId, next);
-        if (!cancelled) {
+        if (
+          !cancelled &&
+          currentUser.current === userId &&
+          currentScope.current === responseScope
+        ) {
           ref.current = next;
           setWorkspace(next);
           setError(null);
@@ -287,7 +306,7 @@ export function useFinanceWorkspace() {
     return () => {
       cancelled = true;
     };
-  }, [base.userId, query.data, denied, financeCacheUser]);
+  }, [base.userId, query.data, denied, financeCacheUser, scopeFingerprint]);
   const writePermission = canWriteFinance({
     role: base.role,
     offices: base.offices,
@@ -303,7 +322,10 @@ export function useFinanceWorkspace() {
     !error &&
     !denied &&
     !mutation.isPending;
-  const saveCommand = async (command: FinanceCommand): Promise<boolean> => {
+  const saveCommand = async (
+    command: FinanceCommand,
+    options?: { confirmed?: boolean }
+  ): Promise<boolean> => {
     if (
       !canEdit ||
       !permissionAllowed(subject, commandPermission(command), "manage") ||
@@ -317,11 +339,80 @@ export function useFinanceWorkspace() {
     const office = financeCommandOffice(
       command,
       workspace?.snapshot.invoices ?? [],
-      workspace?.snapshot.homeOffice ?? null
+      workspace?.snapshot.homeOffice ?? null,
+      base.state.shipments
     );
-    if (office && !officeAllowed(office)) {
+    if (
+      (command.kind === "shipment_price" && !office) ||
+      (office && !officeAllowed(office))
+    ) {
       setNotice(w.forbidden);
       return false;
+    }
+    if (!options?.confirmed && typeof window !== "undefined") {
+      const labels = {
+        ar: {
+          invoice: "فاتورة",
+          expense: "مصروف",
+          settlement: "تحصيل فاتورة",
+          customer_movement: "حركة حساب عميل",
+          opening_balance: "رصيد افتتاحي",
+          shipment_price: "تحديد سعر شحنة",
+        },
+        en: {
+          invoice: "invoice",
+          expense: "expense",
+          settlement: "invoice settlement",
+          customer_movement: "customer movement",
+          opening_balance: "opening balance",
+          shipment_price: "shipment price",
+        },
+        zh: {
+          invoice: "发票",
+          expense: "支出",
+          settlement: "发票收款",
+          customer_movement: "客户账户变动",
+          opening_balance: "期初余额",
+          shipment_price: "货运定价",
+        },
+        tr: {
+          invoice: "fatura",
+          expense: "gider",
+          settlement: "fatura tahsilatı",
+          customer_movement: "müşteri hareketi",
+          opening_balance: "açılış bakiyesi",
+          shipment_price: "gönderi fiyatı",
+        },
+      }[language];
+      const payload = command.payload as {
+        amount?: number;
+        manualAmount?: number;
+        pricePerKg?: number;
+        currency?: string;
+        officeId?: string;
+        issuingOfficeId?: string;
+        sourceOfficeId?: string;
+        description?: string;
+      };
+      const amount =
+        payload.amount ?? payload.manualAmount ?? payload.pricePerKg;
+      const officeName =
+        payload.officeId ??
+        payload.issuingOfficeId ??
+        payload.sourceOfficeId ??
+        workspace?.snapshot.homeOffice ??
+        "—";
+      const detail = [
+        labels[command.kind],
+        amount === undefined
+          ? null
+          : `${amount} ${payload.currency ?? ""}`.trim(),
+        officeName,
+        payload.description ?? null,
+      ]
+        .filter(Boolean)
+        .join(" · ");
+      if (!window.confirm(`${w.review}\n\n${detail}`)) return false;
     }
     try {
       const next = stageFinanceCommand(ref.current, command, base.userId);
@@ -330,6 +421,7 @@ export function useFinanceWorkspace() {
       ref.current = next;
       setWorkspace(next);
       setNotice(w.saved);
+      void coordinator.request("local-save").catch(() => undefined);
       return true;
     } catch (e) {
       setNotice(explain(e));
@@ -337,8 +429,9 @@ export function useFinanceWorkspace() {
     }
   };
   const posting = useRef(false);
-  const runSync = async (
-    selectedIds?: string[]
+  const runSyncInternal = async (
+    selectedIds?: string[],
+    operationResult?: SyncResult | null
   ): Promise<FinanceSyncResult | null> => {
     if (
       mutation.isPending ||
@@ -353,58 +446,64 @@ export function useFinanceWorkspace() {
       setNotice(w.offline);
       return null;
     }
-    const available = selectedFinanceCommands(
-      ref.current.commands,
-      selectedIds
-    ).filter(command => {
-      const office = commandOffice(command);
-      return (
-        Boolean(office && officeAllowed(office)) &&
-        permissionAllowed(subject, commandPermission(command), "manage")
+    const latest = loadFinanceWorkspace(financeCacheUser ?? base.userId);
+    ref.current = latest;
+    setWorkspace(latest);
+    const unresolvedShipmentIds = new Set(
+      (base.workspace?.queue ?? [])
+        .filter(change => change.entity === "shipment")
+        .map(change => change.recordId)
+    );
+    for (const conflict of operationResult?.conflicts ?? []) {
+      const pending = base.workspace?.queue.find(
+        change => change.id === conflict.changeId
       );
+      if (pending?.entity === "shipment")
+        unresolvedShipmentIds.add(pending.recordId);
+      if (conflict.current && "tracking" in conflict.current)
+        unresolvedShipmentIds.add(conflict.current.id);
+    }
+    const candidates = selectedFinanceCommands(latest.commands, selectedIds);
+    const pendingPriceShipments = new Set(
+      candidates
+        .filter(command => command.kind === "shipment_price")
+        .map(command => command.payload.shipmentId)
+    );
+    const available = candidates.filter(command => {
+      const office = commandOffice(command);
+      if (!Boolean(office && officeAllowed(office))) return false;
+      if (!permissionAllowed(subject, commandPermission(command), "manage"))
+        return false;
+      const payload = command.payload as {
+        shipmentId?: string;
+        invoiceId?: string;
+      };
+      if (payload.shipmentId && unresolvedShipmentIds.has(payload.shipmentId))
+        return false;
+      if (
+        command.kind === "invoice" &&
+        payload.shipmentId &&
+        pendingPriceShipments.has(payload.shipmentId)
+      )
+        return false;
+      if (
+        command.kind === "settlement" &&
+        payload.invoiceId &&
+        candidates.some(
+          other =>
+            other.kind === "invoice" &&
+            other.payload.invoiceId === payload.invoiceId
+        )
+      )
+        return false;
+      return true;
     });
-    const batch = available.slice(0, 100);
+    const batch = available
+      .sort((a, b) =>
+        a.kind === "shipment_price" ? -1 : b.kind === "shipment_price" ? 1 : 0
+      )
+      .slice(0, 100);
     if (!batch.length) return null;
-    const review = batch
-      .map(command => {
-        if (command.kind === "opening_balance")
-          return `${command.payload.openingId}: ${command.payload.amount} ${command.payload.currency} · ${command.payload.officeId} · ${command.payload.note}`;
-        if (command.kind === "shipment_price")
-          return `${command.payload.shipmentId}: ${command.payload.pricePerKg} · ${command.payload.sourceOfficeId}`;
-        if (command.kind === "expense")
-          return `${command.payload.category}: ${command.payload.amount} ${command.payload.currency} · ${command.payload.officeId} · ${command.payload.description}`;
-        if (command.kind === "settlement")
-          return `${command.payload.invoiceId}: ${command.payload.amount} · ${command.payload.description}`;
-        if (command.kind === "customer_movement") {
-          const p = command.payload;
-          const names = {
-            ar: { credit: "قبض من العميل", debit: "صرف للعميل" },
-            en: { credit: "Customer receipt", debit: "Customer payout" },
-            zh: { credit: "客户收款", debit: "向客户付款" },
-            tr: { credit: "Müşteriden tahsilat", debit: "Müşteriye ödeme" },
-          };
-          const customer =
-            base.state.accounts.find(a => a.id === p.customerId)?.name ??
-            p.customerId;
-          return `${names[language][p.direction]} · ${customer}: ${p.amount} ${p.currency} · ${p.officeId} · ${p.paymentMode} · ${p.description}`;
-        }
-        const p = command.payload;
-        let total = "—";
-        try {
-          total = String(
-            calculateFinanceInvoice(
-              p,
-              base.state.shipments.find(s => s.id === p.shipmentId)
-            ).totalAmount
-          );
-        } catch {}
-        const customer =
-          base.state.accounts.find(a => a.id === p.customerId)?.name ??
-          p.customerId;
-        return `${p.invoiceId} · ${customer}: ${total} ${p.currency} · ${p.paymentMode} · ${p.employeeOfficeId ?? workspace?.snapshot.homeOffice ?? "—"} ← ${p.issuingOfficeId} · ${p.adjustment.direction === "increase" ? "+" : "−"}${p.adjustment.amount}`;
-      })
-      .join("\n");
-    if (!window.confirm(`${w.review}\n\n${review}`)) return null;
     posting.current = true;
     try {
       const userId = base.userId;
@@ -432,6 +531,8 @@ export function useFinanceWorkspace() {
             : w.conflict
       );
       void query.refetch();
+      if (result.applied.some(item => item.priceProjection))
+        await base.reload();
       return result;
     } catch (e) {
       setNotice(w.failed);
@@ -440,8 +541,45 @@ export function useFinanceWorkspace() {
       posting.current = false;
     }
   };
-  const sync = () => runSync();
-  const syncCommands = (ids: string[]) => runSync(ids);
+  const internalSyncRef = useRef(runSyncInternal);
+  internalSyncRef.current = runSyncInternal;
+  useEffect(() => {
+    if (!base.userId) return;
+    coordinator.setSession(
+      String(base.userId),
+      base.accessReady,
+      base.permissionFingerprint ?? null
+    );
+    return coordinator.registerFinance({
+      userId: String(base.userId),
+      scopeFingerprint,
+      authReady: base.accessReady && permission,
+      online: base.online && !base.localOnly,
+      pending: () => ref.current?.commands ?? [],
+      sync: (ids, operationResult) =>
+        internalSyncRef.current(ids, operationResult),
+    });
+  }, [
+    base.accessReady,
+    base.localOnly,
+    base.online,
+    base.permissionFingerprint,
+    base.userId,
+    coordinator,
+    permission,
+  ]);
+  const requestSync = async (
+    financeSelection?: string[]
+  ): Promise<FinanceSyncResult | null> => {
+    try {
+      return (await coordinator.request("manual", { financeSelection }))
+        .finance;
+    } catch {
+      return null;
+    }
+  };
+  const sync = () => requestSync();
+  const syncCommands = (ids: string[]) => requestSync(ids);
   const reload = async () => {
     if (!base.userId) return;
     try {
@@ -498,6 +636,8 @@ export function useFinanceWorkspace() {
     busy: mutation.isPending,
     store: workspace,
     snapshotError: query.error && !denied ? w.fetchFailed : null,
+    autoSyncStatus: base.autoSyncStatus,
+    autoSyncQueue: base.autoSyncQueue,
     paymentSettings: settingsByOffice,
     settingsForOffice: (officeId: OfficeId) => settingsByOffice.get(officeId),
   };

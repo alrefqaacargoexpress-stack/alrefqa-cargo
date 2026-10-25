@@ -695,3 +695,29 @@ export type CustomerShipmentAccessRow = typeof customerShipmentAccess.$inferSele
 export type ShipmentCostApprovalRow = typeof shipmentCostApprovals.$inferSelect;
 export type OfficePaymentSettingsRow = typeof officePaymentSettings.$inferSelect;
 export type WalletMovementRow = typeof walletMovements.$inferSelect;
+
+/** Append-only explicit price overrides; original shipment and announcement remain immutable. */
+export const shipmentPriceOverrides = mysqlTable(
+  "shipment_price_overrides",
+  {
+    id: varchar("id", { length: 190 }).primaryKey(),
+    shipmentId: varchar("shipmentId", { length: 128 }).notNull(),
+    officeId: varchar("officeId", { length: 32 }).notNull(),
+    side: mysqlEnum("side", ["source", "destination"]).notNull(),
+    currency: mysqlEnum("currency", financeCurrencies).notNull(),
+    pricePerKg: decimal("pricePerKg", { precision: 18, scale: 2 }).notNull(),
+    revision: int("revision").notNull(),
+    recordVersion: int("recordVersion").notNull(),
+    reason: text("reason").notNull(),
+    previousOverrideId: varchar("previousOverrideId", { length: 190 }),
+    requestKey: varchar("requestKey", { length: 190 }).notNull(),
+    approvedBy: int("approvedBy").notNull().references(() => users.id),
+    createdAt: timestamp("createdAt", { fsp: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
+  },
+  table => [
+    uniqueIndex("shipment_price_override_request_unique").on(table.requestKey),
+    uniqueIndex("shipment_price_override_revision_unique").on(table.shipmentId, table.officeId, table.revision),
+    index("shipment_price_override_shipment_idx").on(table.shipmentId),
+  ]
+);
+export type ShipmentPriceOverrideRow = typeof shipmentPriceOverrides.$inferSelect;

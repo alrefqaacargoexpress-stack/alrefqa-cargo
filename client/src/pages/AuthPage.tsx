@@ -206,9 +206,11 @@ export default function AuthPage() {
   const employeeDestination = async () => {
     try {
       const access = await utils.operations.access.fetch(undefined);
-      return access.role ? "/operations" : "/";
+      // The operations shell owns the waiting-for-assignment state. Do not
+      // infer a role from the selected signup account type or a stale label.
+      return "/operations";
     } catch {
-      return "/";
+      return "/operations";
     }
   };
   const mutation = mode === "login" ? loginMutation : signupMutation;

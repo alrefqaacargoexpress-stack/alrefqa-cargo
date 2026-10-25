@@ -11,6 +11,10 @@ import {
 import { financeCurrencies, type FinanceCurrency } from "@shared/finance";
 import { officeNames, officeIds, type OfficeId } from "@shared/branches";
 import { sourceCurrency } from "@shared/packing";
+import {
+  shipmentPricingTarget,
+  type PriceProjection,
+} from "@shared/shipmentPricing";
 import type { Account, Invoice, Shipment } from "@shared/operations";
 import { trpc } from "@/lib/trpc";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -36,6 +40,8 @@ type Workspace = {
     name?: string;
   };
   invoices: Invoice[];
+  commands?: FinanceCommand[];
+  pricingProjections?: readonly PriceProjection[];
   homeOffice: OfficeId | null;
   offices: OfficeId[] | null;
   canEdit: boolean;
@@ -62,6 +68,25 @@ const officeLabel = (language: "ar" | "en" | "zh" | "tr", office: OfficeId) =>
 
 export const invoiceOfficeCurrency = (office: OfficeId): FinanceCurrency =>
   office === "nouakchott" ? "MRU" : (sourceCurrency[office] as FinanceCurrency);
+
+export function invoiceProjectionForCurrency(
+  shipment: Pick<Shipment, "id" | "packing"> | undefined,
+  currency: string,
+  projections: readonly PriceProjection[]
+): PriceProjection | null {
+  if (!shipment?.packing) return null;
+  const side = currency === "MRU" ? "destination" : "source";
+  const target = shipmentPricingTarget(shipment, side);
+  return (
+    projections.find(
+      projection =>
+        projection.shipmentId === shipment.id &&
+        projection.side === side &&
+        projection.officeId === target.officeId &&
+        projection.currency === target.currency
+    ) ?? null
+  );
+}
 
 function uuid() {
   return (
@@ -194,12 +219,34 @@ export default function InvoiceFinancialForm({
       shipment.id === shipmentId &&
       (shipment.officeId ?? shipment.packing?.source) === issuingOfficeId
   );
+  const pricingProjection = useMemo(() => {
+    if (chargeKind !== "shipping") return null;
+    return invoiceProjectionForCurrency(
+      selectedShipment,
+      currency,
+      workspace.pricingProjections ?? []
+    );
+  }, [chargeKind, currency, selectedShipment, workspace.pricingProjections]);
+  const pendingPricingCommand = useMemo(
+    () =>
+      Boolean(
+        selectedShipment &&
+          chargeKind === "shipping" &&
+          workspace.commands?.some(
+            command =>
+              command.kind === "shipment_price" &&
+              command.payload.shipmentId === selectedShipment.id
+          )
+      ),
+    [chargeKind, selectedShipment, workspace.commands]
+  );
   const calculation = useMemo(() => {
     if (
       !accountId ||
       (chargeKind === "shipping" && (!shipmentId || !selectedGoods.length))
     )
       return null;
+    if (pendingPricingCommand) return null;
     const input: FinanceInvoiceInput = {
       invoiceId: "preview",
       customerId: accountId,
@@ -237,7 +284,8 @@ export default function InvoiceFinancialForm({
     try {
       return calculateFinanceInvoice(
         input,
-        chargeKind === "shipping" ? selectedShipment : undefined
+        chargeKind === "shipping" ? selectedShipment : undefined,
+        chargeKind === "shipping" ? pricingProjection : undefined
       );
     } catch {
       return null;
@@ -260,6 +308,8 @@ export default function InvoiceFinancialForm({
     wallet.data,
     reference,
     selectedShipment,
+    pendingPricingCommand,
+    pricingProjection,
   ]);
   const goodsTotals = invoiceGoodsTotals(selectedChoices);
   const total = calculation
@@ -306,6 +356,7 @@ export default function InvoiceFinancialForm({
         }[language]
       );
     if (!issuingOfficeId) return setError(c.officeRequired);
+    if (pendingPricingCommand) return setError(c.pricingPending);
     if (
       chargeKind === "shipping" &&
       (!shipmentId || !selectedGoods.length || !goodsConfirmed)
@@ -746,12 +797,21 @@ export default function InvoiceFinancialForm({
               </strong>
             </span>
           </div>
-          {chargeKind === "shipping" && !calculation && selectedShipment && (
+          {chargeKind === "shipping" && pendingPricingCommand && (
             <p className="mt-2 flex gap-1 text-xs font-bold text-amber-800">
               <CircleAlert size={14} />
-              {c.rateMissing}
+              {c.pricingPending}
             </p>
           )}
+          {chargeKind === "shipping" &&
+            !pendingPricingCommand &&
+            !calculation &&
+            selectedShipment && (
+              <p className="mt-2 flex gap-1 text-xs font-bold text-amber-800">
+                <CircleAlert size={14} />
+                {c.rateMissing}
+              </p>
+            )}
         </div>
         <PackingField
           label={c.issuingOffice}
@@ -818,7 +878,7 @@ export default function InvoiceFinancialForm({
           type="button"
           className={packingPrimaryClass}
           onClick={() => void save()}
-          disabled={saving || !canWrite}
+          disabled={saving || !canWrite || pendingPricingCommand}
         >
           <Plus size={16} />
           {saving ? c.saving : c.saveDraft}

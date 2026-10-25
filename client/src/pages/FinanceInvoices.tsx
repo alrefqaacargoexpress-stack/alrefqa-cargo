@@ -539,7 +539,11 @@ export default function FinanceInvoices() {
         {canWrite && (
           <InvoiceFinancialForm
             key={`${workspace.base.userId ?? "local"}:${initialCustomerId ?? ""}`}
-            workspace={workspace}
+            workspace={{
+              ...workspace,
+              pricingProjections:
+                workspace.store?.snapshot.pricingProjections ?? [],
+            }}
             initialIssuingOffice={initialIssuingOffice}
             initialCustomerId={initialCustomerId}
           />

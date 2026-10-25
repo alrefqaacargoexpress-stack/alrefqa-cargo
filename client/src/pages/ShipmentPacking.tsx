@@ -10,6 +10,7 @@ import {
   Send,
 } from "lucide-react";
 import PublishedPackingTariff from "@/components/packing/PublishedPackingTariff";
+import ShipmentPriceOverrideForm from "@/components/packing/ShipmentPriceOverrideForm";
 import PackingLayout from "@/components/packing/PackingLayout";
 import ShipmentDeleteActions from "@/components/packing/ShipmentDeleteActions";
 import CartonGoods, {
@@ -28,6 +29,7 @@ import {
 } from "@/components/packing/PackingPrimitives";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useOperationsWorkspace } from "@/hooks/useOperationsWorkspace";
+import { useFinanceWorkspace } from "@/hooks/useFinanceWorkspace";
 import { copyFor } from "@/lib/packingCopy";
 import { packingPricingView } from "@/lib/packingTariffPreview";
 import {
@@ -53,6 +55,7 @@ import { permissionAllowed } from "@shared/permissions";
 
 export default function ShipmentPacking() {
   const workspace = useOperationsWorkspace();
+  const finance = useFinanceWorkspace();
   const { language } = useLanguage();
   const c = copyFor(language);
   const params = useParams<{ id: string }>();
@@ -103,8 +106,30 @@ export default function ShipmentPacking() {
       "shipment_prices",
       "view"
     );
-  const pricing = packingPricingView(packed, workspace.queue, canViewFinance);
+  const pricing = packingPricingView(
+    packed,
+    workspace.queue,
+    canViewFinance,
+    canViewFinance ? (finance.store?.snapshot.pricingProjections ?? []) : []
+  );
   const packingForDisplay = pricing.packingForDisplay;
+  const displayRateSnapshot = packed.packing.rateSnapshot
+    ? {
+        ...packed.packing.rateSnapshot,
+        sourceRate: packed.packing.rateSnapshot.sourceRate
+          ? {
+              ...packed.packing.rateSnapshot.sourceRate,
+              amount: packingForDisplay.pricePerKg,
+            }
+          : packed.packing.rateSnapshot.sourceRate,
+        nouakchottRate: packed.packing.rateSnapshot.nouakchottRate
+          ? {
+              ...packed.packing.rateSnapshot.nouakchottRate,
+              amount: packingForDisplay.pricePerKgMRU ?? 0,
+            }
+          : packed.packing.rateSnapshot.nouakchottRate,
+      }
+    : undefined;
   const sourceRateApproved = packingForDisplay.pricePerKg > 0;
   const totals = packingTotals(packingForDisplay);
   const mruTotals = packingTotalsMRU(packingForDisplay);
@@ -112,6 +137,15 @@ export default function ShipmentPacking() {
   const canMarkDelivered =
     workspace.canUpdateTracking && packed.status === "في الطريق";
   const canSend = workspace.canSendShipments && packed.status === "قيد التجهيز";
+  const canManagePrice = permissionAllowed(
+    {
+      role: workspace.role,
+      offices: workspace.offices,
+      permissions: workspace.permissions,
+    },
+    "shipment_prices",
+    "manage"
+  );
   const openCartonsWithGoods = packed.packing.cartons.filter(
     carton => !carton.closed && carton.goods.some(goods => !goods.deleted)
   );
@@ -348,7 +382,7 @@ export default function ShipmentPacking() {
                           : null,
                       }
                     : undefined
-                  : packed.packing.rateSnapshot
+                  : displayRateSnapshot
               }
               c={c}
               language={language}
@@ -530,6 +564,14 @@ export default function ShipmentPacking() {
         language={language}
         showFinance={canViewFinance}
       />
+      {canManagePrice && (
+        <ShipmentPriceOverrideForm
+          shipments={[packed]}
+          workspace={{ ...finance, snapshot: finance.store?.snapshot }}
+          projections={finance.store?.snapshot.pricingProjections ?? []}
+          className="mt-5"
+        />
+      )}
       <div className="mt-5 flex flex-wrap gap-3">
         {packed.status === "قيد التجهيز" && (
           <button

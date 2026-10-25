@@ -12,9 +12,13 @@ const holder = vi.hoisted(() => ({
   id: "",
   newForm: false,
   profiles: undefined as any,
+  finance: { store: { snapshot: { pricingProjections: [] } } } as any,
 }));
 vi.mock("@/hooks/useOperationsWorkspace", () => ({
   useOperationsWorkspace: () => holder.workspace,
+}));
+vi.mock("@/hooks/useFinanceWorkspace", () => ({
+  useFinanceWorkspace: () => holder.finance,
 }));
 vi.mock("@/contexts/LanguageContext", () => ({
   useLanguage: () => ({ language: "en" }),
@@ -43,6 +47,7 @@ vi.mock("wouter", () => ({
 beforeEach(() => {
   holder.newForm = false;
   holder.profiles = undefined;
+  holder.finance = { store: { snapshot: { pricingProjections: [] } } };
   const now = "2026-10-24T22:54:00.000Z";
   const shipment = addPackingGoods(
     createPackedShipment(
@@ -183,5 +188,56 @@ describe("real packing pages use display quotes without saving them", () => {
     expect(html).toContain(copyFor("en").amountHidden);
     expect(html).not.toContain("37 AED");
     expect(html).not.toContain("425 MRU");
+  });
+
+  it("uses scoped source and destination projections on both pages without mutating the shipment", () => {
+    const shipment = holder.workspace.state.shipments[0];
+    shipment.scope = "shared";
+    shipment.version = 2;
+    holder.workspace.queue = [];
+    holder.finance = {
+      store: {
+        snapshot: {
+          pricingProjections: [
+            {
+              shipmentId: shipment.id,
+              side: "source",
+              officeId: "dubai",
+              currency: "AED",
+              pricePerKg: 40,
+              overridePricePerKg: 40,
+              revision: 2,
+              expectedPricingRevision: 2,
+              recordVersion: 7,
+              overrideId: "override-source",
+              createdAt: "2026-10-24T22:55:00.000Z",
+            },
+            {
+              shipmentId: shipment.id,
+              side: "destination",
+              officeId: "nouakchott",
+              currency: "MRU",
+              pricePerKg: 430,
+              overridePricePerKg: 430,
+              revision: 3,
+              expectedPricingRevision: 3,
+              recordVersion: 7,
+              overrideId: "override-destination",
+              createdAt: "2026-10-24T22:55:00.000Z",
+            },
+          ],
+        },
+      },
+    };
+    const before = JSON.stringify(shipment.packing);
+    for (const Page of [ShipmentPacking, PackingHub]) {
+      const html = renderToStaticMarkup(<Page />);
+      expect(html).toContain("4.00 AED");
+      expect(html).toContain("43.00 MRU");
+      expect(html).not.toContain("3.70 AED");
+      expect(html).not.toContain("42.50 MRU");
+    }
+    expect(JSON.stringify(shipment.packing)).toBe(before);
+    expect(shipment.packing.pricePerKg).toBe(0);
   });
 });

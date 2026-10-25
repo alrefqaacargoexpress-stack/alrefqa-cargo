@@ -42,6 +42,7 @@ export const warehouseCommandSchema = z
     warehouse: text(160),
     shelf: text(160),
     expectedVersion: z.number().int().positive(),
+    clientUserId: z.string().trim().min(1).max(128).optional(),
   })
   .strict();
 

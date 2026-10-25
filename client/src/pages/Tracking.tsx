@@ -438,15 +438,6 @@ export default function Tracking() {
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
-              {workspace.pending.length > 0 && canCommand && (
-                <button
-                  onClick={share}
-                  disabled={workspace.sharing || !workspace.online}
-                  className="rounded-xl bg-[#092d50] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
-                >
-                  {c.sync} ({workspace.pending.length})
-                </button>
-              )}
               {workspace.canExport && !selectedId && (
                 <button
                   onClick={() =>

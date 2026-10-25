@@ -127,6 +127,19 @@ export default function WarehouseStorage() {
     } catch {
       setError(c.login);
     }
+    const refreshPending = () => {
+      try {
+        setDrafts(loadWarehousePending(userId).pending);
+      } catch {
+        setError(c.login);
+      }
+    };
+    window.addEventListener("alrefqaa:warehouse-store", refreshPending);
+    window.addEventListener("storage", refreshPending);
+    return () => {
+      window.removeEventListener("alrefqaa:warehouse-store", refreshPending);
+      window.removeEventListener("storage", refreshPending);
+    };
   }, [userId, c.login]);
 
   const rows = useMemo(() => {
@@ -263,20 +276,14 @@ export default function WarehouseStorage() {
             placeholder={c.search}
             className="min-h-11 min-w-[min(100%,28rem)] flex-1 rounded-xl border border-[#cbd9de] px-3 text-sm"
           />
-          <button
-            type="button"
-            onClick={() => void share()}
-            disabled={
-              !online ||
-              !drafts.length ||
-              commit.isPending ||
-              !snapshot.data?.canEdit ||
-              !canStorageManage
-            }
-            className="min-h-11 rounded-xl bg-[#092d50] px-4 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {c.share} {drafts.length ? `(${drafts.length})` : ""}
-          </button>
+          {drafts.length > 0 && (
+            <span
+              role="status"
+              className="self-center rounded-xl bg-amber-50 px-4 py-3 text-sm"
+            >
+              {c.saved} ({drafts.length})
+            </span>
+          )}
         </div>
         {notice && (
           <div className="flex items-center gap-2 rounded-xl border border-[#cbd9de] bg-white p-3 text-sm">

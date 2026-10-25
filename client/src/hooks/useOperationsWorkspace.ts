@@ -7,6 +7,12 @@ import {
 } from "@shared/permissions";
 import { prepareCustomerAccount } from "@shared/customerAccountCreation";
 import { useEffect, useRef, useState } from "react";
+import { useWorkspaceSyncCoordinator } from "@/components/providers/WorkspaceSyncContext";
+import type { SyncReason } from "@/lib/autoSync";
+import {
+  loadWarehousePending,
+  removeWarehouseLocation,
+} from "@/lib/warehouseStore";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { trpc } from "@/lib/trpc";
 import {
@@ -69,6 +75,7 @@ type Profile = {
   permissionFingerprint?: string | null;
 };
 type AccessResponse = {
+  userId?: number;
   role: AppRole | null;
   offices?: OfficeId[] | null;
   homeOffice?: OfficeId | null;
@@ -283,6 +290,7 @@ function changeAllowed(
 }
 
 export function useOperationsWorkspace() {
+  const coordinator = useWorkspaceSyncCoordinator();
   const { language } = useLanguage();
   const w = words[language];
   const [online, setOnline] = useState(navigator.onLine);
@@ -292,11 +300,23 @@ export function useOperationsWorkspace() {
     refetchOnWindowFocus: false,
   });
   const activeId = me.data?.id == null ? null : String(me.data.id);
-  const access = trpc.operations.access.useQuery(undefined, {
-    enabled: Boolean(activeId),
-    retry: false,
-  });
-  const accessData = access.data as AccessResponse | undefined;
+  const access = trpc.operations.access.useQuery(
+    activeId ? { clientUserId: activeId } : undefined,
+    {
+      enabled: Boolean(activeId),
+      retry: false,
+      refetchOnWindowFocus: false,
+    }
+  );
+  const rawAccessData = access.data as AccessResponse | undefined;
+  // The server always returns userId for production responses. Do not let a
+  // late response from another account become the current access snapshot.
+  const accessData =
+    activeId &&
+    rawAccessData?.userId != null &&
+    String(rawAccessData.userId) === activeId
+      ? rawAccessData
+      : undefined;
   const cachedProfile = profile ?? readProfile();
   const offlineIdentity = Boolean(
     activeId && !online && profileMatchesUser(cachedProfile, activeId)
@@ -324,6 +344,8 @@ export function useOperationsWorkspace() {
   const permissionFingerprint =
     accessData?.permissionFingerprint ??
     (offlineIdentity ? (cachedProfile?.permissionFingerprint ?? null) : null);
+  const scopeOwner = useRef<string | null>(permissionFingerprint ?? null);
+  scopeOwner.current = permissionFingerprint ?? null;
   const subject = asPermissionSubject(
     role,
     offices,
@@ -333,12 +355,23 @@ export function useOperationsWorkspace() {
   );
   const userId = activeId;
   const localOnly = offlineIdentity;
-  const snapshot = trpc.operations.snapshot.useQuery(undefined, {
-    enabled: Boolean(activeId && role),
-    retry: false,
-    refetchOnWindowFocus: false,
-  });
+  const snapshot = trpc.operations.snapshot.useQuery(
+    activeId
+      ? {
+          clientUserId: activeId,
+          ...(permissionFingerprint
+            ? { cacheScope: permissionFingerprint }
+            : {}),
+        }
+      : undefined,
+    {
+      enabled: Boolean(activeId && role),
+      retry: false,
+      refetchOnWindowFocus: false,
+    }
+  );
   const mutation = trpc.operations.sync.useMutation();
+  const warehouseMutation = trpc.warehouse.commit.useMutation();
   const utils = trpc.useUtils();
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const ref = useRef<Workspace | null>(null);
@@ -348,6 +381,8 @@ export function useOperationsWorkspace() {
   const [notice, setNotice] = useState<string | null>(null);
   const [conflicts, setConflicts] = useState<SyncResult["conflicts"]>([]);
   const [busy, setBusy] = useState(false);
+  const [autoSyncState, setAutoSyncState] = useState(coordinator.getState());
+  useEffect(() => coordinator.subscribe(setAutoSyncState), [coordinator]);
   // Synchronous mirror of the latest save failure so forms can show the exact
   // reason immediately after an awaited save returns false.
   const lastSaveErrorRef = useRef<string | null>(null);
@@ -416,12 +451,24 @@ export function useOperationsWorkspace() {
   useEffect(() => {
     if (!snapshot.data || !activeId || !ref.current) return;
     let stopped = false;
+    const responseUserId = activeId;
+    const responseScope = permissionFingerprint ?? null;
     const before = ref.current;
     void (async () => {
       try {
-        const next = mergeSnapshot(before, snapshot.data, activeId);
-        await saveWorkspace(activeId, next);
-        if (!stopped && owner.current === activeId) {
+        const next = mergeSnapshot(before, snapshot.data, responseUserId);
+        if (
+          stopped ||
+          owner.current !== responseUserId ||
+          scopeOwner.current !== responseScope
+        )
+          return;
+        await saveWorkspace(responseUserId, next);
+        if (
+          !stopped &&
+          owner.current === responseUserId &&
+          scopeOwner.current === responseScope
+        ) {
           ref.current = next;
           setWorkspace(next);
         }
@@ -432,7 +479,7 @@ export function useOperationsWorkspace() {
     return () => {
       stopped = true;
     };
-  }, [snapshot.data, activeId]);
+  }, [snapshot.data, activeId, permissionFingerprint]);
   const saveRecord = async (
     entity: "account",
     account: Account,
@@ -475,6 +522,7 @@ export function useOperationsWorkspace() {
       ref.current = next;
       setWorkspace(next);
       setNotice(w.saved);
+      void coordinator.request("local-save").catch(() => undefined);
       return true;
     } catch (error) {
       return failSave(reasonFromError(error));
@@ -588,16 +636,18 @@ export function useOperationsWorkspace() {
       ref.current = next;
       setWorkspace(next);
       setNotice(w.saved);
+      void coordinator.request("local-save").catch(() => undefined);
       return true;
     } catch (error) {
       return failSave(reasonFromError(error));
     }
   };
-  const runSync = async (
-    selected?: Array<{ entity: Entity; recordId: string }>
+  const runSyncInternal = async (
+    selected?: Array<{ entity: Entity; recordId: string }>,
+    _operationResult?: SyncResult | null
   ): Promise<SyncResult | null> => {
-    const id = activeId,
-      current = ref.current;
+    const id = activeId;
+    const current = id ? loadWorkspace(id) : ref.current;
     if (!id || localOnly || !online) {
       setNotice(w.offline);
       return null;
@@ -622,11 +672,12 @@ export function useOperationsWorkspace() {
       setNotice(w.blocked);
       return null;
     }
-    if (!confirm(`${w.review}\n\n${batch.map(c => c.label).join("\n")}`))
-      return null;
     setBusy(true);
     try {
-      const result = await mutation.mutateAsync({ changes: batch });
+      const result = await mutation.mutateAsync({
+        changes: batch,
+        clientUserId: id,
+      });
       if (owner.current !== id) return null;
       const latest = ref.current ?? current;
       const next = applySyncResult(latest, result, id);
@@ -656,9 +707,106 @@ export function useOperationsWorkspace() {
       setBusy(false);
     }
   };
-  const sync = () => runSync();
+  const internalSyncRef = useRef(runSyncInternal);
+  internalSyncRef.current = runSyncInternal;
+  const syncWarehouse = async (): Promise<string[]> => {
+    if (!userId || !accessReady || localOnly || !online) return [];
+    const accepted: string[] = [];
+    const advanced = new Map<string, { from: number; to: number }>();
+    const pending = loadWarehousePending(userId).pending;
+    for (const draft of pending) {
+      const step = advanced.get(draft.shipmentId);
+      // Rebase only before this request's first send; never mint a new request id.
+      const expectedVersion =
+        step && draft.expectedVersion === step.from
+          ? step.to
+          : draft.expectedVersion;
+      try {
+        const result = (await warehouseMutation.mutateAsync({
+          requestId: draft.requestId,
+          shipmentId: draft.shipmentId,
+          goodsId: draft.goodsId,
+          warehouse: draft.warehouse,
+          shelf: draft.shelf,
+          expectedVersion,
+          clientUserId: String(userId),
+        })) as { version: number };
+        advanced.set(draft.shipmentId, {
+          from: expectedVersion,
+          to: result.version,
+        });
+        removeWarehouseLocation(userId, draft.requestId);
+        accepted.push(draft.requestId);
+      } catch (error) {
+        // A conditional conflict blocks later edits for this shipment, but does not
+        // freeze unrelated goods. The request remains durable for review/retry.
+        if (
+          error instanceof Error &&
+          /conflict|version|permission|forbidden|session/i.test(error.message)
+        )
+          advanced.delete(draft.shipmentId);
+        else if (
+          error instanceof Error &&
+          /network|fetch|timeout|offline/i.test(error.message)
+        )
+          throw error;
+      }
+    }
+    return accepted;
+  };
+  useEffect(() => {
+    if (!userId) return;
+    coordinator.setSession(
+      String(userId),
+      accessReady && !localOnly,
+      permissionFingerprint ?? null
+    );
+    return coordinator.registerOperations({
+      userId: String(userId),
+      authReady: accessReady && !localOnly,
+      online: online && !localOnly,
+      pending: () => ref.current?.queue ?? [],
+      sync: selection => internalSyncRef.current(selection),
+    });
+  }, [accessReady, coordinator, online, permissionFingerprint, userId]);
+  useEffect(() => {
+    if (!userId) return;
+    return coordinator.registerWarehouse({
+      userId: String(userId),
+      scopeFingerprint: permissionFingerprint ?? null,
+      authReady: accessReady && !localOnly,
+      online: online && !localOnly,
+      pending: () => {
+        try {
+          return loadWarehousePending(userId).pending;
+        } catch {
+          return [];
+        }
+      },
+      sync: syncWarehouse,
+    });
+  }, [
+    accessReady,
+    coordinator,
+    localOnly,
+    online,
+    permissionFingerprint,
+    userId,
+  ]);
+  const requestSync = async (
+    reason: SyncReason,
+    operationSelection?: Array<{ entity: Entity; recordId: string }>
+  ): Promise<SyncResult | null> => {
+    try {
+      return (await coordinator.request(reason, { operationSelection }))
+        .operations;
+    } catch {
+      return null;
+    }
+  };
+  const sync = () => requestSync("manual");
   const syncRecords = (records: Array<{ entity: Entity; recordId: string }>) =>
-    runSync(records);
+    requestSync("manual", records);
   const retryConflict = async (conflict: SyncResult["conflicts"][number]) => {
     const id = userId;
     const current = ref.current;
@@ -770,6 +918,7 @@ export function useOperationsWorkspace() {
     workspace,
     userId,
     role,
+    homeOffice,
     offices,
     canEditShipments: accessReady && canEditShipments(subject),
     canSendShipments: accessReady && canSendShipments(subject),
@@ -813,5 +962,11 @@ export function useOperationsWorkspace() {
     retryConflict,
     resolveConflict,
     busy,
+    autoSyncStatus: autoSyncState.status,
+    autoSyncQueue: {
+      operations: autoSyncState.operationsCount,
+      finance: autoSyncState.financeCount,
+      warehouse: autoSyncState.warehouseCount,
+    },
   };
 }

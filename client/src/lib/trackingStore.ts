@@ -11,11 +11,13 @@ import {
 } from "@shared/tracking";
 import type { AppRole, Shipment } from "@shared/operations";
 import { permissionMapSchema, type PermissionMap } from "@shared/permissions";
+import { officeIdSchema, type OfficeId } from "@shared/branches";
 
 export type TrackingShipment = Pick<
   Shipment,
   "id" | "tracking" | "route" | "service" | "status" | "eta" | "version"
 > & {
+  officeId?: OfficeId;
   journey?: Shipment["journey"];
   deleted?: Shipment["deleted"];
 };
@@ -86,6 +88,7 @@ const detailSchema = z
     service: z.enum(["جوي", "بحري", "سريع"]),
     status: z.enum(shipmentStatuses),
     eta: z.string().max(160),
+    officeId: officeIdSchema.optional(),
     journey: journeySchema.optional(),
     version: z.number().int().positive().optional(),
     deleted: z.object({ at: z.string(), reason: z.string() }).optional(),
@@ -98,6 +101,7 @@ const detailSchema = z
     service: value.service,
     status: value.status,
     eta: value.eta,
+    officeId: value.officeId,
     journey: value.journey,
     version: value.version,
     deleted: value.deleted,
@@ -206,7 +210,55 @@ export async function saveTrackingCache(
     next.savedAt = new Date().toISOString();
     store.setItem(cacheKey(value.userId, value.role), JSON.stringify(next));
   });
+  emitTrackingWorkspaceChanged(next.userId);
   return next;
+}
+
+function emitTrackingWorkspaceChanged(userId: string): void {
+  if (typeof window === "undefined" || typeof window.dispatchEvent !== "function")
+    return;
+  try {
+    window.dispatchEvent(
+      new CustomEvent("alrefqaa-workspace-changed", { detail: { userId } })
+    );
+  } catch {
+    /* Storage remains the durable cross-tab signal when CustomEvent is absent. */
+  }
+}
+
+/**
+ * Acknowledge exactly one request against the latest cache revision. Reading
+ * and writing under the same store lock preserves commands appended while the
+ * network request was in flight.
+ */
+export async function acknowledgeTrackingCommit(
+  userId: string,
+  role: AppRole,
+  requestId: string,
+  response: { requestId: string; shipment: unknown; version: number }
+): Promise<TrackingCache> {
+  let result: TrackingCache | null = null;
+  let changed = false;
+  await withLock(cacheKey(userId, role), () => {
+    const store = storage();
+    const raw = store.getItem(cacheKey(userId, role));
+    const current = raw
+      ? parseCache(raw)
+      : emptyTrackingCache(userId, role);
+    const next = removeAcknowledged(current, requestId, response);
+    if (next === current) {
+      result = clone(current);
+      return;
+    }
+    next.revision = current.revision + 1;
+    next.savedAt = new Date().toISOString();
+    store.setItem(cacheKey(userId, role), JSON.stringify(next));
+    result = clone(next);
+    changed = true;
+  });
+  if (!result) throw new Error("tracking_cache_write");
+  if (changed) emitTrackingWorkspaceChanged(userId);
+  return result;
 }
 
 export function parseTrackingSummaries(value: unknown): {

@@ -397,13 +397,6 @@ export default function FinanceExcelPanel({
                 </p>
               ))}
             </div>
-            <button
-              className={`${packingPrimaryClass} mt-3`}
-              disabled={!f.online || f.busy || !canWrite}
-              onClick={() => void f.sync()}
-            >
-              {c.sync}
-            </button>
           </>
         )}
         {f.notice && (

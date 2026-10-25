@@ -110,7 +110,10 @@ export const pendingChangeSchema = z
   })
   .strict();
 export const syncInputSchema = z
-  .object({ changes: z.array(pendingChangeSchema).max(500) })
+  .object({
+    changes: z.array(pendingChangeSchema).max(500),
+    clientUserId: z.string().trim().min(1).max(128).optional(),
+  })
   .strict();
 export const setRoleInputSchema = z
   .object({

@@ -1183,23 +1183,6 @@ export default function Operations() {
                 </div>
               </div>
             </div>
-            <button
-              onClick={handleSync}
-              disabled={
-                syncMutation.isPending ||
-                !queue.length ||
-                !online ||
-                !effectiveUserId ||
-                offlineMode
-              }
-              className="inline-flex items-center gap-2 rounded-xl bg-white px-3 py-2 text-sm font-bold text-emerald-800 disabled:opacity-40"
-            >
-              <RefreshCw
-                size={15}
-                className={syncMutation.isPending ? "animate-spin" : ""}
-              />
-              {c.sync} ({queue.length})
-            </button>
           </div>
           {conflicts.length > 0 && (
             <ConflictPanel

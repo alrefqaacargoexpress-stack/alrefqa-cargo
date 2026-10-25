@@ -13,9 +13,8 @@ import {
   canWriteFinance,
 } from "@shared/finance";
 import { canReadAnyFinance, permissionAllowed } from "@shared/permissions";
-import { sourceCurrency } from "@shared/packing";
-import type { Shipment } from "@shared/operations";
 import PackingLayout from "@/components/packing/PackingLayout";
+import ShipmentPriceOverrideForm from "@/components/packing/ShipmentPriceOverrideForm";
 import FinanceExcelPanel from "@/components/finance/FinanceExcelPanel";
 import OfficeExpenseForm from "@/components/finance/OfficeExpenseForm";
 import ShipmentSettlementPanel from "@/components/finance/ShipmentSettlementPanel";
@@ -29,7 +28,6 @@ import {
   officeFinanceCopyFor,
   type OfficeFinanceCopy,
 } from "@/lib/officeFinanceCopy";
-import { hasSyncReasonCopy, syncReasonMessage } from "@/lib/syncReasonCopy";
 import {
   PackingField,
   packingInputClass,
@@ -64,30 +62,6 @@ export function createOpeningBalanceCommand(input: {
       date: input.date,
       amount: input.amount,
       note: input.note.trim(),
-    },
-  };
-}
-
-export function createShipmentPriceCommand(input: {
-  shipmentId: string;
-  sourceOfficeId: OfficeId;
-  pricePerKg: number;
-  pricePerKgMRU?: number;
-  expectedVersion: number;
-}): FinanceCommand {
-  const commandId = uuid();
-  return {
-    id: commandId,
-    createdAt: new Date().toISOString(),
-    kind: "shipment_price",
-    payload: {
-      shipmentId: input.shipmentId,
-      sourceOfficeId: input.sourceOfficeId,
-      pricePerKg: input.pricePerKg,
-      ...(input.pricePerKgMRU === undefined
-        ? {}
-        : { pricePerKgMRU: input.pricePerKgMRU }),
-      expectedVersion: input.expectedVersion,
     },
   };
 }
@@ -297,7 +271,6 @@ export default function OfficeFinance() {
       ),
     [summaries]
   );
-  const [syncNotice, setSyncNotice] = useState("");
   const canUseFinance = canReadAnyFinance({
     role: finance.role,
     offices: finance.offices,
@@ -369,37 +342,6 @@ export default function OfficeFinance() {
             command.payload.currency === openingCurrency
         ))
   );
-  const priceableShipments = useMemo(
-    () =>
-      shipmentSource.filter(
-        shipment =>
-          !shipment.deleted &&
-          Boolean(shipment.packing) &&
-          accountantHomeOnly &&
-          shipment.packing?.source === openingOffice
-      ),
-    [accountantHomeOnly, openingOffice, shipmentSource]
-  );
-  const [priceShipmentId, setPriceShipmentId] = useState("");
-  const [pricePerKg, setPricePerKg] = useState("");
-  const [pricePerKgMRU, setPricePerKgMRU] = useState("");
-  const [priceNotice, setPriceNotice] = useState("");
-  const [priceError, setPriceError] = useState("");
-  const [priceBusy, setPriceBusy] = useState(false);
-  const priceShipment = priceableShipments.find(s => s.id === priceShipmentId);
-  const priceAlreadyPending = Boolean(
-    priceShipment &&
-      finance.commands.some(
-        command =>
-          command.kind === "shipment_price" &&
-          command.payload.shipmentId === priceShipment.id
-      )
-  );
-
-  useEffect(() => {
-    if (!priceableShipments.some(shipment => shipment.id === priceShipmentId))
-      setPriceShipmentId(priceableShipments[0]?.id ?? "");
-  }, [priceShipmentId, priceableShipments]);
 
   const saveOpening = async () => {
     setOpeningError("");
@@ -440,66 +382,6 @@ export default function OfficeFinance() {
     } finally {
       setOpeningBusy(false);
     }
-  };
-
-  const saveShipmentPrice = async () => {
-    setPriceError("");
-    setPriceNotice("");
-    const sourceOffice = priceShipment?.packing?.source as OfficeId | undefined;
-    const amount = Number(pricePerKg);
-    const mruAmount = pricePerKgMRU.trim() ? Number(pricePerKgMRU) : undefined;
-    if (
-      !priceShipment ||
-      !sourceOffice ||
-      !accountantHomeOnly ||
-      !canChangePrice ||
-      priceAlreadyPending ||
-      !pricePerKg.trim() ||
-      !Number.isFinite(amount) ||
-      amount < 0 ||
-      (mruAmount !== undefined &&
-        (!Number.isFinite(mruAmount) || mruAmount < 0))
-    ) {
-      setPriceError(
-        priceAlreadyPending ? c.priceAlreadyPending : c.priceRequired
-      );
-      return;
-    }
-    setPriceBusy(true);
-    try {
-      if (
-        await finance.saveCommand(
-          createShipmentPriceCommand({
-            shipmentId: priceShipment.id,
-            sourceOfficeId: sourceOffice,
-            pricePerKg: amount,
-            ...(mruAmount === undefined ? {} : { pricePerKgMRU: mruAmount }),
-            expectedVersion: priceShipment.version ?? 1,
-          })
-        )
-      ) {
-        setPricePerKg("");
-        setPricePerKgMRU("");
-        setPriceNotice(c.priceSaved);
-      }
-    } finally {
-      setPriceBusy(false);
-    }
-  };
-
-  const sync = async () => {
-    setSyncNotice("");
-    const result = await finance.sync();
-    if (!result) return;
-    setSyncNotice(
-      result.conflicts.length
-        ? hasSyncReasonCopy(result.conflicts[0].code)
-          ? syncReasonMessage(result.conflicts[0].code, language)
-          : c.syncConflicts
-        : result.applied.length
-          ? `${c.syncDone}: ${result.applied.length}`
-          : c.syncNoResult
-    );
   };
 
   return (
@@ -582,30 +464,8 @@ export default function OfficeFinance() {
                 >
                   {c.billing}
                 </Link>
-                {finance.commands.length > 0 && canWrite && (
-                  <button
-                    className={packingPrimaryClass}
-                    disabled={
-                      !finance.online ||
-                      finance.loading ||
-                      finance.busy ||
-                      !finance.canEdit
-                    }
-                    onClick={() => void sync()}
-                  >
-                    {finance.loading ? c.syncing : c.sync}
-                  </button>
-                )}
               </div>
             </div>
-            {syncNotice && (
-              <p
-                role="status"
-                className="rounded-xl bg-emerald-50 p-3 text-sm font-bold text-emerald-900"
-              >
-                {syncNotice}
-              </p>
-            )}
             <div className="grid gap-4 lg:grid-cols-2">
               {summaryByCurrency.map(summary => (
                 <article
@@ -817,6 +677,16 @@ export default function OfficeFinance() {
             )}
           </section>
 
+          {canChangePrice && (
+            <ShipmentPriceOverrideForm
+              shipments={shipmentSource.filter(
+                shipment => !shipment.deleted && Boolean(shipment.packing)
+              )}
+              workspace={{ ...finance, snapshot: finance.store?.snapshot }}
+              projections={finance.store?.snapshot.pricingProjections ?? []}
+            />
+          )}
+
           <OfficeWalletLedger
             key={`${finance.base.userId}:${selectedOffice}`}
             workspace={finance}
@@ -952,113 +822,6 @@ export default function OfficeFinance() {
                     </button>
                   </section>
 
-                  <section className="rounded-2xl border border-[#dce4e7] bg-white p-5 shadow-sm">
-                    <div className="border-b border-[#edf1f1] pb-4">
-                      <h2 className="text-lg font-black text-[#092d50]">
-                        {c.setShipmentPrice}
-                      </h2>
-                      <p className="mt-1 text-sm text-[#718088]">
-                        {c.shipmentPriceHint}
-                      </p>
-                    </div>
-                    <div className="mt-4 grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-                      <PackingField label={c.shipment} required>
-                        <select
-                          className={packingInputClass}
-                          value={priceShipmentId}
-                          disabled={priceBusy || !priceableShipments.length}
-                          onChange={event =>
-                            setPriceShipmentId(event.target.value)
-                          }
-                        >
-                          {!priceableShipments.length && (
-                            <option value="">{c.noPriceableShipments}</option>
-                          )}
-                          {priceableShipments.map(shipment => (
-                            <option key={shipment.id} value={shipment.id}>
-                              {shipment.tracking} · {shipment.id}
-                            </option>
-                          ))}
-                        </select>
-                      </PackingField>
-                      <PackingField
-                        label={
-                          priceShipment?.packing?.source
-                            ? `${c.pricePerKg} (${sourceCurrency[priceShipment.packing.source]})`
-                            : c.pricePerKg
-                        }
-                        required
-                      >
-                        <input
-                          className={packingInputClass}
-                          type="number"
-                          min="0"
-                          step="0.01"
-                          value={pricePerKg}
-                          disabled={
-                            priceBusy || priceAlreadyPending || !priceShipment
-                          }
-                          onChange={event => setPricePerKg(event.target.value)}
-                        />
-                      </PackingField>
-                      <PackingField label={c.pricePerKgMRU}>
-                        <input
-                          className={packingInputClass}
-                          type="number"
-                          min="0"
-                          step="0.01"
-                          value={pricePerKgMRU}
-                          disabled={
-                            priceBusy || priceAlreadyPending || !priceShipment
-                          }
-                          onChange={event =>
-                            setPricePerKgMRU(event.target.value)
-                          }
-                        />
-                      </PackingField>
-                      <PackingField label={c.expectedVersion}>
-                        <input
-                          className={`${packingInputClass} bg-slate-50`}
-                          value={priceShipment?.version ?? 1}
-                          readOnly
-                        />
-                      </PackingField>
-                    </div>
-                    {priceAlreadyPending && (
-                      <p className="mt-3 rounded-xl bg-amber-50 p-3 text-sm font-bold text-amber-900">
-                        {c.priceAlreadyPending}
-                      </p>
-                    )}
-                    {priceError && (
-                      <p
-                        role="alert"
-                        className="mt-3 rounded-xl bg-red-50 p-3 text-sm font-bold text-red-900"
-                      >
-                        {priceError}
-                      </p>
-                    )}
-                    {priceNotice && (
-                      <p
-                        role="status"
-                        className="mt-3 rounded-xl bg-emerald-50 p-3 text-sm font-bold text-emerald-900"
-                      >
-                        {priceNotice}
-                      </p>
-                    )}
-                    <button
-                      className={`${packingPrimaryClass} mt-4`}
-                      type="button"
-                      disabled={
-                        priceBusy ||
-                        priceAlreadyPending ||
-                        !priceShipment ||
-                        !canChangePrice
-                      }
-                      onClick={() => void saveShipmentPrice()}
-                    >
-                      {priceBusy ? c.saving : c.saveShipmentPrice}
-                    </button>
-                  </section>
                 </>
               )}
               <FinanceExcelPanel

@@ -53,6 +53,13 @@ import {
 } from "./office";
 import { appendAudit } from "./audit";
 import {
+  applyShipmentPriceOverride,
+  parseExplicitShipmentPriceInput,
+  priceProjectionForCurrency,
+  readPriceProjection,
+  readShipmentPricingProjection,
+} from "./shipmentPricing";
+import {
   records,
   financeEntries,
   financeReceipts,
@@ -302,13 +309,47 @@ export async function financeSnapshot(
     )
       entries.push(parsed);
   }
-  const shipments = (
+  const shipmentRows = (
     await db.select().from(records).where(eq(records.entity, "shipment"))
-  )
-    .map((row: any) => row.data as Shipment)
-    .filter((shipment: Shipment) =>
-      recordIsActive(retired, "shipment", shipment)
-    );
+  ).filter((row: any) =>
+    recordIsActive(retired, "shipment", row.data as Shipment)
+  );
+  const shipments = shipmentRows.map((row: any) => row.data as Shipment);
+  const pricingProjections =
+    [] as import("@shared/shipmentPricing").PriceProjection[];
+  const pricingByShipment = new Map<
+    string,
+    Partial<
+      Record<
+        "source" | "destination",
+        import("@shared/shipmentPricing").PriceProjection
+      >
+    >
+  >();
+  if (financeCan(permissionSubject(scope), "shipment_prices", "view")) {
+    for (const row of shipmentRows) {
+      if (!(row.data as Shipment).packing) continue;
+      const projection = await readShipmentPricingProjection(
+        db,
+        row.data as Shipment,
+        row.version,
+        scope
+      );
+      const visible = [projection.source, projection.destination].filter(
+        (item): item is import("@shared/shipmentPricing").PriceProjection =>
+          Boolean(item)
+      );
+      if (visible.length) {
+        pricingByShipment.set(
+          projection.shipmentId,
+          Object.fromEntries(visible.map(item => [item.side, item]))
+        );
+        pricingProjections.push(...visible);
+      }
+    }
+  }
+  const projectionFor = (shipment: Shipment, side: "source" | "destination") =>
+    pricingByShipment.get(shipment.id)?.[side];
   const snapshot = {
     invoices,
     entries,
@@ -322,7 +363,8 @@ export async function financeSnapshot(
       ? deriveShipmentReceivables(
           shipments,
           scope.offices === null ? null : scope.offices,
-          persistedInvoices
+          persistedInvoices,
+          projectionFor
         )
       : [],
     shipmentReceivables: financeCan(
@@ -333,9 +375,11 @@ export async function financeSnapshot(
       ? deriveShipmentReceivables(
           shipments,
           scope.offices === null ? null : scope.offices,
-          persistedInvoices
+          persistedInvoices,
+          projectionFor
         )
       : [],
+    pricingProjections,
   } satisfies FinanceSnapshot;
   return financeSnapshotSchema.parse(snapshot) as FinanceSnapshot;
 }
@@ -350,17 +394,19 @@ function invoiceFinance(invoice: Invoice): FinancialInvoiceDetails {
 
 function assertNewShippingPriceApproved(
   input: Extract<FinanceMutationCommand, { kind: "invoice" }>["payload"],
-  shipment: Shipment
+  shipment: Shipment,
+  projection?: import("@shared/shipmentPricing").PriceProjection | null
 ) {
   if (input.chargeKind !== "shipping") return;
   const packing = shipment.packing;
   if (!packing) throw new Error("shipment_price_unapproved");
   const selectedPerKg =
-    input.currency === "MRU"
+    projection?.pricePerKg ??
+    (input.currency === "MRU"
       ? packing.pricePerKgMRU
       : input.currency === sourceCurrency[packing.source]
         ? packing.pricePerKg
-        : undefined;
+        : undefined);
   if (!(selectedPerKg !== undefined && selectedPerKg > 0))
     throw new Error("shipment_price_unapproved");
   // The stored rate is authoritative: creation and explicit finance commands
@@ -417,6 +463,9 @@ async function applyInvoice(
     throw new Error("finance_forbidden");
   let shipment: Shipment | undefined;
   let shipmentRow: any;
+  let pricingProjection:
+    | import("@shared/shipmentPricing").PriceProjection
+    | null = null;
   if (input.chargeKind === "shipping") {
     const found = await shipmentFor(tx, input.shipmentId!);
     shipment = found.shipment;
@@ -434,9 +483,19 @@ async function applyInvoice(
       )
     )
       throw new Error("finance_forbidden");
-    assertNewShippingPriceApproved(input, shipment);
+    pricingProjection = await readPriceProjection(
+      tx,
+      shipment,
+      shipmentRow.version,
+      input.currency === "MRU" ? "destination" : "source"
+    );
+    assertNewShippingPriceApproved(input, shipment, pricingProjection);
   }
-  const calculated = calculateFinanceInvoice(input, shipment);
+  const calculated = calculateFinanceInvoice(
+    input,
+    shipment,
+    pricingProjection
+  );
   const total = calculated.totalAmount;
   const paidAmount = input.paymentMode === "on_account" ? 0 : total;
   const issuingOfficeId = input.issuingOfficeId;
@@ -1021,82 +1080,55 @@ async function applyShipmentPrice(
   command: Extract<FinanceMutationCommand, { kind: "shipment_price" }>
 ) {
   assertFinanceCommand(scope, command);
-  const input = shipmentPriceInputSchema.parse(command.payload);
-  const found = await shipmentFor(tx, input.shipmentId);
+  // Classify the explicit override contract before Zod validates the numeric
+  // rate. Otherwise a legacy zero-rate draft is surfaced as a generic
+  // finance_failed error instead of a reviewable, non-mutating conflict.
+  if (
+    command.payload.side === undefined ||
+    command.payload.reason === undefined ||
+    command.payload.expectedPricingRevision === undefined
+  )
+    throw new Error("shipment_price_override_fields_required");
+  if (!(command.payload.pricePerKg > 0)) throw new Error("invalid_rate");
+  const parsed = shipmentPriceInputSchema.parse(command.payload);
+  const found = await shipmentFor(tx, parsed.shipmentId);
   const shipment = found.shipment;
-  if (shipment.deleted || !shipment.packing)
-    throw new Error("shipment_unavailable");
-  const sourceOffice = shipment.packing.source as OfficeId;
-  if (sourceOffice !== input.sourceOfficeId)
-    throw new Error("shipment_source_mismatch");
-  employeeFinanceOffice(scope, sourceOffice);
-  if ((found.row.version as number) !== input.expectedVersion)
+  if (!shipment.packing) throw new Error("shipment_unavailable");
+  if (parsed.side === undefined) {
+    const original = shipment.packing.pricePerKg;
+    const snapshot = shipment.packing.rateSnapshot?.sourceRate;
+    if (
+      original > 0 &&
+      snapshot?.currency === sourceCurrency[shipment.packing.source] &&
+      snapshot.unit === "kg" &&
+      snapshot.amount === original &&
+      parsed.pricePerKg !== original
+    )
+      throw new Error("shipment_tariff_frozen");
+    parseExplicitShipmentPriceInput(parsed);
+  }
+  const input = parseExplicitShipmentPriceInput(parsed);
+  const original =
+    input.side === "source"
+      ? shipment.packing.pricePerKg
+      : (shipment.packing.pricePerKgMRU ?? 0);
+  const snapshot =
+    input.side === "source"
+      ? shipment.packing.rateSnapshot?.sourceRate
+      : shipment.packing.rateSnapshot?.nouakchottRate;
+  const expectedCurrency =
+    input.side === "source" ? sourceCurrency[shipment.packing.source] : "MRU";
+  if (
+    original > 0 &&
+    snapshot?.currency === expectedCurrency &&
+    snapshot.unit === "kg" &&
+    snapshot.amount === original &&
+    input.pricePerKg !== original
+  )
+    throw new Error("shipment_tariff_frozen");
+  if (found.row.version !== input.expectedVersion)
     throw new Error("version_conflict");
-  const sourceSnapshot = shipment.packing.rateSnapshot?.sourceRate;
-  if (
-    shipment.packing.pricePerKg > 0 &&
-    sourceSnapshot?.currency === sourceCurrency[shipment.packing.source] &&
-    sourceSnapshot.unit === "kg" &&
-    sourceSnapshot.amount === shipment.packing.pricePerKg &&
-    input.pricePerKg !== shipment.packing.pricePerKg
-  )
-    throw new Error("shipment_tariff_frozen");
-  const mruSnapshot = shipment.packing.rateSnapshot?.nouakchottRate;
-  if (
-    input.pricePerKgMRU !== undefined &&
-    (shipment.packing.pricePerKgMRU ?? 0) > 0 &&
-    mruSnapshot?.currency === "MRU" &&
-    mruSnapshot.unit === "kg" &&
-    mruSnapshot.amount === shipment.packing.pricePerKgMRU &&
-    input.pricePerKgMRU !== shipment.packing.pricePerKgMRU
-  )
-    throw new Error("shipment_tariff_frozen");
-  if (
-    shipment.status !== "قيد التجهيز" &&
-    ((shipment.packing.pricePerKg > 0 &&
-      input.pricePerKg !== shipment.packing.pricePerKg) ||
-      ((shipment.packing.pricePerKgMRU ?? 0) > 0 &&
-        input.pricePerKgMRU !== undefined &&
-        input.pricePerKgMRU !== shipment.packing.pricePerKgMRU))
-  )
-    throw new Error("shipment_not_open");
-  const nextPacking = {
-    ...shipment.packing,
-    pricePerKg: input.pricePerKg,
-    ...(input.pricePerKgMRU === undefined
-      ? {}
-      : { pricePerKgMRU: input.pricePerKgMRU }),
-    updatedAt: isoNow(),
-  };
-  const next = canonicalPackingShipment({ ...shipment, packing: nextPacking });
-  await tx
-    .update(records)
-    .set({ version: found.row.version + 1, data: next, updatedBy: user.id })
-    .where(eq(records.id, found.row.id));
-  await tx.insert(shipmentTariffSnapshots).values({
-    id: `shipment-tariff:${command.id}`,
-    shipmentId: shipment.id,
-    officeId: input.sourceOfficeId,
-    serviceType: shipment.packing.service ?? "airRegular",
-    currency: sourceCurrency[shipment.packing.source],
-    pricePerKg: input.pricePerKg.toFixed(2),
-    pricePerKgMRU:
-      input.pricePerKgMRU === undefined ? null : input.pricePerKgMRU.toFixed(2),
-    capturedBy: user.id,
-    data: { commandId: command.id, expectedVersion: input.expectedVersion },
-  });
-  await appendAudit(tx, {
-    actor: { id: user.id, name: actorName(user), role: scope.role! },
-    entity: "shipment",
-    recordId: shipment.id,
-    action: "shipment_price",
-    before: shipment,
-    after: next,
-    beforeVersion: found.row.version,
-    afterVersion: found.row.version + 1,
-    requestKey: `finance:${command.id}`,
-  });
-  return { entries: [] as FinanceEntry[] };
+  return applyShipmentPriceOverride(tx, user, scope, command);
 }
 
 export async function applyFinanceCommand(

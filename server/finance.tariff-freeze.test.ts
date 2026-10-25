@@ -92,7 +92,7 @@ describe("published shipment tariff freeze", () => {
         { role: "accountant", offices: ["dubai"], homeOffice: "dubai" },
         command
       )
-    ).rejects.toThrow("shipment_tariff_frozen");
+    ).rejects.toThrow("shipment_price_override_fields_required");
     expect(row.data.packing.pricePerKg).toBe(37);
   });
 });

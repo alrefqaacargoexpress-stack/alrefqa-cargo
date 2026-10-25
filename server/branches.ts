@@ -67,6 +67,8 @@ import { hideFinance, publicRecord, roleForUser } from "./operations";
 import { actorFromUser } from "./tracking";
 import { rememberOfficeTariff } from "./officeTariffs";
 import { changedOfficeRateViolations } from "@shared/officeRatePolicy";
+import { readShipmentPricingProjection } from "./shipmentPricing";
+import type { PriceProjection } from "@shared/shipmentPricing";
 
 export type OfficeScope = {
   role: AppRole | null;
@@ -489,6 +491,7 @@ export async function dashboardData(
   const retired = await loadLifecycle(db);
   const rows = await db.select().from(records);
   const shipments: Shipment[] = [];
+  const pricingProjections: PriceProjection[] = [];
   const accounts: Account[] = [];
   const invoices: Invoice[] = [];
   for (const row of rows) {
@@ -500,7 +503,23 @@ export async function dashboardData(
       continue;
     if (!recordVisibleInOffice(scope, officeId, row.entity as Entity, data))
       continue;
-    if (row.entity === "shipment")
+    if (row.entity === "shipment") {
+      if (
+        permissionAllowed(scope, "shipment_prices", "view") &&
+        (data as Shipment).packing
+      ) {
+        const projection = await readShipmentPricingProjection(
+          db,
+          data as Shipment,
+          row.version,
+          scope
+        );
+        pricingProjections.push(
+          ...[projection.source, projection.destination].filter(
+            (item): item is PriceProjection => Boolean(item)
+          )
+        );
+      }
       shipments.push(
         hideForOfficeScope(
           { ...data, scope: "shared", version: row.version } as Shipment,
@@ -508,7 +527,7 @@ export async function dashboardData(
           scope.offices
         )
       );
-    else if (
+    } else if (
       row.entity === "account" &&
       permissionAllowed(scope, "customers", "view")
     )
@@ -533,6 +552,7 @@ export async function dashboardData(
     accounts,
     invoices,
     financial: canReadAnyFinance(scope),
+    pricingProjections,
   };
 }
 

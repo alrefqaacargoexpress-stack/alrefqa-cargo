@@ -1,22 +1,11 @@
 import { useEffect } from "react";
 import { Link, useLocation, useSearch } from "wouter";
-import {
-  BarChart3,
-  BookOpen,
-  ClipboardList,
-  FilePlus2,
-  Landmark,
-  PackagePlus,
-  Settings2,
-  ShieldCheck,
-  Truck,
-  Users,
-  Warehouse,
-} from "lucide-react";
+import { Package, Warehouse } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { AppRole } from "@shared/operations";
 import { permissionAllowed, type PermissionMap } from "@shared/permissions";
 import { asPermissionSubject } from "@/lib/offlineAccess";
+import { roleWorkspaceTasks } from "@/lib/roleWorkspace";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useOperationsWorkspace } from "@/hooks/useOperationsWorkspace";
 import PackingLayout from "@/components/packing/PackingLayout";
@@ -139,96 +128,80 @@ export function operationActionsForRole(
   canUpdateTracking?: boolean,
   permissions?: PermissionMap | null
 ): Action[] {
-  const actions: Action[] = [];
   const subject = asPermissionSubject(role, offices as never, permissions);
-  const nouakchottStaff =
-    role === "staff" && offices?.length === 1 && offices[0] === "nouakchott";
-  if (
-    nouakchottStaff &&
-    (permissionAllowed(subject, "storage", "manage") ||
-      permissions === undefined)
-  ) {
-    actions.push({
-      href: "/operations/warehouse",
-      label: c.warehouse ?? "Warehouse",
-      icon: Warehouse,
-    });
-    return actions;
-  }
-  if (
-    permissionAllowed(subject, "shipments", "view") ||
-    (permissions === undefined &&
-      ["admin", "office_manager", "staff"].includes(role ?? ""))
-  ) {
-    if (
-      permissionAllowed(subject, "shipments", "manage") ||
-      (permissions === undefined &&
-        ["admin", "office_manager", "staff"].includes(role ?? ""))
-    )
-      actions.push({
-        href: "/operations/shipments/new",
-        label: c.newShipment,
-        icon: PackagePlus,
-      });
-    actions.push({
-      href: "/operations/shipments",
-      label: c.shipments,
-      icon: Truck,
-    });
-  }
-  if (
-    permissionAllowed(subject, "customers", "view") ||
-    (permissions === undefined &&
-      role &&
-      role !== "viewer" &&
-      (role !== "staff" || offices === undefined))
-  ) {
-    actions.push({
-      href: "/operations/customers",
-      label: c.customers,
-      icon: Users,
-    });
-  }
-  if (
-    permissionAllowed(subject, "invoices", "view") ||
-    (permissions === undefined &&
-      ["admin", "office_manager", "accountant"].includes(role ?? ""))
-  ) {
-    actions.push(
-      { href: "/operations/billing", label: c.invoice, icon: FilePlus2 },
-      { href: "/operations/finance", label: c.offices, icon: Landmark }
+  const effectiveSubject = { ...subject, canUpdateTracking };
+  if (permissions === undefined) {
+    // Keep the public helper backwards compatible for callers that have not
+    // loaded access yet; the live workspace always supplies the access map.
+    const legacy: Array<[keyof ActionCopy, string]> | null =
+      role === "admin"
+        ? [
+            ["newShipment", "/operations/shipments/new"],
+            ["shipments", "/operations/shipments"],
+            ["customers", "/operations/customers"],
+            ["invoice", "/operations/billing"],
+            ["offices", "/operations/finance"],
+            ["tracking", "/operations/tracking"],
+            ["settings", "/operations/settings"],
+          ]
+        : role === "staff"
+          ? [
+              ["newShipment", "/operations/shipments/new"],
+              ["shipments", "/operations/shipments"],
+              ["customers", "/operations/customers"],
+            ]
+          : role === "viewer"
+            ? [["tracking", "/operations/tracking"]]
+            : null;
+    if (legacy)
+      return legacy.map(([key, href]) => ({
+        href,
+        label: c[key] ?? key,
+        icon: Package,
+      }));
+    return roleWorkspaceTasks({ ...effectiveSubject, permissions: null }).map(
+      task => ({
+        href: task.href,
+        label:
+          task.id === "new-shipment"
+            ? c.newShipment
+            : task.id === "shipments"
+              ? c.shipments
+              : task.id === "customers"
+                ? c.customers
+                : task.id === "tracking"
+                  ? c.tracking
+                  : task.id === "settings"
+                    ? c.settings
+                    : task.id === "offices"
+                      ? c.offices
+                      : task.id === "warehouse-storage"
+                        ? (c.warehouse ?? "Warehouse")
+                        : task.id,
+        icon: task.id.startsWith("warehouse") ? Warehouse : Package,
+      })
     );
   }
-  if (
-    permissionAllowed(subject, "tracking", "view") ||
-    (permissions === undefined &&
-      [
-        "admin",
-        "office_manager",
-        "tracking_staff",
-        "supervisor",
-        "viewer",
-      ].includes(role ?? "")) ||
-    (role === "staff" && canUpdateTracking === true)
-  ) {
-    actions.push({
-      href: "/operations/tracking",
-      label: c.tracking,
-      icon: ClipboardList,
-    });
-  }
-  if (
-    permissionAllowed(subject, "office_settings", "manage") ||
-    (permissions === undefined &&
-      ["admin", "office_manager"].includes(role ?? ""))
-  ) {
-    actions.push({
-      href: "/operations/settings",
-      label: c.settings,
-      icon: Settings2,
-    });
-  }
-  return actions;
+  return roleWorkspaceTasks(effectiveSubject).map(task => ({
+    href: task.href,
+    label:
+      task.id === "new-shipment"
+        ? c.newShipment
+        : task.id === "shipments"
+          ? c.shipments
+          : task.id === "customers"
+            ? c.customers
+            : task.id === "tracking"
+              ? c.tracking
+              : task.id === "settings"
+                ? c.settings
+                : task.id === "offices"
+                  ? c.offices
+                  : task.id === "warehouse-storage"
+                    ? (c.warehouse ?? "Warehouse")
+                    : task.id,
+    icon: task.id.startsWith("warehouse") ? Warehouse : Package,
+  }));
 }
 
 export default function OperationsHome() {
@@ -288,26 +261,6 @@ export default function OperationsHome() {
             {c.noActions}
           </p>
         )}
-        <details className="rounded-2xl border border-[#dce4e7] bg-white p-4">
-          <summary className="flex cursor-pointer list-none items-center gap-2 font-black text-[#092d50]">
-            <BarChart3 size={18} />
-            {c.more}
-          </summary>
-          <div className="mt-4 flex flex-wrap gap-2">
-            <Link href="/operations/advanced" className={packingSecondaryClass}>
-              <ShieldCheck size={15} /> {c.advanced}
-            </Link>
-            <Link
-              href="/operations/advanced?tab=accounts"
-              className={packingSecondaryClass}
-            >
-              <BookOpen size={15} /> {c.excel}
-            </Link>
-            <Link href="/operations/reports" className={packingSecondaryClass}>
-              <BarChart3 size={15} /> {c.reports}
-            </Link>
-          </div>
-        </details>
       </div>
     </PackingLayout>
   );

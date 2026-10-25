@@ -16,6 +16,7 @@ import {
   cashMovements,
   walletMovements,
   officePaymentSettings,
+  shipmentPriceOverrides,
 } from "../drizzle/schema";
 import type { FinanceCommand } from "../shared/finance";
 import { blankPermissions } from "../shared/permissions";
@@ -50,6 +51,7 @@ function database() {
     [financeEntries, []],
     [financeGoods, []],
     [financeReceipts, []],
+    [shipmentPriceOverrides, []],
   ]);
   const db: any = { rows, events: [] };
   db.select = () => ({
@@ -91,7 +93,12 @@ function database() {
             : table === financeReceipts
               ? old.actorId === value.actorId &&
                 old.commandId === value.commandId
-              : old.id === value.id
+              : table === shipmentPriceOverrides
+                ? old.id === value.id ||
+                  (old.shipmentId === value.shipmentId &&
+                    old.side === value.side &&
+                    old.revision === value.revision)
+                : old.id === value.id
       );
       if (duplicate) throw new Error("duplicate");
       list.push(structuredClone({ id: value.id ?? list.length + 1, ...value }));
@@ -595,12 +602,12 @@ it("posts an opening balance once, replays the receipt, and rolls back audit fai
   expect(db.rows.get(financeReceipts)).toHaveLength(1);
 });
 
-it("sets zero shipment prices only from the source accountant and rejects a foreign office", async () => {
+it("blocks legacy zero shipment prices, then requires an explicit positive override", async () => {
   const db = database();
   seed(db);
   db.rows.get(records)[1].data.status = "قيد التجهيز";
   db.rows.get(records)[1].data.journey.stage = "preparing";
-  const command: FinanceCommand = {
+  const legacy: FinanceCommand = {
     id: "price-command",
     kind: "shipment_price",
     createdAt: now,
@@ -608,27 +615,110 @@ it("sets zero shipment prices only from the source accountant and rejects a fore
       shipmentId: "s1",
       sourceOfficeId: "dubai",
       pricePerKg: 0,
-      pricePerKgMRU: 0,
       expectedVersion: 1,
     },
   };
-  const applied = await financeSync(
+  const original = structuredClone(db.rows.get(records)[1].data.packing);
+  const blockedLegacy = await financeSync(
     db,
     user,
     { role: "accountant", offices: ["dubai"], homeOffice: "dubai" },
-    [command]
+    [legacy]
   );
-  expect(applied.conflicts).toEqual([]);
-  expect(
-    db.rows.get(records).find((row: any) => row.recordId === "s1").data.packing
-  ).toMatchObject({ pricePerKg: 0, pricePerKgMRU: 0 });
-  const foreign = await financeSync(
+  expect(blockedLegacy.conflicts[0].code).toBe(
+    "shipment_price_override_fields_required"
+  );
+  expect(db.rows.get(records)[1].data.packing).toEqual(original);
+
+  const zeroOverride: FinanceCommand = {
+    ...legacy,
+    id: "price-zero-explicit",
+    payload: {
+      shipmentId: "s1",
+      side: "source",
+      pricePerKg: 0,
+      reason: "reviewed zero is invalid",
+      expectedPricingRevision: 0,
+      expectedVersion: 1,
+    },
+  };
+  const blockedZero = await financeSync(
+    db,
+    user,
+    { role: "accountant", offices: ["dubai"], homeOffice: "dubai" },
+    [zeroOverride]
+  );
+  expect(blockedZero.conflicts[0].code).toBe("invalid_rate");
+  expect(db.rows.get(records)[1].data.packing).toEqual(original);
+
+  const foreignCommand = {
+    ...legacy,
+    id: "price-foreign",
+    payload: {
+      shipmentId: "s1",
+      side: "source" as const,
+      pricePerKg: 11,
+      reason: "reviewed source correction",
+      expectedPricingRevision: 0,
+      expectedVersion: 1,
+    },
+  } satisfies FinanceCommand;
+  const foreignResult = await financeSync(
     db,
     user,
     { role: "accountant", offices: ["nouakchott"], homeOffice: "nouakchott" },
-    [{ ...command, id: "price-foreign" }]
+    [foreignCommand]
   );
-  expect(foreign.conflicts[0].code).toBe("financial_office_mismatch");
+  expect(foreignResult.conflicts[0].code).toBe(
+    "shipment_price_office_forbidden"
+  );
+});
+
+it("applies an explicit shipment price through financeSync and replays its receipt safely", async () => {
+  const db = database();
+  seed(db);
+  db.rows.get(records)[1].data.status = "قيد التجهيز";
+  db.rows.get(records)[1].data.journey.stage = "preparing";
+  const command: FinanceCommand = {
+    id: "price-sync-source",
+    kind: "shipment_price",
+    createdAt: now,
+    payload: {
+      shipmentId: "s1",
+      side: "source",
+      pricePerKg: 40,
+      reason: "approved source correction",
+      expectedPricingRevision: 0,
+      expectedVersion: 1,
+    },
+  };
+  const originalPacking = structuredClone(db.rows.get(records)[1].data.packing);
+  const sourceScope = {
+    role: "accountant" as const,
+    offices: ["dubai" as const],
+    homeOffice: "dubai" as const,
+  };
+  const first = await financeSync(db, user, sourceScope, [command]);
+  expect(first.conflicts).toEqual([]);
+  expect(first.applied[0]?.priceProjection).toMatchObject({
+    side: "source",
+    officeId: "dubai",
+    pricePerKg: 40,
+    expectedPricingRevision: 1,
+  });
+  expect(db.rows.get(records)[1].data.packing).toEqual(originalPacking);
+  expect(db.rows.get(records)[1].version).toBe(1);
+  expect(db.rows.get(shipmentPriceOverrides)).toHaveLength(1);
+  expect(db.rows.get(financeReceipts)).toHaveLength(1);
+
+  const replay = await financeSync(db, user, sourceScope, [command]);
+  expect(replay.conflicts).toEqual([]);
+  expect(replay.applied[0]?.priceProjection).toMatchObject({
+    side: "source",
+    pricePerKg: 40,
+  });
+  expect(db.rows.get(shipmentPriceOverrides)).toHaveLength(1);
+  expect(db.rows.get(financeReceipts)).toHaveLength(1);
 });
 
 it("rejects all financial commands and replay for managers or accountants without one office", async () => {
@@ -726,7 +816,7 @@ it("rejects a delegated manager command that escapes its office scope", async ()
   expect(db.rows.get(financeReceipts)).toEqual([]);
 });
 
-it("prices an unpriced sent shipment once and keeps the authorized established rate locked", async () => {
+it("rejects shipment price overrides after a shipment leaves preparing without mutation", async () => {
   const db = database();
   seed(db);
   const stored = db.rows.get(records)[1].data;
@@ -734,14 +824,17 @@ it("prices an unpriced sent shipment once and keeps the authorized established r
   stored.packing.pricePerKgMRU = 0;
   stored.amount = 0;
   stored.packing.cartons[0].closed = true;
+  stored.status = "جاهزة للتسليم";
   const command: FinanceCommand = {
     id: "price-initial-sent",
     kind: "shipment_price",
     createdAt: now,
     payload: {
       shipmentId: "s1",
-      sourceOfficeId: "dubai",
       pricePerKg: 10,
+      side: "source",
+      reason: "approved source correction",
+      expectedPricingRevision: 0,
       expectedVersion: 1,
     },
   };
@@ -750,20 +843,13 @@ it("prices an unpriced sent shipment once and keeps the authorized established r
     offices: ["dubai" as const],
     homeOffice: "dubai" as const,
   };
-  expect(
-    (await financeSync(db, user, sourceScope, [command])).conflicts
-  ).toEqual([]);
-  expect(db.rows.get(records)[1].data.amount).toBe(22);
-  if (command.kind !== "shipment_price") throw new Error("Invalid fixture");
-  const changed = {
-    ...command,
-    id: "price-revised-sent",
-    payload: { ...command.payload, expectedVersion: 2, pricePerKg: 11 },
-  };
-  const blocked = await financeSync(db, user, sourceScope, [changed]);
-  expect(blocked.conflicts[0].code).toBe("shipment_not_open");
-  expect(db.rows.get(records)[1].data.packing.pricePerKg).toBe(10);
-  expect(db.rows.get(records)[1].version).toBe(2);
+  const originalPacking = structuredClone(stored.packing);
+  const blocked = await financeSync(db, user, sourceScope, [command]);
+  expect(blocked.conflicts[0].code).toBe("shipment_price_not_preparing");
+  expect(stored.packing).toEqual(originalPacking);
+  expect(db.rows.get(records)[1].version).toBe(1);
+  expect(db.rows.get(shipmentPriceOverrides)).toHaveLength(0);
+  expect(db.rows.get(financeReceipts)).toHaveLength(0);
 });
 
 it("posts a source customer wallet receipt to the source office without cash or a fictional invoice", async () => {

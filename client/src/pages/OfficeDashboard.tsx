@@ -22,23 +22,23 @@ import {
 import { officeNames } from "@shared/branches";
 import {
   mapsHref,
-  canConfirmOfficeArrival,
   officeIds,
   type OfficeId,
   type OfficeDashboardData,
 } from "@shared/branches";
 import {
-  canViewFinance,
   type Entity,
   type EntityRecord,
   type Shipment,
 } from "@shared/operations";
+import { asPermissionSubject } from "@/lib/offlineAccess";
+import { permissionAllowed } from "@shared/permissions";
 
-function officeFromLocation(location: string): OfficeId {
+function officeFromLocation(location: string): OfficeId | null {
   const value = new URLSearchParams(location).get("office");
   return value && officeIds.includes(value as OfficeId)
     ? (value as OfficeId)
-    : "nouakchott";
+    : null;
 }
 
 export default function OfficeDashboard() {
@@ -47,28 +47,23 @@ export default function OfficeDashboard() {
   const workspace = useOperationsWorkspace();
   const [, navigate] = useLocation();
   const query = useSearch();
-  const [officeId, setOfficeId] = useState<OfficeId>(() =>
+  const [officeId, setOfficeId] = useState<OfficeId | null>(() =>
     officeFromLocation(query)
   );
   const officeOptions =
-    workspace.role === "admin"
-      ? [...officeIds]
-      : (workspace.offices ?? []).filter(
-          office =>
-            workspace.role !== "office_manager" || office !== "nouakchott"
-        );
+    workspace.role === "admin" ? [...officeIds] : (workspace.offices ?? []);
   const [notice, setNotice] = useState<string | null>(null);
   const [arrivalShipment, setArrivalShipment] = useState<Shipment | null>(null);
   const utils = trpc.useUtils();
   const dashboard = trpc.branches.dashboard.useQuery(
-    { officeId },
+    { officeId: officeId ?? "nouakchott" },
     {
       enabled: Boolean(
-        workspace.role &&
+        officeId &&
+          workspace.role &&
           workspace.online &&
           !workspace.localOnly &&
-          (workspace.role !== "office_manager" ||
-            officeOptions.includes(officeId))
+          officeOptions.includes(officeId)
       ),
       retry: false,
       refetchOnWindowFocus: false,
@@ -79,10 +74,12 @@ export default function OfficeDashboard() {
 
   useEffect(() => {
     const requested = officeFromLocation(query);
-    const next = officeOptions.includes(requested)
-      ? requested
-      : officeOptions[0];
+    const next =
+      requested && officeOptions.includes(requested)
+        ? requested
+        : (officeOptions[0] ?? null);
     if (next && next !== officeId) setOfficeId(next);
+    if (!next && officeId !== null) setOfficeId(null);
   }, [query, officeOptions.join(","), officeId]);
 
   const selectOffice = (next: OfficeId) => {
@@ -92,11 +89,18 @@ export default function OfficeDashboard() {
   };
 
   const canConfirm =
-    canConfirmOfficeArrival(workspace.role, workspace.offices) &&
-    officeId === "nouakchott";
-  const financeVisible = Boolean(
-    dashboard.data?.financial && canViewFinance(workspace.role)
-  );
+    permissionAllowed(
+      asPermissionSubject(
+        workspace.role,
+        workspace.offices,
+        workspace.permissions,
+        workspace.homeOffice,
+        workspace.canUpdateTracking
+      ),
+      "arrival",
+      "manage"
+    ) && officeId === "nouakchott";
+  const financeVisible = Boolean(dashboard.data?.financial);
   const unknownRecords = useMemo(() => {
     if (workspace.role !== "admin") return [];
     const rows: Array<{ entity: Entity; record: EntityRecord }> = [];
@@ -117,6 +121,7 @@ export default function OfficeDashboard() {
   }, [workspace.role, workspace.state]);
 
   const refreshBranchData = async () => {
+    if (!officeId) return;
     await Promise.all([
       utils.branches.dashboard.invalidate({ officeId }),
       utils.operations.snapshot.invalidate(),
@@ -156,7 +161,8 @@ export default function OfficeDashboard() {
   };
 
   const handleAssign = async (entity: Entity, record: EntityRecord) => {
-    if (!record.version) return;
+    if (!record.version || !officeId || !officeOptions.includes(officeId))
+      return;
     if (!window.confirm(`${c.assignConfirm}: ${recordLabel(entity, record)}`))
       return;
     const reason = window.prompt(c.assignPrompt)?.trim();
@@ -188,7 +194,7 @@ export default function OfficeDashboard() {
             {c.office}
             <select
               aria-label={c.office}
-              value={officeId}
+              value={officeId ?? ""}
               onChange={event => selectOffice(event.target.value as OfficeId)}
               className="min-h-11 rounded-xl border border-[#cbd9de] bg-white px-3 text-sm font-semibold"
             >
@@ -200,7 +206,7 @@ export default function OfficeDashboard() {
             </select>
           </label>
           <div className="flex flex-wrap gap-2 text-xs">
-            {workspace.canEditShipments && (
+            {workspace.canEditShipments && officeId && (
               <Link
                 href={`/operations/shipments/new?office=${officeId}`}
                 className="rounded-xl bg-[#092d50] px-3 py-2 font-bold text-white"
@@ -208,17 +214,26 @@ export default function OfficeDashboard() {
                 {c.newShipment}
               </Link>
             )}
-            {["admin", "office_manager", "accountant", "staff"].includes(
-              workspace.role ?? ""
-            ) && (
-              <Link
-                href={`/operations?tab=accounts&office=${officeId}`}
-                className="rounded-xl border border-[#cbd9de] px-3 py-2 font-bold text-[#2e6280]"
-              >
-                {c.accountsLink}
-              </Link>
-            )}
-            {financeVisible && (
+            {permissionAllowed(
+              asPermissionSubject(
+                workspace.role,
+                workspace.offices,
+                workspace.permissions,
+                workspace.homeOffice,
+                workspace.canUpdateTracking
+              ),
+              "customers",
+              "view"
+            ) &&
+              officeId && (
+                <Link
+                  href={`/operations?tab=accounts&office=${officeId}`}
+                  className="rounded-xl border border-[#cbd9de] px-3 py-2 font-bold text-[#2e6280]"
+                >
+                  {c.accountsLink}
+                </Link>
+              )}
+            {financeVisible && officeId && (
               <Link
                 href={`/operations/billing?office=${officeId}`}
                 className="rounded-xl border border-[#cbd9de] px-3 py-2 font-bold text-[#2e6280]"
@@ -226,7 +241,7 @@ export default function OfficeDashboard() {
                 {c.invoicesLink}
               </Link>
             )}
-            {financeVisible && (
+            {financeVisible && officeId && (
               <Link
                 href={`/operations/finance?office=${officeId}`}
                 className="rounded-xl border border-[#cbd9de] px-3 py-2 font-bold text-[#2e6280]"
@@ -241,23 +256,23 @@ export default function OfficeDashboard() {
                 }
               </Link>
             )}
-            {(workspace.role === "admin" ||
-              workspace.role === "office_manager") && (
-              <Link
-                href={`/operations/settings?office=${officeId}`}
-                className="rounded-xl border border-[#cbd9de] px-3 py-2 font-bold text-[#2e6280]"
-              >
-                {c.settingsLink}
-              </Link>
-            )}
-            {workspace.role === "staff" &&
-              workspace.offices?.length === 1 &&
-              workspace.offices[0] === "nouakchott" && (
+            {permissionAllowed(
+              asPermissionSubject(
+                workspace.role,
+                workspace.offices,
+                workspace.permissions,
+                workspace.homeOffice,
+                workspace.canUpdateTracking
+              ),
+              "office_settings",
+              "manage"
+            ) &&
+              officeId && (
                 <Link
-                  href="/operations/warehouse"
+                  href={`/operations/settings?office=${officeId}`}
                   className="rounded-xl border border-[#cbd9de] px-3 py-2 font-bold text-[#2e6280]"
                 >
-                  تخزين نواكشوط
+                  {c.settingsLink}
                 </Link>
               )}
           </div>
@@ -279,49 +294,52 @@ export default function OfficeDashboard() {
           </Panel>
         )}
 
-        {dashboard.data && (
-          <>
-            <ProfileCard data={dashboard.data} language={language} c={c} />
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <Metric
-                icon={<Package size={17} />}
-                label={c.shipments}
-                value={String(dashboard.data.shipments.length)}
+        {dashboard.data &&
+          officeId &&
+          officeOptions.includes(officeId) &&
+          workspace.accessReady && (
+            <>
+              <ProfileCard data={dashboard.data} language={language} c={c} />
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <Metric
+                  icon={<Package size={17} />}
+                  label={c.shipments}
+                  value={String(dashboard.data.shipments.length)}
+                />
+                <Metric
+                  icon={<Users size={17} />}
+                  label={c.accounts}
+                  value={String(dashboard.data.accounts.length)}
+                />
+                <Metric
+                  icon={<CircleDollarSign size={17} />}
+                  label={c.invoices}
+                  value={String(dashboard.data.invoices.length)}
+                />
+                <Metric
+                  icon={<MapPin size={17} />}
+                  label={c.office}
+                  value={officeNames[language][officeId]}
+                />
+              </div>
+              <ShipmentTable
+                shipments={dashboard.data.shipments}
+                language={language}
+                c={c}
+                canConfirm={canConfirm}
+                online={workspace.online}
+                busy={confirmArrival.isPending}
+                onConfirm={requestArrival}
               />
-              <Metric
-                icon={<Users size={17} />}
-                label={c.accounts}
-                value={String(dashboard.data.accounts.length)}
-              />
-              <Metric
-                icon={<CircleDollarSign size={17} />}
-                label={c.invoices}
-                value={String(dashboard.data.invoices.length)}
-              />
-              <Metric
-                icon={<MapPin size={17} />}
-                label={c.office}
-                value={officeNames[language][officeId]}
-              />
-            </div>
-            <ShipmentTable
-              shipments={dashboard.data.shipments}
-              language={language}
-              c={c}
-              canConfirm={canConfirm}
-              online={workspace.online}
-              busy={confirmArrival.isPending}
-              onConfirm={requestArrival}
-            />
-            {financeVisible ? (
-              <FinanceTables data={dashboard.data} c={c} />
-            ) : (
-              <Panel>{c.financeHidden}</Panel>
-            )}
-          </>
-        )}
+              {financeVisible ? (
+                <FinanceTables data={dashboard.data} c={c} />
+              ) : (
+                <Panel>{c.financeHidden}</Panel>
+              )}
+            </>
+          )}
 
-        {workspace.role === "admin" && (
+        {workspace.role === "admin" && officeId && (
           <UnassignedRecords
             records={unknownRecords}
             officeName={officeNames[language][officeId]}

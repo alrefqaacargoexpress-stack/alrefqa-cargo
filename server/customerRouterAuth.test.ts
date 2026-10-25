@@ -77,6 +77,14 @@ describe("customer and office router authorization without live database", () =>
     ).rejects.toMatchObject({ code: "BAD_REQUEST" });
     expect(mocks.getDb).not.toHaveBeenCalled();
   });
+  it("does not send a previous user's operations queue under another authenticated session", async () => {
+    await expect(
+      appRouter
+        .createCaller(context({ role: "admin", accountType: "employee" }))
+        .operations.sync({ changes: [], clientUserId: "8" })
+    ).rejects.toMatchObject({ message: "Operations session changed" });
+    expect(mocks.getDb).not.toHaveBeenCalled();
+  });
   it("preserves the public legacy no-input office call with safe metadata", async () => {
     const result = await appRouter.createCaller(context(null)).office.public();
     expect(result).toEqual({ office: "nouakchott", methods: [] });

@@ -7,6 +7,7 @@ import {
   type FinanceSnapshot,
   type FinanceSyncResult,
 } from "@shared/finance";
+import type { PriceProjection } from "@shared/shipmentPricing";
 import { withWorkspaceLock } from "./offlineStore";
 import {
   archiveRetirementConflicts,
@@ -180,6 +181,17 @@ export function applyFinanceSync(
       );
       return !current || (invoice.version ?? 0) >= (current.version ?? 0);
     });
+  const projections = new Map(
+    (workspace.snapshot.pricingProjections ?? []).map(item => [
+      `${item.shipmentId}:${item.side}`,
+      item,
+    ])
+  );
+  for (const receipt of result.applied) {
+    const projection = receipt.priceProjection as PriceProjection | undefined;
+    if (projection)
+      projections.set(`${projection.shipmentId}:${projection.side}`, projection);
+  }
   const next = {
     ...workspace,
     commands: workspace.commands.filter(
@@ -200,6 +212,7 @@ export function applyFinanceSync(
         result.applied.flatMap(r => r.entries)
       ),
       invoices: mergeById(workspace.snapshot.invoices, postedInvoices),
+      pricingProjections: [...projections.values()],
       lastReadAt: result.applied.length
         ? new Date().toISOString()
         : workspace.snapshot.lastReadAt,

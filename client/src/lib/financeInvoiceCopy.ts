@@ -55,6 +55,7 @@ export type FinanceInvoiceCopy = {
   decrease: string;
   total: string;
   rateMissing: string;
+  pricingPending: string;
   issuingOffice: string;
   financialOffice: string;
   employeeOffice: string;
@@ -139,6 +140,7 @@ const base: FinanceInvoiceCopy = {
   decrease: "",
   total: "",
   rateMissing: "",
+  pricingPending: "",
   issuingOffice: "",
   financialOffice: "",
   employeeOffice: "",
@@ -226,6 +228,8 @@ export const financeInvoiceCopy: Record<FinanceLanguage, FinanceInvoiceCopy> = {
     total: "الإجمالي",
     rateMissing:
       "لا يوجد سعر شحن بهذه العملة. اطلب من المدير إضافة السعر؛ لن يتم التحويل تلقائيًا.",
+    pricingPending:
+      "تغيير سعر الشحنة بانتظار إيصال الخادم؛ حدّث البيانات قبل إصدار الفاتورة.",
     issuingOffice: "مكتب الإصدار",
     financialOffice: "المكتب المالي",
     employeeOffice: "مكتب الموظف",
@@ -313,6 +317,8 @@ export const financeInvoiceCopy: Record<FinanceLanguage, FinanceInvoiceCopy> = {
     total: "Total",
     rateMissing:
       "No shipping rate exists in this currency. Ask an administrator; no conversion is applied.",
+    pricingPending:
+      "A shipment price change is awaiting the server receipt; refresh the data before issuing this invoice.",
     issuingOffice: "Issuing office",
     financialOffice: "Financial office",
     employeeOffice: "Employee office",
@@ -400,6 +406,7 @@ export const financeInvoiceCopy: Record<FinanceLanguage, FinanceInvoiceCopy> = {
     decrease: "减少 −",
     total: "总计",
     rateMissing: "该货币没有运费率。请联系管理员；不会自动换算。",
+    pricingPending: "货运价格更改正在等待服务器回执；刷新数据后再开具发票。",
     issuingOffice: "开票办公室",
     financialOffice: "财务办公室",
     employeeOffice: "员工办公室",
@@ -486,6 +493,8 @@ export const financeInvoiceCopy: Record<FinanceLanguage, FinanceInvoiceCopy> = {
     total: "Toplam",
     rateMissing:
       "Bu para biriminde gönderi ücreti yok. Yöneticiye başvurun; otomatik dönüşüm yok.",
+    pricingPending:
+      "Gönderi fiyatı değişikliği sunucu makbuzunu bekliyor; bu faturayı düzenlemeden önce verileri yenileyin.",
     issuingOffice: "Düzenleyen ofis",
     financialOffice: "Mali ofis",
     employeeOffice: "Çalışan ofisi",

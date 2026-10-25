@@ -90,9 +90,12 @@ export const trackingRequestSchema = z
     shipmentId: z.string().min(1).max(128),
     expectedVersion: z.number().int().positive(),
     command: trackingCommandSchema,
+    /** Optional client-side owner fence for queued commits. */
+    clientUserId: z.string().regex(/^\d+$/).optional(),
   })
   .strict();
 export type TrackingRequest = z.infer<typeof trackingRequestSchema>;
+export type TrackingCommitInput = TrackingRequest;
 export type TrackingSummary = {
   id: string;
   tracking: string;

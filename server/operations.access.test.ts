@@ -34,6 +34,7 @@ const rows = [
   },
 ];
 const transaction = vi.fn();
+const { getDb } = vi.hoisted(() => ({ getDb: vi.fn() }));
 function selected(table: unknown) {
   const values =
     table === memberRoles
@@ -52,9 +53,7 @@ function selected(table: unknown) {
   };
   return builder;
 }
-vi.mock("./db", () => ({
-  getDb: async () => ({ select: () => ({ from: selected }), transaction }),
-}));
+vi.mock("./db", () => ({ getDb }));
 import { appRouter } from "./routers";
 const user = {
   id: 99,
@@ -78,6 +77,11 @@ describe("Server-side role isolation", () => {
   beforeEach(() => {
     role = null;
     transaction.mockReset();
+    getDb.mockClear();
+    getDb.mockResolvedValue({
+      select: () => ({ from: selected }),
+      transaction,
+    });
   });
   it("rejects snapshots from unauthenticated sessions", async () => {
     await expect(caller(false).operations.snapshot()).rejects.toMatchObject({
@@ -88,6 +92,12 @@ describe("Server-side role isolation", () => {
     await expect(caller().operations.snapshot()).rejects.toMatchObject({
       code: "FORBIDDEN",
     });
+  });
+  it("rejects a mismatched read owner before opening the database", async () => {
+    await expect(
+      caller().operations.snapshot({ clientUserId: "100" })
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(getDb).not.toHaveBeenCalled();
   });
   it("does not expose financial accounts or invoices to warehouse staff", async () => {
     role = "staff";

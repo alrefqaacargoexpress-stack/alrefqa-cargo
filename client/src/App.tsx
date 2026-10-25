@@ -9,6 +9,7 @@ import { LanguageProvider, useLanguage } from "./contexts/LanguageContext";
 import { lazy, Suspense, useEffect } from "react";
 import AuthPage from "./pages/AuthPage";
 import { trpc } from "@/lib/trpc";
+import { WorkspaceProviders } from "@/components/providers";
 const AccountSecurity = lazy(() => import("./pages/AccountSecurity"));
 
 const Operations = lazy(() => import("./pages/Operations"));
@@ -48,11 +49,19 @@ function Router() {
   const needsSecurity = Boolean(
     me.data?.mustChangePassword || me.data?.emailEnrollmentOnly
   );
+  const customerOnStaffRoute = Boolean(
+    me.data?.accountType === "customer" &&
+      (location.startsWith("/operations") || location === "/admin")
+  );
   useEffect(() => {
     if (needsSecurity && location !== "/account/security")
       navigate("/account/security");
   }, [needsSecurity, location, navigate]);
+  useEffect(() => {
+    if (customerOnStaffRoute && !needsSecurity) navigate("/my-shipments");
+  }, [customerOnStaffRoute, needsSecurity, navigate]);
   if (needsSecurity && location !== "/account/security") return <PageLoading />;
+  if (customerOnStaffRoute) return <PageLoading />;
   return (
     <Switch>
       <Route path="/" component={Home} />
@@ -90,7 +99,9 @@ export default function App() {
           <TooltipProvider>
             <Toaster />
             <Suspense fallback={<PageLoading />}>
-              <Router />
+              <WorkspaceProviders>
+                <Router />
+              </WorkspaceProviders>
             </Suspense>
           </TooltipProvider>
         </ThemeProvider>

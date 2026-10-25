@@ -62,12 +62,6 @@ export default function Home() {
   });
   const loggedCustomer = me.data?.accountType === "customer";
   const loggedEmployee = me.data?.accountType === "employee";
-  const employeeAccess = trpc.operations.access.useQuery(undefined, {
-    enabled: loggedEmployee,
-    retry: false,
-    refetchOnWindowFocus: false,
-  });
-  const employeeReady = loggedEmployee && Boolean(employeeAccess.data?.role);
   const [menuOpen, setMenuOpen] = useState(false);
   const [inquiryName, setInquiryName] = useState("");
   const [inquiryPhone, setInquiryPhone] = useState("");
@@ -236,7 +230,7 @@ export default function Home() {
                 }
                 <Arrow size={15} className="ms-2" />
               </Link>
-            ) : employeeReady ? (
+            ) : loggedEmployee ? (
               <Link
                 href="/operations"
                 className="hidden rounded-full bg-[#092d50] px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-[#123f68] sm:inline-flex"
@@ -299,7 +293,7 @@ export default function Home() {
                     }[language]
                   }
                 </Link>
-              ) : employeeReady ? (
+              ) : loggedEmployee ? (
                 <Link href="/operations" onClick={() => setMenuOpen(false)}>
                   {copy.nav.operations}
                 </Link>

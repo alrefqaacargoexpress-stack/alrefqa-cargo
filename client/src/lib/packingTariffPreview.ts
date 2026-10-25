@@ -5,6 +5,10 @@ import {
   type PackedShipment,
   type PackingSession,
 } from "../../../shared/packing";
+import {
+  shipmentPricingTarget,
+  type PriceProjection,
+} from "../../../shared/shipmentPricing";
 
 export type PackingPricingView = {
   packingForDisplay: PackingSession;
@@ -27,7 +31,8 @@ const positiveRate = (value: unknown): value is number =>
 export function packingPricingView(
   shipment: PackedShipment,
   queue: readonly PendingChange[],
-  canViewFinance: boolean
+  canViewFinance: boolean,
+  projections: readonly PriceProjection[] = []
 ): PackingPricingView {
   const matching = queue.filter(
     change => change.entity === "shipment" && change.recordId === shipment.id
@@ -45,10 +50,34 @@ export function packingPricingView(
   const confirmed =
     shipment.scope === "shared" ||
     (Number.isInteger(shipment.version) && (shipment.version ?? 0) > 0);
+  const sourceTarget = shipmentPricingTarget(shipment, "source");
+  const destinationTarget = shipmentPricingTarget(shipment, "destination");
+  const sourceProjection = projections.find(
+    projection =>
+      projection.shipmentId === shipment.id &&
+      projection.side === "source" &&
+      projection.officeId === sourceTarget.officeId &&
+      projection.currency === sourceTarget.currency
+  );
+  const destinationProjection = projections.find(
+    projection =>
+      projection.shipmentId === shipment.id &&
+      projection.side === "destination" &&
+      projection.officeId === destinationTarget.officeId &&
+      projection.currency === destinationTarget.currency
+  );
   let packingForDisplay = shipment.packing;
   if (!canViewFinance || isPendingCreation) {
     const { pricePerKgMRU: _mru, ...packing } = shipment.packing;
     packingForDisplay = { ...packing, pricePerKg: 0 };
+  } else if (sourceProjection || destinationProjection) {
+    packingForDisplay = {
+      ...shipment.packing,
+      ...(sourceProjection ? { pricePerKg: sourceProjection.pricePerKg } : {}),
+      ...(destinationProjection
+        ? { pricePerKgMRU: destinationProjection.pricePerKg }
+        : {}),
+    };
   }
   const result = (): PackingPricingView => ({
     packingForDisplay,

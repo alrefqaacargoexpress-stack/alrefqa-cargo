@@ -1,5 +1,6 @@
 import type { FinanceCommand } from "./finance";
 import type { Invoice } from "./operations";
+import type { Shipment } from "./operations";
 import type { OfficeId } from "./branches";
 import type { PermissionKey } from "./permissions";
 
@@ -26,7 +27,8 @@ export function financeCommandPermissionKey(
 export function financeCommandOffice(
   command: FinanceCommand,
   invoices: readonly Invoice[],
-  homeOffice: OfficeId | null
+  homeOffice: OfficeId | null,
+  shipments: readonly Shipment[] = []
 ): OfficeId | undefined {
   switch (command.kind) {
     case "invoice":
@@ -39,8 +41,24 @@ export function financeCommandOffice(
     case "customer_movement":
     case "opening_balance":
       return command.payload.officeId;
-    case "shipment_price":
-      return command.payload.sourceOfficeId;
+    case "shipment_price": {
+      const shipment = shipments.find(
+        candidate => candidate.id === command.payload.shipmentId
+      );
+      const source = shipment?.packing?.source as OfficeId | undefined;
+      if (!source) return undefined;
+
+      // sourceOfficeId is retained only for reading old drafts. It is never
+      // an authority: a legacy value is usable only when it agrees with the
+      // source recorded on the selected shipment.
+      if (
+        command.payload.sourceOfficeId !== undefined &&
+        command.payload.sourceOfficeId !== source
+      )
+        return undefined;
+
+      return command.payload.side === "destination" ? "nouakchott" : source;
+    }
     case "settlement":
       return invoices.find(invoice => invoice.id === command.payload.invoiceId)
         ?.officeId;

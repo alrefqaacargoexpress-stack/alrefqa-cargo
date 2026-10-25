@@ -15,6 +15,7 @@ import {
   packingInputClass,
 } from "@/components/packing/PackingPrimitives";
 import { useLanguage } from "@/contexts/LanguageContext";
+import { useFinanceWorkspace } from "@/hooks/useFinanceWorkspace";
 import { useOperationsWorkspace } from "@/hooks/useOperationsWorkspace";
 import { copyFor } from "@/lib/packingCopy";
 import { packingPricingView } from "@/lib/packingTariffPreview";
@@ -41,11 +42,13 @@ import {
   type PackingSource,
 } from "@shared/packing";
 import { permissionAllowed } from "@shared/permissions";
+import type { PriceProjection } from "@shared/shipmentPricing";
 
 const sources: PackingSource[] = ["dubai", "turkey", "china"];
 
 export default function PackingHub() {
   const workspace = useOperationsWorkspace();
+  const finance = useFinanceWorkspace();
   const { language } = useLanguage();
   const c = copyFor(language);
   const canViewFinance =
@@ -59,6 +62,9 @@ export default function PackingHub() {
       "shipment_prices",
       "view"
     );
+  const pricingProjections: readonly PriceProjection[] = canViewFinance
+    ? (finance.store?.snapshot.pricingProjections ?? [])
+    : [];
   const publicProfiles = trpc.branches.public.useQuery(undefined, {
     retry: false,
     refetchOnWindowFocus: false,
@@ -371,6 +377,7 @@ export default function PackingHub() {
                   c={c}
                   language={language}
                   canViewFinance={canViewFinance}
+                  pricingProjections={pricingProjections}
                   workspace={workspace}
                   officeQuery={query}
                 />
@@ -606,6 +613,7 @@ function ShipmentRow({
   c,
   language,
   canViewFinance,
+  pricingProjections,
   workspace,
   officeQuery,
 }: {
@@ -613,10 +621,16 @@ function ShipmentRow({
   c: ReturnType<typeof copyFor>;
   language: string;
   canViewFinance: boolean;
+  pricingProjections: readonly PriceProjection[];
   workspace: ReturnType<typeof useOperationsWorkspace>;
   officeQuery: string;
 }) {
-  const pricing = packingPricingView(shipment, workspace.queue, canViewFinance);
+  const pricing = packingPricingView(
+    shipment,
+    workspace.queue,
+    canViewFinance,
+    pricingProjections
+  );
   const packingForDisplay = pricing.packingForDisplay;
   const sourceRateApproved = packingForDisplay.pricePerKg > 0;
   const totals = packingTotals(packingForDisplay);

@@ -127,6 +127,7 @@ import type { User } from "../drizzle/schema";
 import { appendAudit, readAudit } from "./audit";
 import {
   actorFromUser,
+  assertTrackingOwnerFence,
   applyTrackingCommand,
   parseTrackingRequest,
   trackingReceiptKey,
@@ -175,6 +176,19 @@ async function dbOrThrow() {
   const db = await getDb();
   if (!db) throw unavailable();
   return db;
+}
+const readOwnerInputSchema = z
+  .object({
+    clientUserId: z.string().min(1).max(128).optional(),
+    cacheScope: z.string().min(1).max(256).optional(),
+  })
+  .optional();
+function assertReadOwner(
+  input: { clientUserId?: string; cacheScope?: string } | undefined,
+  userId: number
+) {
+  if (input?.clientUserId && input.clientUserId !== String(userId))
+    throw forbidden("Session changed");
 }
 
 async function membershipRole(userId: number): Promise<AppRole | null> {
@@ -501,13 +515,15 @@ export const appRouter = router({
     ),
     commit: protectedProcedure
       .input(warehouseCommandSchema)
-      .mutation(async ({ ctx, input }) =>
-        commitWarehouseStorage(await dbOrThrow(), ctx.user, input)
-      ),
+      .mutation(async ({ ctx, input }) => {
+        if (input.clientUserId && input.clientUserId !== String(ctx.user.id))
+          throw forbidden("Warehouse session changed");
+        return commitWarehouseStorage(await dbOrThrow(), ctx.user, input);
+      }),
   }),
   finance: router({
     snapshot: protectedProcedure
-      .input(z.object({ clientUserId: z.string().min(1).max(128) }).optional())
+      .input(readOwnerInputSchema)
       .query(async ({ ctx, input }) => {
         if (input?.clientUserId && input.clientUserId !== String(ctx.user.id))
           throw forbidden("Finance session changed");
@@ -542,71 +558,77 @@ export const appRouter = router({
   financialVoids: financialVoidsRouter,
   lifecycle: lifecycleAdminRouter,
   operations: router({
-    access: protectedProcedure.query(async ({ ctx }) => {
-      const db = await dbOrThrow();
-      const scope = await readOfficeScope(db, ctx.user);
-      return {
-        role: scope.role,
-        userId: ctx.user.id,
-        offices: scope.offices,
-        homeOffice: scope.homeOffice,
-        canUpdateTracking: Boolean(scope.canUpdateTracking),
-        membershipVersion: scope.membershipVersion,
-        permissions: scope.permissions,
-        delegationCeiling: scope.delegationCeiling,
-        delegationPolicyConfigured: scope.delegationPolicyConfigured,
-        permissionsCustomized: scope.permissionsCustomized,
-        delegatedBy: scope.delegatedBy,
-        permissionFingerprint: createHash("sha256")
-          .update(JSON.stringify(scope.permissions))
-          .digest("hex"),
-      };
-    }),
+    access: protectedProcedure
+      .input(readOwnerInputSchema)
+      .query(async ({ ctx, input }) => {
+        assertReadOwner(input, ctx.user.id);
+        const db = await dbOrThrow();
+        const scope = await readOfficeScope(db, ctx.user);
+        return {
+          role: scope.role,
+          userId: ctx.user.id,
+          offices: scope.offices,
+          homeOffice: scope.homeOffice,
+          canUpdateTracking: Boolean(scope.canUpdateTracking),
+          membershipVersion: scope.membershipVersion,
+          permissions: scope.permissions,
+          delegationCeiling: scope.delegationCeiling,
+          delegationPolicyConfigured: scope.delegationPolicyConfigured,
+          permissionsCustomized: scope.permissionsCustomized,
+          delegatedBy: scope.delegatedBy,
+          permissionFingerprint: createHash("sha256")
+            .update(JSON.stringify(scope.permissions))
+            .digest("hex"),
+        };
+      }),
 
-    snapshot: protectedProcedure.query(async ({ ctx }) => {
-      const db = await dbOrThrow();
-      const scope = await readOfficeScope(db, ctx.user);
-      if (!scope.role) throw forbidden();
-      const state = emptyState();
-      state.retiredRecords = [];
-      const retired = await loadLifecycle(db);
-      const rows = await db.select().from(records);
-      for (const row of rows) {
-        if (
-          !recordIsActive(
-            retired,
-            row.entity as Entity,
-            row.data as EntityRecord
-          )
-        ) {
+    snapshot: protectedProcedure
+      .input(readOwnerInputSchema)
+      .query(async ({ ctx, input }) => {
+        assertReadOwner(input, ctx.user.id);
+        const db = await dbOrThrow();
+        const scope = await readOfficeScope(db, ctx.user);
+        if (!scope.role) throw forbidden();
+        const state = emptyState();
+        state.retiredRecords = [];
+        const retired = await loadLifecycle(db);
+        const rows = await db.select().from(records);
+        for (const row of rows) {
           if (
-            canReadPermissionRecord(
+            !recordIsActive(
+              retired,
+              row.entity as Entity,
+              row.data as EntityRecord
+            )
+          ) {
+            if (
+              canReadPermissionRecord(
+                scope,
+                row.entity as Entity,
+                row.data as EntityRecord
+              )
+            )
+              state.retiredRecords!.push({
+                entity: row.entity as Entity,
+                recordId: row.recordId,
+              });
+            continue;
+          }
+          if (
+            !canReadPermissionRecord(
               scope,
               row.entity as Entity,
               row.data as EntityRecord
             )
           )
-            state.retiredRecords!.push({
-              entity: row.entity as Entity,
-              recordId: row.recordId,
-            });
-          continue;
+            continue;
+          const data = permissionCurrent(row, scope);
+          if (row.entity === "account") state.accounts.push(data as any);
+          else if (row.entity === "shipment") state.shipments.push(data as any);
+          else if (row.entity === "invoice") state.invoices.push(data as any);
         }
-        if (
-          !canReadPermissionRecord(
-            scope,
-            row.entity as Entity,
-            row.data as EntityRecord
-          )
-        )
-          continue;
-        const data = permissionCurrent(row, scope);
-        if (row.entity === "account") state.accounts.push(data as any);
-        else if (row.entity === "shipment") state.shipments.push(data as any);
-        else if (row.entity === "invoice") state.invoices.push(data as any);
-      }
-      return state;
-    }),
+        return state;
+      }),
     members: protectedProcedure.query(async ({ ctx }) =>
       visiblePermissionMembers(await dbOrThrow(), ctx.user)
     ),
@@ -641,6 +663,8 @@ export const appRouter = router({
     sync: protectedProcedure
       .input(syncInputSchema)
       .mutation(async ({ ctx, input }) => {
+        if (input.clientUserId && input.clientUserId !== String(ctx.user.id))
+          throw forbidden("Operations session changed");
         const role = await effectiveRole(ctx.user);
         if (!role) throw forbidden();
         const db = await dbOrThrow();
@@ -1377,6 +1401,7 @@ export const appRouter = router({
     commit: protectedProcedure
       .input(trackingRequestSchema)
       .mutation(async ({ ctx, input }) => {
+        assertTrackingOwnerFence(input.clientUserId, ctx.user.id);
         const role = await effectiveRole(ctx.user);
         if (!role) throw forbidden();
         const request = parseTrackingRequest(input);

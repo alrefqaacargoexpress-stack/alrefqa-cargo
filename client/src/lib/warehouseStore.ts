@@ -21,6 +21,23 @@ export type PendingWarehouseLocation = z.infer<typeof pendingSchema>;
 export type WarehousePendingState = z.infer<typeof stateSchema>;
 
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+function notifyWarehouseStore(userId: number | string): void {
+  if (typeof window === "undefined") return;
+  if (typeof window.dispatchEvent === "function")
+    window.dispatchEvent(
+      new CustomEvent("alrefqaa:warehouse-store", {
+        detail: { userId: String(userId) },
+      })
+    );
+  try {
+    window.localStorage.setItem(
+      "alrefqaa-warehouse-notification",
+      JSON.stringify({ userId: String(userId), at: Date.now() })
+    );
+  } catch {
+    /* notification is best effort; the durable queue is already saved */
+  }
+}
 function localStorageOrThrow(): Storage {
   if (typeof window === "undefined" || !window.localStorage)
     throw new Error("warehouse_local_storage_unavailable");
@@ -52,6 +69,7 @@ export function saveWarehousePending(
   const saved = { ...clone(next), revision: current.revision + 1 };
   stateSchema.parse(saved);
   storage.setItem(keyFor(userId), JSON.stringify(saved));
+  notifyWarehouseStore(userId);
   return saved;
 }
 export function queueWarehouseLocation(

@@ -4,6 +4,15 @@ import { goodsTotals, normalizeName, sourceCurrency } from "./packing";
 import { invoicePaymentSchema } from "./office";
 import type { AppRole, Invoice, Shipment } from "./operations";
 import {
+  effectiveShipmentRate,
+  priceProjectionSchema,
+  shipmentPriceInputSchema,
+  type PriceProjection,
+  type ShipmentPriceSide,
+  type ShipmentPricingProjection,
+} from "./shipmentPricing";
+export { shipmentPriceInputSchema } from "./shipmentPricing";
+import {
   canReadAnyFinance,
   permissionAllowed,
   permissionsFor,
@@ -173,15 +182,6 @@ export const openingBalanceInputSchema = z
 export type FinanceOpeningBalanceInput = z.infer<
   typeof openingBalanceInputSchema
 >;
-export const shipmentPriceInputSchema = z
-  .object({
-    shipmentId: id,
-    sourceOfficeId: officeIdSchema,
-    pricePerKg: financeMoneySchema,
-    pricePerKgMRU: financeMoneySchema.optional(),
-    expectedVersion: z.number().int().positive(),
-  })
-  .strict();
 export type FinanceShipmentPriceInput = z.infer<
   typeof shipmentPriceInputSchema
 >;
@@ -376,6 +376,7 @@ export const financeSnapshotSchema = z
       )
       .optional()
       .default([]),
+    pricingProjections: z.array(priceProjectionSchema).default([]),
   })
   .strict();
 export type FinanceSnapshot = {
@@ -387,6 +388,7 @@ export type FinanceSnapshot = {
   lastReadAt: string | null;
   receivables?: FinanceReceivable[];
   shipmentReceivables?: FinanceReceivable[];
+  pricingProjections?: PriceProjection[];
 };
 export type FinanceReceivableShipment = {
   shipmentId: string;
@@ -410,6 +412,8 @@ export type FinanceSyncResult = {
     commandId: string;
     invoice?: Invoice;
     entries: FinanceEntry[];
+    priceProjection?: PriceProjection;
+    expectedPricingRevision?: number;
   }>;
   conflicts: Array<{ commandId: string; code: string }>;
 };
@@ -428,6 +432,7 @@ export function emptyFinanceSnapshot(): FinanceSnapshot {
     lastReadAt: null,
     receivables: [],
     shipmentReceivables: [],
+    pricingProjections: [],
   };
 }
 export type FinancePermissionScope = PermissionSubject & {
@@ -557,7 +562,8 @@ export function adjustedInvoiceTotal(
 }
 export function calculateFinanceInvoice(
   input: FinanceInvoiceInput,
-  shipment?: Shipment
+  shipment?: Shipment,
+  pricingProjection?: PriceProjection | null
 ) {
   invoiceInputSchema.parse(input);
   let baseAmount = input.manualAmount ?? 0;
@@ -589,13 +595,13 @@ export function calculateFinanceInvoice(
     if (selected.length !== input.goodsIds.length)
       throw new Error("goods_unavailable");
     const currency = input.currency;
-    const rate =
-      currency === "MRU"
-        ? shipment.packing.pricePerKgMRU
-        : sourceCurrency[shipment.packing.source] === currency
-          ? shipment.packing.pricePerKg
-          : undefined;
-    if (rate === undefined) throw new Error("shipping_rate_missing");
+    const side: ShipmentPriceSide =
+      currency === "MRU" ? "destination" : "source";
+    const expectedCurrency =
+      side === "destination" ? "MRU" : sourceCurrency[shipment.packing.source];
+    if (expectedCurrency !== currency) throw new Error("shipping_rate_missing");
+    const rate = effectiveShipmentRate(shipment, side, pricingProjection);
+    if (!(rate > 0)) throw new Error("shipping_rate_missing");
     baseAmount = goodsTotals(selected, rate).amount;
   }
   return {
@@ -659,7 +665,11 @@ export function isShipmentSent(shipment: Shipment): boolean {
 export function sourceReceivable(
   shipments: readonly Shipment[],
   allowedOffices: readonly OfficeId[] | null = null,
-  invoices: readonly Invoice[] = []
+  invoices: readonly Invoice[] = [],
+  projectionFor?: (
+    shipment: Shipment,
+    side: ShipmentPriceSide
+  ) => PriceProjection | null | undefined
 ): FinanceReceivable[] {
   const grouped = new Map<string, FinanceReceivable>();
   for (const shipment of shipments) {
@@ -670,7 +680,13 @@ export function sourceReceivable(
     const sourceGoods = shipment.packing.cartons
       .flatMap(carton => carton.goods)
       .filter(g => !g.deleted);
-    const amount = goodsTotals(sourceGoods, shipment.packing.pricePerKg).amount;
+    const sourceProjection = projectionFor?.(shipment, "source");
+    const effectiveSourceRate = effectiveShipmentRate(
+      shipment,
+      "source",
+      sourceProjection
+    );
+    const amount = goodsTotals(sourceGoods, effectiveSourceRate).amount;
     const soldGoodsIds = new Set<string>();
     for (const invoice of invoices) {
       const finance = invoice.finance;
@@ -685,11 +701,10 @@ export function sourceReceivable(
     }
     const soldAmount = goodsTotals(
       sourceGoods.filter(g => soldGoodsIds.has(g.id)),
-      shipment.packing.pricePerKg
+      effectiveSourceRate
     ).amount;
     const remainingAmount = Math.round((amount - soldAmount) * 100) / 100;
-    const pricingStatus =
-      shipment.packing.pricePerKg > 0 ? "priced" : "unpriced";
+    const pricingStatus = effectiveSourceRate > 0 ? "priced" : "unpriced";
     const key = `${officeId}:${currency}`;
     const row = grouped.get(key) ?? {
       officeId,
@@ -732,9 +747,13 @@ export function sourceReceivable(
 export function deriveShipmentReceivables(
   shipments: readonly Shipment[],
   allowedOffices: readonly OfficeId[] | null = null,
-  invoices: readonly Invoice[] = []
+  invoices: readonly Invoice[] = [],
+  projectionFor?: (
+    shipment: Shipment,
+    side: ShipmentPriceSide
+  ) => PriceProjection | null | undefined
 ): FinanceReceivable[] {
-  return sourceReceivable(shipments, allowedOffices, invoices);
+  return sourceReceivable(shipments, allowedOffices, invoices, projectionFor);
 }
 export type OfficeFinanceSummary = {
   officeId: OfficeId;

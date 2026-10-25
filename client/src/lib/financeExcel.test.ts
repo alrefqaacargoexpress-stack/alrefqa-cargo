@@ -55,9 +55,10 @@ const shipmentPrice: FinanceCommand = {
   createdAt: now,
   payload: {
     shipmentId: "s-one",
-    sourceOfficeId: "china",
-    pricePerKg: 0,
-    pricePerKgMRU: 100,
+    side: "destination",
+    pricePerKg: 100,
+    reason: "approved destination correction",
+    expectedPricingRevision: 0,
     expectedVersion: 3,
   },
 };
@@ -197,5 +198,54 @@ describe("Financial Excel import and export", () => {
       "duplicate_record",
       "duplicate_record",
     ]);
+  });
+
+  it("rejects a legacy shipment-price row with a row-level review reason", () => {
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(
+      wb,
+      XLSX.utils.aoa_to_sheet([
+        [
+          "الشحنة",
+          "مكتب المصدر",
+          "سعر الكيلو",
+          "سعر الكيلو MRU",
+          "النسخة المتوقعة",
+        ],
+        ["s-one", "china", 25, 100, 3],
+      ]),
+      "مسودات أسعار الشحنات"
+    );
+    const result = parseFinanceBuffer(buffer(wb), {
+      shipmentPriceShipmentIds: [],
+    });
+    expect(result.commands).toEqual([]);
+    expect(result.rejected).toEqual([
+      {
+        sheet: "مسودات أسعار الشحنات",
+        row: 2,
+        reason: "shipment_price_override_fields_required",
+      },
+    ]);
+  });
+
+  it("rejects a zero modern shipment price without creating a financial command", () => {
+    const wb = buildFinanceWorkbook(emptyFinanceSnapshot(), [
+      {
+        ...shipmentPrice,
+        payload: { ...shipmentPrice.payload, pricePerKg: 0 },
+      },
+    ]);
+    const result = parseFinanceBuffer(buffer(wb), {
+      shipmentPriceShipmentIds: [],
+    });
+    expect(result.commands).toEqual([]);
+    expect(result.rejected[0]).toMatchObject({
+      sheet: "مسودات أسعار الشحنات",
+      row: 2,
+    });
+    expect(result.rejected[0].reason).toMatch(
+      /positive|invalid_rate|Too small/i
+    );
   });
 });

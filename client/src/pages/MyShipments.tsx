@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "wouter";
-import { AlertTriangle, CloudOff, Package, RefreshCw } from "lucide-react";
+import { AlertTriangle, CloudOff, LogOut, Package, RefreshCw, ShieldCheck } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { customerTrackingCopy } from "@/lib/customerTrackingCopy";
@@ -10,6 +10,13 @@ import CustomerTrackingTimeline, {
 import { trpc } from "@/lib/trpc";
 import type { CustomerTrackingShipment } from "@shared/customerTracking";
 import { trackingCopy, type TrackingLanguage } from "@/lib/trackingCopy";
+
+const customerNavCopy = {
+  ar: { contact: "اتصال بالمكتب", security: "أمان الحساب", logout: "تسجيل الخروج", loggingOut: "جارٍ تسجيل الخروج…", home: "الرئيسية" },
+  en: { contact: "Contact office", security: "Account security", logout: "Sign out", loggingOut: "Signing out…", home: "Home" },
+  zh: { contact: "联系办公室", security: "账户安全", logout: "退出登录", loggingOut: "正在退出…", home: "首页" },
+  tr: { contact: "Ofisle iletişim", security: "Hesap güvenliği", logout: "Çıkış yap", loggingOut: "Çıkış yapılıyor…", home: "Ana sayfa" },
+} as const;
 
 export function formatMyShipmentsTimestamp(
   value: string | null,
@@ -43,6 +50,12 @@ export default function MyShipments() {
   const userId = me.data?.id == null ? null : String(me.data.id);
   const isCustomer = me.data?.accountType === "customer";
   const utils = trpc.useUtils();
+  const logout = trpc.auth.logout.useMutation({
+    onSuccess: () => {
+      utils.auth.me.setData(undefined, null);
+      window.location.assign("/auth");
+    },
+  });
   const queryClient = useQueryClient();
   const previousUser = useRef<string | null>(null);
   const [offline, setOffline] = useState(isOffline);
@@ -91,7 +104,7 @@ export default function MyShipments() {
 
   if (!me.data) {
     return (
-      <PageShell dir={dir} copy={copy}>
+      <PageShell dir={dir} copy={copy} language={language}>
         <StateCard
           icon={<AlertTriangle size={25} />}
           title={copy.loginRequired}
@@ -109,7 +122,7 @@ export default function MyShipments() {
 
   if (!isCustomer) {
     return (
-      <PageShell dir={dir} copy={copy}>
+      <PageShell dir={dir} copy={copy} language={language}>
         <StateCard icon={<AlertTriangle size={25} />} title={copy.employeeOnly}>
           <Link
             href="/operations"
@@ -123,7 +136,14 @@ export default function MyShipments() {
   }
 
   return (
-    <PageShell dir={dir} copy={copy}>
+    <PageShell
+      dir={dir}
+      copy={copy}
+      language={language}
+      userName={me.data.name}
+      onLogout={() => logout.mutate()}
+      logoutPending={logout.isPending}
+    >
       {offline && (
         <div className="mb-5 flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
           <CloudOff size={18} className="mt-0.5 shrink-0" aria-hidden="true" />
@@ -172,11 +192,20 @@ function PageShell({
   children,
   dir,
   copy,
+  language,
+  userName,
+  onLogout,
+  logoutPending = false,
 }: {
   children: React.ReactNode;
   dir: "rtl" | "ltr";
   copy: (typeof customerTrackingCopy)["ar"];
+  language: TrackingLanguage;
+  userName?: string | null;
+  onLogout?: () => void;
+  logoutPending?: boolean;
 }) {
+  const nav = customerNavCopy[language];
   return (
     <main
       dir={dir}
@@ -195,15 +224,13 @@ function PageShell({
               <p className="mt-1 text-sm text-[#718088]">{copy.subtitle}</p>
             </div>
           </div>
-          <Link href="/" className="text-sm font-bold text-[#2d6380]">
-            {copy.operations === "لوحة المكتب"
-              ? "الرئيسية"
-              : copy.operations === "Office dashboard"
-                ? "Home"
-                : copy.operations === "办公室面板"
-                  ? "首页"
-                  : "Ana sayfa"}
-          </Link>
+          <div className="flex flex-wrap items-center justify-end gap-2 text-xs font-bold">
+            {userName && <span className="text-[#52636e]">{userName}</span>}
+            <a href="/#offices" className="rounded-lg px-2 py-1 text-[#2d6380] hover:bg-[#eef3f0]">{nav.contact}</a>
+            <Link href="/account/security" className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[#2d6380] hover:bg-[#eef3f0]"><ShieldCheck size={14} />{nav.security}</Link>
+            {onLogout && <button type="button" onClick={onLogout} disabled={logoutPending} className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[#2d6380] hover:bg-[#eef3f0] disabled:opacity-50"><LogOut size={14} />{logoutPending ? nav.loggingOut : nav.logout}</button>}
+            <Link href="/" className="rounded-lg px-2 py-1 text-[#2d6380] hover:bg-[#eef3f0]">{nav.home}</Link>
+          </div>
         </header>
         {children}
       </div>

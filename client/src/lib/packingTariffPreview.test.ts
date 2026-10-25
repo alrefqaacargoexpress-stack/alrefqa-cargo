@@ -8,6 +8,7 @@ import {
   type PackingSession,
 } from "../../../shared/packing";
 import type { PendingChange } from "../../../shared/operations";
+import type { PriceProjection } from "../../../shared/shipmentPricing";
 
 const createdAt = "2026-10-24T22:54:00.000Z";
 const snapshot = (): NonNullable<PackingSession["rateSnapshot"]> => ({
@@ -225,4 +226,46 @@ describe("display-only creation tariff", () => {
       expect(result.packingForDisplay.pricePerKg).toBe(37);
     }
   );
+
+  it("uses an authoritative source/destination projection for display-only per-kg math", () => {
+    const shipment = draft();
+    shipment.scope = "shared";
+    shipment.version = 2;
+    const before = JSON.stringify(shipment.packing);
+    const projections: PriceProjection[] = [
+      {
+        shipmentId: shipment.id,
+        side: "source",
+        officeId: "dubai",
+        currency: "AED",
+        pricePerKg: 40,
+        overridePricePerKg: 40,
+        revision: 2,
+        expectedPricingRevision: 2,
+        recordVersion: 7,
+        overrideId: "override-source",
+        createdAt,
+      },
+      {
+        shipmentId: shipment.id,
+        side: "destination",
+        officeId: "nouakchott",
+        currency: "MRU",
+        pricePerKg: 500,
+        overridePricePerKg: 500,
+        revision: 3,
+        expectedPricingRevision: 3,
+        recordVersion: 9,
+        overrideId: "override-destination",
+        createdAt,
+      },
+    ];
+    const result = packingPricingView(shipment, [], true, projections);
+    expect(result.packingForDisplay.pricePerKg).toBe(40);
+    expect(result.packingForDisplay.pricePerKgMRU).toBe(500);
+    expect(packingTotals(result.packingForDisplay).amount).toBe(4);
+    expect(packingTotalsMRU(result.packingForDisplay)?.amount).toBe(50);
+    expect(JSON.stringify(shipment.packing)).toBe(before);
+    expect(shipment.packing.pricePerKg).toBe(0);
+  });
 });

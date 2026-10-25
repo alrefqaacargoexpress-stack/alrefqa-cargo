@@ -26,6 +26,8 @@ import {
 import type { OfficeId } from "@shared/branches";
 import { permissionAllowed, type PermissionMap } from "@shared/permissions";
 import { z } from "zod";
+import { readShipmentPricingProjection } from "./shipmentPricing";
+import type { PriceProjection } from "@shared/shipmentPricing";
 
 export {
   destinationStorageSchema,
@@ -36,7 +38,11 @@ export type {
   WarehouseCommand,
 } from "@shared/warehouse";
 
-export type WarehouseSnapshot = { shipments: Shipment[]; canEdit: boolean };
+export type WarehouseSnapshot = {
+  shipments: Shipment[];
+  canEdit: boolean;
+  pricingProjections: PriceProjection[];
+};
 export type WarehouseDb = {
   select: (...args: any[]) => any;
   transaction?: <T>(callback: (tx: WarehouseDb) => Promise<T>) => Promise<T>;
@@ -182,19 +188,38 @@ export async function readWarehouseSnapshot(
   if (!canReadWarehouse(scope)) forbidden();
   const retired = await loadLifecycle(db);
   const rows = await rowsFor(db);
-  const shipments = (
-    rows as Array<{ data: Shipment; version: number }>
-  ).flatMap(row => {
+  const pricingProjections: PriceProjection[] = [];
+  const shipments: Shipment[] = [];
+  for (const row of rows as Array<{ data: Shipment; version: number }>) {
     const shipment = { ...row.data, version: row.version };
     if (
       !recordIsActive(retired, "shipment", shipment) ||
       !arrivedInNouakchott(shipment)
     )
-      return [];
-    if (!recordVisible(scope, "shipment", shipment)) return [];
-    return [warehousePublicShipment(shipment, scope.role, scope.offices)];
-  });
-  return { shipments, canEdit: canWriteWarehouse(scope) };
+      continue;
+    if (!recordVisible(scope, "shipment", shipment)) continue;
+    if (permissionAllowed(scope, "shipment_prices", "view")) {
+      const projection = await readShipmentPricingProjection(
+        db,
+        shipment,
+        row.version,
+        scope
+      );
+      pricingProjections.push(
+        ...[projection.source, projection.destination].filter(
+          (item): item is PriceProjection => Boolean(item)
+        )
+      );
+    }
+    shipments.push(
+      warehousePublicShipment(shipment, scope.role, scope.offices)
+    );
+  }
+  return {
+    shipments,
+    canEdit: canWriteWarehouse(scope),
+    pricingProjections,
+  };
 }
 
 function payloadHash(input: WarehouseCommand): string {
@@ -207,6 +232,7 @@ function payloadHash(input: WarehouseCommand): string {
         warehouse: input.warehouse,
         shelf: input.shelf,
         expectedVersion: input.expectedVersion,
+        clientUserId: input.clientUserId ?? null,
       })
     )
     .digest("hex");
@@ -229,6 +255,8 @@ export async function commitWarehouseStorage(
   rawInput: z.input<typeof warehouseCommandSchema>
 ) {
   const input = warehouseCommandSchema.parse(rawInput);
+  if (input.clientUserId && input.clientUserId !== String(user.id))
+    throw new Error("sync_owner_mismatch");
   if (!db.transaction) throw new Error("warehouse_transaction_required");
   return db.transaction(async tx => {
     const scope = await readOfficeScope(tx, user);

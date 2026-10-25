@@ -24,6 +24,22 @@ export type TrackingActor = {
 };
 export type TrackingMutation = { shipment: Shipment; action: string };
 
+/**
+ * A queued request may carry the user that created it. This is an ownership
+ * fence, not an identity grant: the authenticated request user remains the
+ * sole authority for authorization and actor data.
+ */
+export function assertTrackingOwnerFence(
+  clientUserId: string | undefined,
+  authenticatedUserId: number | string
+): void {
+  if (
+    clientUserId !== undefined &&
+    clientUserId !== String(authenticatedUserId)
+  )
+    throw new Error("sync_owner_mismatch");
+}
+
 export function parseTrackingRequest(input: unknown): TrackingRequest {
   return trackingRequestSchema.parse(input);
 }
