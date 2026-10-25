@@ -1,6 +1,7 @@
 import type { FinanceCommand, FinanceSyncResult } from "@shared/finance";
 import type { Entity, PendingChange, SyncResult } from "@shared/operations";
 import type { PendingWarehouseLocation } from "./warehouseStore";
+import { normalizeSyncError } from "./syncErrors";
 
 export type SyncReason =
   | "local-save"
@@ -31,6 +32,8 @@ export type AutoSyncState = {
 type RunInput = {
   operationSelection?: Array<{ entity: Entity; recordId: string }>;
   financeSelection?: string[];
+  trackingSelection?: string[];
+  recovery?: boolean;
 };
 export type AutoSyncRunResult = {
   operations: SyncResult | null;
@@ -47,7 +50,8 @@ type OperationsAdapter = {
   pending: () => PendingChange[];
   sync: (
     selection?: Array<{ entity: Entity; recordId: string }>,
-    operationResult?: SyncResult | null
+    operationResult?: SyncResult | null,
+    signal?: AbortSignal
   ) => Promise<SyncResult | null>;
 };
 type FinanceAdapter = {
@@ -58,7 +62,8 @@ type FinanceAdapter = {
   pending: () => FinanceCommand[];
   sync: (
     selection?: string[],
-    operationResult?: SyncResult | null
+    operationResult?: SyncResult | null,
+    signal?: AbortSignal
   ) => Promise<FinanceSyncResult | null>;
 };
 type WarehouseAdapter = {
@@ -67,7 +72,14 @@ type WarehouseAdapter = {
   authReady: boolean;
   online: boolean;
   pending: () => PendingWarehouseLocation[];
-  sync: () => Promise<string[]>;
+  sync: (signal?: AbortSignal) => Promise<string[]>;
+};
+export type TrackingPendingItem = {
+  requestId: string;
+  shipmentId?: string;
+  expectedVersion?: number;
+  command?: unknown;
+  commandFingerprint?: string;
 };
 export type TrackingAdapter = {
   userId: string;
@@ -75,15 +87,35 @@ export type TrackingAdapter = {
   authReady: boolean;
   online: boolean;
   pending: number | (() => number);
-  sync: () => Promise<unknown>;
+  pendingItems?: TrackingPendingItem[] | (() => TrackingPendingItem[]);
+  sync: (selection?: string[], signal?: AbortSignal) => Promise<unknown>;
 };
 
 type Lease = { key: string; owner: string; expiresAt: number };
-type BlockedItem = { reason: string; fingerprint: string | null };
+type BlockedItem = {
+  reason: string;
+  fingerprint: string | null;
+  commandFingerprint?: string | null;
+  version?: number;
+};
 const fallbackLocks = new Map<string, Promise<void>>();
 let leaseDb: Promise<IDBDatabase> | null = null;
 const LEASE_TTL = 15_000;
 const LEASE_HEARTBEAT = 5_000;
+type TransportLockTestHooks = {
+  openDb?: () => Promise<IDBDatabase>;
+  leaseTtlMs?: number;
+  heartbeatMs?: number;
+};
+let transportLockTestHooks: TransportLockTestHooks = {};
+
+/** Test-only seam: production always uses the browser IndexedDB clock/database. */
+export function setTransportLockTestHooks(
+  hooks: TransportLockTestHooks | null
+): void {
+  transportLockTestHooks = hooks ?? {};
+  leaseDb = null;
+}
 
 function emptyRunResult(): AutoSyncRunResult {
   return {
@@ -107,6 +139,7 @@ function browserRuntime(): boolean {
   return typeof window !== "undefined";
 }
 function openLeaseDb(): Promise<IDBDatabase> {
+  if (transportLockTestHooks.openDb) return transportLockTestHooks.openDb();
   if (!leaseDb)
     leaseDb = new Promise((resolve, reject) => {
       if (typeof indexedDB === "undefined") {
@@ -159,7 +192,11 @@ async function renewLease(db: IDBDatabase, lease: Lease): Promise<boolean> {
     get.onsuccess = () => {
       const current = get.result as Lease | undefined;
       if (current?.owner === lease.owner && current.expiresAt > Date.now()) {
-        store.put({ ...lease, expiresAt: Date.now() + LEASE_TTL });
+        store.put({
+          ...lease,
+          expiresAt:
+            Date.now() + (transportLockTestHooks.leaseTtlMs ?? LEASE_TTL),
+        });
         renewed = true;
       }
     };
@@ -193,7 +230,8 @@ async function releaseLease(
 
 async function withMemoryTransportLock<T>(
   key: string,
-  work: () => Promise<T>
+  work: (signal: AbortSignal) => Promise<T>,
+  signal: AbortSignal
 ): Promise<T> {
   const previous = fallbackLocks.get(key) ?? Promise.resolve();
   let release!: () => void;
@@ -202,7 +240,7 @@ async function withMemoryTransportLock<T>(
   fallbackLocks.set(key, chained);
   await previous;
   try {
-    return await work();
+    return await work(signal);
   } finally {
     release();
     if (fallbackLocks.get(key) === chained) fallbackLocks.delete(key);
@@ -215,47 +253,64 @@ async function withMemoryTransportLock<T>(
  */
 export async function withUserTransportLock<T>(
   userId: string,
-  work: () => Promise<T>
+  work: (signal: AbortSignal) => Promise<T>
 ): Promise<T> {
   const key = `alrefqaa-sync:${userId}`;
+  const controller = new AbortController();
   if (typeof navigator !== "undefined" && navigator.locks)
-    return navigator.locks.request(key, { mode: "exclusive" }, work);
+    return navigator.locks.request(key, { mode: "exclusive" }, () =>
+      work(controller.signal)
+    );
 
   let db: IDBDatabase;
   try {
     db = await openLeaseDb();
   } catch (error) {
     if (browserRuntime()) throw error;
-    return withMemoryTransportLock(key, work);
+    return withMemoryTransportLock(key, work, controller.signal);
   }
 
   const lease: Lease = {
     key,
     owner: randomId("tab"),
-    expiresAt: Date.now() + LEASE_TTL,
+    expiresAt: Date.now() + (transportLockTestHooks.leaseTtlMs ?? LEASE_TTL),
   };
   while (!(await claimLease(db, lease))) await sleep(25 + Math.random() * 50);
   let lostReject!: (error: Error) => void;
-  const leaseLost = new Promise<never>((_, reject) => (lostReject = reject));
+  let leaseLost = false;
+  lostReject = () => {
+    leaseLost = true;
+    controller.abort();
+  };
   let heartbeat: ReturnType<typeof setInterval> | null = setInterval(() => {
     void renewLease(db, lease)
       .then(renewed => {
         if (!renewed) lostReject(new Error("transport_lock_lost"));
       })
       .catch(() => lostReject(new Error("transport_lock_lost")));
-  }, LEASE_HEARTBEAT);
-  const workPromise = Promise.resolve().then(work);
+  }, transportLockTestHooks.heartbeatMs ?? LEASE_HEARTBEAT);
+  const workPromise = Promise.resolve().then(() => work(controller.signal));
   try {
-    return await Promise.race([workPromise, leaseLost]);
+    const value = await workPromise;
+    // A heartbeat can lose the lease immediately after the last request. Do
+    // not report a successful round after that point.
+    if (leaseLost) throw new Error("transport_lock_lost");
+    return value;
   } finally {
     if (heartbeat) clearInterval(heartbeat);
     heartbeat = null;
+    // workPromise is deliberately awaited before releasing the lease. An HTTP
+    // request already accepted by the server cannot be cancelled safely; its
+    // stable receipt/request ID must remain the only retry identity.
+    await workPromise.catch(() => undefined);
     await releaseLease(db, key, lease.owner).catch(() => undefined);
   }
 }
 
 function isNetworkError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message.toLowerCase() : "";
+  const normalized = normalizeSyncError(error);
+  if (normalized.code === "NETWORK") return true;
+  const message = normalized.message.toLowerCase();
   return Boolean(
     (typeof navigator !== "undefined" && !navigator.onLine) ||
       message.includes("network") ||
@@ -265,7 +320,14 @@ function isNetworkError(error: unknown): boolean {
   );
 }
 function needsReview(error: unknown): boolean {
-  const message = error instanceof Error ? error.message.toLowerCase() : "";
+  const normalized = normalizeSyncError(error);
+  if (
+    normalized.code === "FORBIDDEN" ||
+    normalized.code === "UNAUTHORIZED" ||
+    normalized.code === "CONFLICT"
+  )
+    return true;
+  const message = normalized.message.toLowerCase();
   return [
     "forbidden",
     "unauthorized",
@@ -472,6 +534,10 @@ export class AutoSyncCoordinator {
       return emptyRunResult();
     }
     this.clearExplicitReview(input, reason);
+    if (this.authorizationBlocked()) {
+      this.setStatus("review", reason);
+      return emptyRunResult();
+    }
     try {
       if (reason !== "broadcast")
         this.channel?.postMessage({ type: "auto-sync-request" });
@@ -484,12 +550,21 @@ export class AutoSyncCoordinator {
     const runSession = this.sessionEpoch;
     const runLifecycle = this.lifecycleEpoch;
     this.runUserId = runUser;
-    this.runPromise = withUserTransportLock(runUser, async () => {
+    this.runPromise = withUserTransportLock(runUser, async signal => {
       if (!this.isCurrent(runUser, runSession, runLifecycle))
         return emptyRunResult();
+      this.throwIfAborted(signal);
       this.setStatus("syncing", reason);
       const result = emptyRunResult();
       let progressed = false;
+      let activeStage:
+        | "operations"
+        | "warehouse"
+        | "tracking"
+        | "finance"
+        | null = null;
+      let attemptedOperationKeys: string[] = [];
+      let attemptedFinanceKeys: string[] = [];
       try {
         const operations = this.latest(this.operations);
         if (operations && this.adapterReady(operations, runUser)) {
@@ -503,10 +578,19 @@ export class AutoSyncCoordinator {
           // adapter contract used by focused tests. A non-empty, fully blocked
           // queue is the only case skipped here.
           if (!pending.length || selection.length) {
+            activeStage = "operations";
+            attemptedOperationKeys = pending.length
+              ? selection.map(
+                  item => `operations:${item.entity}:${item.recordId}`
+                )
+              : [];
             result.operations = await operations.sync(
               pending.length ? selection : undefined,
-              null
+              null,
+              signal
             );
+            activeStage = null;
+            this.throwIfAborted(signal);
             this.rememberOperationConflicts(result.operations);
             progressed ||= Boolean(result.operations?.applied.length);
           }
@@ -516,23 +600,55 @@ export class AutoSyncCoordinator {
         if (
           warehouse &&
           this.adapterReady(warehouse, runUser) &&
+          !this.blockedFor("warehouse:stage") &&
           safePending(warehouse.pending).length
         ) {
-          result.warehouseApplied = await warehouse.sync();
+          this.throwIfAborted(signal);
+          activeStage = "warehouse";
+          result.warehouseApplied = await warehouse.sync(signal);
+          activeStage = null;
+          this.throwIfAborted(signal);
           progressed ||= result.warehouseApplied.length > 0;
         }
         if (!this.isCurrent(runUser, runSession, runLifecycle)) return result;
+        this.throwIfAborted(signal);
         const tracking = this.latest(this.tracking);
+        const trackingItems = tracking ? this.trackingItems(tracking) : [];
+        const trackingSelection = tracking
+          ? this.eligibleTracking(
+              tracking,
+              input.trackingSelection,
+              reason === "manual"
+            )
+          : [];
+        const hasTrackingPending = tracking
+          ? trackingItems.length
+            ? trackingSelection.length > 0
+            : Boolean(
+                input.trackingSelection?.length ||
+                  this.pendingTracking(tracking) > 0
+              )
+          : false;
         if (
           tracking &&
           this.adapterReady(tracking, runUser) &&
-          this.pendingTracking(tracking) > 0
+          hasTrackingPending
         ) {
-          result.tracking = await tracking.sync();
+          activeStage = "tracking";
+          result.tracking =
+            trackingItems.length || input.trackingSelection
+              ? await tracking.sync(trackingSelection, signal)
+              : await tracking.sync(undefined, signal);
+          activeStage = null;
+          this.throwIfAborted(signal);
           this.state = { ...this.state, trackingLastResult: result.tracking };
-          progressed = true;
+          this.rememberTrackingConflicts(result.tracking);
+          progressed ||= Boolean(
+            (result.tracking as { applied?: unknown[] } | null)?.applied?.length
+          );
         }
         if (!this.isCurrent(runUser, runSession, runLifecycle)) return result;
+        this.throwIfAborted(signal);
         const finance = this.latest(this.finance);
         if (finance && this.adapterReady(finance, runUser)) {
           const pending = safePending(finance.pending);
@@ -541,10 +657,17 @@ export class AutoSyncCoordinator {
             input.financeSelection
           );
           if (!pending.length || selection.length) {
+            activeStage = "finance";
+            attemptedFinanceKeys = pending.length
+              ? selection.map(id => `finance:${id}`)
+              : [];
             result.finance = await finance.sync(
               pending.length ? selection : undefined,
-              result.operations
+              result.operations,
+              signal
             );
+            activeStage = null;
+            this.throwIfAborted(signal);
             this.rememberFinanceConflicts(result.finance);
             progressed ||= Boolean(result.finance?.applied.length);
             if (
@@ -555,54 +678,60 @@ export class AutoSyncCoordinator {
               this.rerunNeeded = true;
           }
         }
-        this.retryCount = 0;
-        this.refreshCounts(false);
         const trackingResult = result.tracking as {
-          conflicts?: unknown[];
+          conflicts?: Array<{ requestId?: string; kind?: string }>;
           network?: boolean;
           blocked?: boolean;
         } | null;
+        const hasTrackingNetwork = Boolean(trackingResult?.network);
+        if (hasTrackingNetwork) this.scheduleNetworkRetry();
+        else this.retryCount = 0;
+        this.refreshCounts(false);
         const hasReview =
           this.blocked.size > 0 ||
           Boolean(
             result.operations?.conflicts.length ||
               result.finance?.conflicts.length ||
-              trackingResult?.conflicts?.length ||
               trackingResult?.blocked
           );
         this.setStatus(
           hasReview
             ? "review"
-            : this.pendingEligibleCount()
-              ? "pending"
-              : "idle",
+            : hasTrackingNetwork
+              ? "offline"
+              : this.pendingEligibleCount()
+                ? "pending"
+                : "idle",
           reason
         );
         return result;
       } catch (error) {
         if (!this.isCurrent(runUser, runSession, runLifecycle)) return result;
+        const normalized = normalizeSyncError(error);
+        this.rememberThrownReview(
+          activeStage,
+          attemptedOperationKeys,
+          attemptedFinanceKeys,
+          normalized,
+          runUser
+        );
         this.state = {
           ...this.state,
-          status: needsReview(error)
-            ? "review"
-            : isNetworkError(error)
-              ? "offline"
-              : "pending",
-          lastError: error instanceof Error ? error.message : "sync_failed",
+          status: normalized.message
+            .toLowerCase()
+            .includes("transport_lock_lost")
+            ? "pending"
+            : needsReview(normalized)
+              ? "review"
+              : isNetworkError(normalized)
+                ? "offline"
+                : "pending",
+          lastError: normalized.message,
           reason,
         };
         this.emit();
-        if (isNetworkError(error) && this.retryCount < 3) {
-          const delay =
-            Math.min(30_000, 500 * 2 ** this.retryCount) +
-            Math.floor(Math.random() * 250);
-          this.retryCount += 1;
-          this.retryTimer = setTimeout(() => {
-            this.retryTimer = null;
-            void this.request("online").catch(() => undefined);
-          }, delay);
-        }
-        throw error;
+        if (isNetworkError(normalized)) this.scheduleNetworkRetry();
+        throw normalized;
       } finally {
         if (this.runUserId === runUser) this.runUserId = null;
       }
@@ -679,6 +808,83 @@ export class AutoSyncCoordinator {
       ? safeCount(adapter.pending)
       : Math.max(0, adapter.pending);
   }
+  private trackingItems(adapter: TrackingAdapter): TrackingPendingItem[] {
+    if (!adapter.pendingItems) return [];
+    try {
+      const items =
+        typeof adapter.pendingItems === "function"
+          ? adapter.pendingItems()
+          : adapter.pendingItems;
+      return Array.isArray(items) ? items : [];
+    } catch {
+      return [];
+    }
+  }
+  private trackingItemFingerprint(item: TrackingPendingItem): string {
+    if (item.commandFingerprint) return item.commandFingerprint;
+    try {
+      return JSON.stringify({
+        command: item.command ?? null,
+        expectedVersion: item.expectedVersion ?? null,
+      });
+    } catch {
+      return `${item.expectedVersion ?? ""}`;
+    }
+  }
+  private blockedTrackingFor(item: TrackingPendingItem): boolean {
+    const key = `tracking:${item.requestId}`;
+    const blocked = this.blocked.get(key);
+    if (!blocked) return false;
+    const changed =
+      blocked.fingerprint !== this.scopeFingerprint ||
+      (blocked.version !== undefined &&
+        blocked.version !== item.expectedVersion) ||
+      (blocked.commandFingerprint !== null &&
+        blocked.commandFingerprint !== undefined &&
+        blocked.commandFingerprint !== this.trackingItemFingerprint(item));
+    if (changed) {
+      this.blocked.delete(key);
+      return false;
+    }
+    return true;
+  }
+  private eligibleTracking(
+    adapter: TrackingAdapter,
+    selected?: string[],
+    allowBlockedSelection = false
+  ): string[] {
+    const selectedSet = selected ? new Set(selected) : null;
+    const items = this.trackingItems(adapter);
+    if (!items.length) return selected ? [...new Set(selected)] : [];
+    return items
+      .filter(item => !selectedSet || selectedSet.has(item.requestId))
+      .filter(
+        item =>
+          Boolean(allowBlockedSelection && selectedSet?.has(item.requestId)) ||
+          !this.blockedTrackingFor(item)
+      )
+      .map(item => item.requestId);
+  }
+  private throwIfAborted(signal: AbortSignal): void {
+    if (signal.aborted) throw new Error("transport_lock_lost");
+  }
+  private scheduleNetworkRetry(): void {
+    if (
+      this.retryTimer ||
+      this.retryCount >= 3 ||
+      !this.userId ||
+      !this.authReady
+    )
+      return;
+    const delay =
+      Math.min(30_000, 500 * 2 ** this.retryCount) +
+      Math.floor(Math.random() * 250);
+    this.retryCount += 1;
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null;
+      void this.request("online").catch(() => undefined);
+    }, delay);
+  }
   private mergeInput(a: RunInput, b: RunInput): RunInput {
     const operations = [
       ...(a.operationSelection ?? []),
@@ -697,14 +903,60 @@ export class AutoSyncCoordinator {
           ]
         : undefined,
       financeSelection: finance.length ? [...new Set(finance)] : undefined,
+      trackingSelection: b.trackingSelection?.length
+        ? [...new Set(b.trackingSelection)]
+        : a.trackingSelection?.length
+          ? [...new Set(a.trackingSelection)]
+          : undefined,
+      recovery: a.recovery || b.recovery,
     };
   }
   private clearExplicitReview(input: RunInput, reason: SyncReason): void {
     if (reason !== "manual") return;
-    for (const item of input.operationSelection ?? [])
+    for (const item of input.operationSelection ?? []) {
       this.blocked.delete(`operations:${item.entity}:${item.recordId}`);
-    for (const id of input.financeSelection ?? [])
+      this.blocked.delete("operations:stage");
+    }
+    for (const id of input.financeSelection ?? []) {
       this.blocked.delete(`finance:${id}`);
+      this.blocked.delete("finance:stage");
+    }
+    for (const id of input.trackingSelection ?? [])
+      this.blocked.delete(`tracking:${id}`);
+  }
+  private authorizationKey(userId = this.userId): string {
+    return `authorization:${userId ?? ""}`;
+  }
+  private authorizationBlocked(): boolean {
+    return this.blockedFor(this.authorizationKey());
+  }
+  private rememberThrownReview(
+    stage: "operations" | "warehouse" | "tracking" | "finance" | null,
+    operationKeys: string[],
+    financeKeys: string[],
+    error: ReturnType<typeof normalizeSyncError>,
+    userId: string
+  ): void {
+    if (!stage || isNetworkError(error) || !needsReview(error)) return;
+    const blockedItem: BlockedItem = {
+      reason: error.message,
+      fingerprint: this.scopeFingerprint,
+    };
+    if (error.code === "UNAUTHORIZED") {
+      this.blocked.set(this.authorizationKey(userId), blockedItem);
+      return;
+    }
+    const keys =
+      stage === "operations"
+        ? operationKeys
+        : stage === "finance"
+          ? financeKeys
+          : [];
+    if (keys.length) {
+      for (const key of keys) this.blocked.set(key, blockedItem);
+      return;
+    }
+    this.blocked.set(`${stage}:stage`, blockedItem);
   }
   private blockedFor(key: string): boolean {
     const item = this.blocked.get(key);
@@ -765,7 +1017,34 @@ export class AutoSyncCoordinator {
         fingerprint: this.scopeFingerprint,
       });
   }
+  private rememberTrackingConflicts(result: unknown): void {
+    const conflicts = (
+      result as {
+        conflicts?: Array<{
+          requestId?: string;
+          kind?: string;
+          message?: string;
+        }>;
+      } | null
+    )?.conflicts;
+    if (!conflicts?.length) return;
+    const adapter = this.latest(this.tracking);
+    const items = adapter ? this.trackingItems(adapter) : [];
+    for (const conflict of conflicts) {
+      if (!conflict.requestId || conflict.kind === "network") continue;
+      const item = items.find(
+        candidate => candidate.requestId === conflict.requestId
+      );
+      this.blocked.set(`tracking:${conflict.requestId}`, {
+        reason: conflict.message ?? conflict.kind ?? "tracking_review",
+        fingerprint: this.scopeFingerprint,
+        commandFingerprint: item ? this.trackingItemFingerprint(item) : null,
+        version: item?.expectedVersion,
+      });
+    }
+  }
   private pendingEligibleCount(): number {
+    if (this.authorizationBlocked()) return 0;
     const operationsAdapter = this.latest(this.operations);
     const financeAdapter = this.latest(this.finance);
     const warehouseAdapter = this.latest(this.warehouse);
@@ -777,10 +1056,14 @@ export class AutoSyncCoordinator {
       ? this.eligibleFinance(safePending(financeAdapter.pending)).length
       : 0;
     const warehouse = warehouseAdapter
-      ? safePending(warehouseAdapter.pending).length
+      ? this.blockedFor("warehouse:stage")
+        ? 0
+        : safePending(warehouseAdapter.pending).length
       : 0;
     const tracking = trackingAdapter
-      ? this.pendingTracking(trackingAdapter)
+      ? this.trackingItems(trackingAdapter).length
+        ? this.eligibleTracking(trackingAdapter).length
+        : this.pendingTracking(trackingAdapter)
       : 0;
     return operations + finance + warehouse + tracking;
   }

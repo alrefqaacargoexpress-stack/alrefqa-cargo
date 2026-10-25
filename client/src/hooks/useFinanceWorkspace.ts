@@ -32,6 +32,9 @@ import {
   applyFinanceSync,
   type FinanceWorkspace,
 } from "@/lib/financeStore";
+import { loadWorkspace } from "@/lib/offlineStore";
+import { partitionFinanceCommands } from "@/lib/financeSyncDependencies";
+import { isNonFailureSyncOutcome, normalizeSyncError } from "@/lib/syncErrors";
 const words = {
   ar: {
     saved: "حُفظت المسودة المالية محليًا، وليست قيدًا مشتركًا بعد.",
@@ -431,7 +434,8 @@ export function useFinanceWorkspace() {
   const posting = useRef(false);
   const runSyncInternal = async (
     selectedIds?: string[],
-    operationResult?: SyncResult | null
+    operationResult?: SyncResult | null,
+    signal?: AbortSignal
   ): Promise<FinanceSyncResult | null> => {
     if (
       mutation.isPending ||
@@ -441,63 +445,80 @@ export function useFinanceWorkspace() {
       base.localOnly ||
       !base.userId ||
       !canEdit ||
-      !ref.current
+      !ref.current ||
+      signal?.aborted
     ) {
       setNotice(w.offline);
       return null;
     }
-    const latest = loadFinanceWorkspace(financeCacheUser ?? base.userId);
+    let latest: FinanceWorkspace;
+    let operationsWorkspace: ReturnType<typeof loadWorkspace>;
+    try {
+      latest = loadFinanceWorkspace(financeCacheUser ?? base.userId);
+      // The operations hook may not have committed its React state update yet;
+      // the durable store is the authority for this cross-workspace boundary.
+      operationsWorkspace = loadWorkspace(base.userId);
+    } catch (error) {
+      const normalized = normalizeSyncError(error);
+      if (isNonFailureSyncOutcome(normalized)) return null;
+      setNotice(w.failed);
+      throw normalized;
+    }
+    if (
+      signal?.aborted ||
+      currentUser.current !== base.userId ||
+      currentScope.current !== scopeFingerprint ||
+      workspaceOwner.current !== base.userId
+    )
+      return null;
     ref.current = latest;
     setWorkspace(latest);
-    const unresolvedShipmentIds = new Set(
-      (base.workspace?.queue ?? [])
-        .filter(change => change.entity === "shipment")
-        .map(change => change.recordId)
-    );
-    for (const conflict of operationResult?.conflicts ?? []) {
-      const pending = base.workspace?.queue.find(
-        change => change.id === conflict.changeId
-      );
-      if (pending?.entity === "shipment")
-        unresolvedShipmentIds.add(pending.recordId);
-      if (conflict.current && "tracking" in conflict.current)
-        unresolvedShipmentIds.add(conflict.current.id);
-    }
     const candidates = selectedFinanceCommands(latest.commands, selectedIds);
+    const dependencies = partitionFinanceCommands(
+      latest.commands,
+      operationsWorkspace,
+      operationResult
+    );
     const pendingPriceShipments = new Set(
-      candidates
+      latest.commands
         .filter(command => command.kind === "shipment_price")
         .map(command => command.payload.shipmentId)
     );
-    const available = candidates.filter(command => {
-      const office = commandOffice(command);
-      if (!Boolean(office && officeAllowed(office))) return false;
-      if (!permissionAllowed(subject, commandPermission(command), "manage"))
-        return false;
-      const payload = command.payload as {
-        shipmentId?: string;
-        invoiceId?: string;
-      };
-      if (payload.shipmentId && unresolvedShipmentIds.has(payload.shipmentId))
-        return false;
-      if (
-        command.kind === "invoice" &&
-        payload.shipmentId &&
-        pendingPriceShipments.has(payload.shipmentId)
-      )
-        return false;
-      if (
-        command.kind === "settlement" &&
-        payload.invoiceId &&
-        candidates.some(
-          other =>
-            other.kind === "invoice" &&
-            other.payload.invoiceId === payload.invoiceId
+    const selectedSet = selectedIds ? new Set(selectedIds) : null;
+    const available = dependencies.ready
+      .filter(command => !selectedSet || selectedSet.has(command.id))
+      .filter(command => {
+        const office = financeCommandOffice(
+          command,
+          latest.snapshot.invoices,
+          latest.snapshot.homeOffice ?? null,
+          operationsWorkspace.state.shipments
+        );
+        if (!Boolean(office && officeAllowed(office))) return false;
+        if (!permissionAllowed(subject, commandPermission(command), "manage"))
+          return false;
+        const payload = command.payload as {
+          shipmentId?: string;
+          invoiceId?: string;
+        };
+        if (
+          command.kind === "invoice" &&
+          payload.shipmentId &&
+          pendingPriceShipments.has(payload.shipmentId)
         )
-      )
-        return false;
-      return true;
-    });
+          return false;
+        if (
+          command.kind === "settlement" &&
+          payload.invoiceId &&
+          latest.commands.some(
+            other =>
+              other.kind === "invoice" &&
+              other.payload.invoiceId === payload.invoiceId
+          )
+        )
+          return false;
+        return true;
+      });
     const batch = available
       .sort((a, b) =>
         a.kind === "shipment_price" ? -1 : b.kind === "shipment_price" ? 1 : 0
@@ -507,19 +528,41 @@ export function useFinanceWorkspace() {
     posting.current = true;
     try {
       const userId = base.userId;
+      if (
+        signal?.aborted ||
+        currentUser.current !== userId ||
+        currentScope.current !== scopeFingerprint ||
+        workspaceOwner.current !== userId
+      )
+        return null;
       const result = await mutation.mutateAsync({
         commands: batch,
         clientUserId: userId,
       });
       if (
+        signal?.aborted ||
         currentUser.current !== userId ||
         workspaceOwner.current !== userId ||
+        currentScope.current !== scopeFingerprint ||
         !ref.current
       )
         return null;
       const next = applyFinanceSync(ref.current, result, userId);
+      if (
+        signal?.aborted ||
+        currentUser.current !== userId ||
+        currentScope.current !== scopeFingerprint ||
+        workspaceOwner.current !== userId
+      )
+        return null;
       await saveFinanceWorkspace(financeCacheUser ?? userId, next);
-      if (currentUser.current !== userId) return null;
+      if (
+        signal?.aborted ||
+        currentUser.current !== userId ||
+        currentScope.current !== scopeFingerprint ||
+        workspaceOwner.current !== userId
+      )
+        return null;
       ref.current = next;
       setWorkspace(next);
       setConflicts(result.conflicts);
@@ -535,8 +578,10 @@ export function useFinanceWorkspace() {
         await base.reload();
       return result;
     } catch (e) {
+      const normalized = normalizeSyncError(e);
+      if (isNonFailureSyncOutcome(normalized)) return null;
       setNotice(w.failed);
-      return null;
+      throw normalized;
     } finally {
       posting.current = false;
     }
@@ -556,8 +601,8 @@ export function useFinanceWorkspace() {
       authReady: base.accessReady && permission,
       online: base.online && !base.localOnly,
       pending: () => ref.current?.commands ?? [],
-      sync: (ids, operationResult) =>
-        internalSyncRef.current(ids, operationResult),
+      sync: (ids, operationResult, signal) =>
+        internalSyncRef.current(ids, operationResult, signal),
     });
   }, [
     base.accessReady,

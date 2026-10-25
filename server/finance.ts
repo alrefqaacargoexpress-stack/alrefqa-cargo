@@ -51,6 +51,7 @@ import {
   readOfficeSettings,
   recordWalletReceipt,
 } from "./office";
+import { lockCashRegisterMutex } from "./cashRegisterMutex";
 import { appendAudit } from "./audit";
 import {
   applyShipmentPriceOverride,
@@ -187,8 +188,10 @@ async function ensureOpenCashRegister(
   officeId: OfficeId,
   currency: FinanceEntry["currency"],
   userId: number,
-  requestId: string
+  requestId: string,
+  mutexAlreadyHeld = false
 ) {
+  if (!mutexAlreadyHeld) await lockCashRegisterMutex(tx, officeId, currency);
   const current = await tx
     .select()
     .from(cashRegisters)
@@ -199,8 +202,8 @@ async function ensureOpenCashRegister(
         eq(cashRegisters.status, "open")
       )
     )
-    .limit(1)
     .for("update");
+  if (current.length > 1) throw new Error("cash_register_review_required");
   if (current[0]) return current[0].id as string;
   const id = `cash-register:${officeId}:${currency}:${requestId}`;
   await tx.insert(cashRegisters).values({
@@ -213,6 +216,64 @@ async function ensureOpenCashRegister(
     version: 1,
   });
   return id;
+}
+
+async function lockCashForCommand(
+  tx: any,
+  scope: FinanceScope,
+  command: FinanceMutationCommand
+): Promise<{ officeId: OfficeId; currency: FinanceEntry["currency"] } | null> {
+  if (command.kind === "invoice" && command.payload.paymentMode === "cash") {
+    await lockCashRegisterMutex(
+      tx,
+      employeeFinanceOffice(scope, command.payload.employeeOfficeId),
+      command.payload.currency
+    );
+    return null;
+  } else if (command.kind === "expense") {
+    await lockCashRegisterMutex(
+      tx,
+      employeeFinanceOffice(scope, command.payload.officeId),
+      command.payload.currency
+    );
+    return null;
+  } else if (
+    command.kind === "customer_movement" &&
+    command.payload.paymentMode === "cash"
+  ) {
+    await lockCashRegisterMutex(
+      tx,
+      employeeFinanceOffice(scope, command.payload.officeId),
+      command.payload.currency
+    );
+    return null;
+  } else if (
+    command.kind === "settlement" &&
+    command.payload.payment?.methodId === "cash"
+  ) {
+    // Resolve the lock identity from the stored invoice, never from the
+    // settlement payload. This read must stay non-locking: the mutex is the
+    // first lock in the cash path, followed by the invoice row lock below.
+    const rows = await tx
+      .select()
+      .from(records)
+      .where(
+        and(
+          eq(records.entity, "invoice"),
+          eq(records.recordId, command.payload.invoiceId)
+        )
+      )
+      .limit(1);
+    if (!rows[0]) return null;
+    const finance = invoiceFinance(rows[0].data as Invoice);
+    const lock = {
+      officeId: finance.financialOfficeId,
+      currency: finance.currency,
+    } satisfies { officeId: OfficeId; currency: FinanceEntry["currency"] };
+    await lockCashRegisterMutex(tx, lock.officeId, lock.currency);
+    return lock;
+  }
+  return null;
 }
 
 function publicInvoice(row: any): Invoice {
@@ -625,7 +686,8 @@ async function applyInvoice(
       financialOfficeId,
       input.currency,
       user.id,
-      command.id
+      command.id,
+      true
     );
     await tx.insert(cashMovements).values({
       id: `cash-movement:${command.id}`,
@@ -739,7 +801,8 @@ async function applyExpense(
     financialOfficeId,
     input.currency,
     user.id,
-    command.id
+    command.id,
+    true
   );
   await tx.insert(cashMovements).values({
     id: `cash-movement:${command.id}`,
@@ -783,7 +846,8 @@ async function applySettlement(
   tx: any,
   user: FinanceActor,
   scope: FinanceScope,
-  command: Extract<FinanceMutationCommand, { kind: "settlement" }>
+  command: Extract<FinanceMutationCommand, { kind: "settlement" }>,
+  cashLock: { officeId: OfficeId; currency: FinanceEntry["currency"] } | null
 ) {
   const input = command.payload;
   const rows = await tx
@@ -798,6 +862,12 @@ async function applySettlement(
   if (!rows[0]) throw new Error("invoice_not_found");
   const current = rows[0].data as Invoice;
   const finance = invoiceFinance(current);
+  if (
+    cashLock &&
+    (finance.financialOfficeId !== cashLock.officeId ||
+      finance.currency !== cashLock.currency)
+  )
+    throw new Error("cash_register_metadata_changed");
   assertOffice(scope, finance.financialOfficeId);
   if (rows[0].version !== input.expectedVersion)
     throw new Error("version_conflict");
@@ -874,7 +944,8 @@ async function applySettlement(
       finance.financialOfficeId,
       finance.currency,
       user.id,
-      command.id
+      command.id,
+      true
     );
     await tx.insert(cashMovements).values({
       id: `cash-movement:${command.id}`,
@@ -991,7 +1062,8 @@ async function applyCustomerMovement(
       financialOfficeId,
       input.currency,
       user.id,
-      command.id
+      command.id,
+      true
     );
     await tx.insert(cashMovements).values({
       id: `cash-movement:${command.id}`,
@@ -1138,6 +1210,7 @@ export async function applyFinanceCommand(
   command: FinanceMutationCommand
 ) {
   assertFinanceCommand(scope, command);
+  const cashLock = await lockCashForCommand(tx, scope, command);
   if (command.kind === "invoice" || command.kind === "settlement")
     await assertActiveEntity(tx, "invoice", command.payload.invoiceId);
   if (command.kind === "invoice") return applyInvoice(tx, user, scope, command);
@@ -1148,7 +1221,7 @@ export async function applyFinanceCommand(
     return applyOpeningBalance(tx, user, scope, command);
   if (command.kind === "shipment_price")
     return applyShipmentPrice(tx, user, scope, command);
-  return applySettlement(tx, user, scope, command);
+  return applySettlement(tx, user, scope, command, cashLock);
 }
 
 export async function financeSync(

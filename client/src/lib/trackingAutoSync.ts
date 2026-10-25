@@ -18,6 +18,7 @@ import {
   type TrackingPending,
   type TrackingShipment,
 } from "./trackingStore";
+import { normalizeSyncError } from "./syncErrors";
 
 export type TrackingCommitResult = {
   requestId: string;
@@ -32,10 +33,26 @@ export type TrackingSyncEnvironment = {
   offices: OfficeId[] | null;
   /** Optional explicit capability returned by the access endpoint. */
   canUpdateTracking?: boolean;
+  scopeFingerprint?: string | null;
   isCurrent: () => boolean;
   commit: (
-    input: TrackingCommitInput & { clientUserId?: string }
+    input: TrackingCommitInput & { clientUserId?: string },
+    signal?: AbortSignal
   ) => Promise<TrackingCommitResult>;
+};
+
+export type TrackingSyncOptions = {
+  selectedIds?: string[];
+  signal?: AbortSignal;
+  blockedRequestIds?: ReadonlySet<string>;
+};
+
+export type TrackingPendingItem = {
+  requestId: string;
+  shipmentId: string;
+  expectedVersion: number;
+  command: TrackingCommand;
+  commandFingerprint: string;
 };
 
 export type TrackingSyncConflictKind =
@@ -67,20 +84,34 @@ export type TrackingSyncResult = {
 };
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "tracking_sync_failed";
+  return normalizeSyncError(error).message || "tracking_sync_failed";
 }
 
 function isNetworkError(error: unknown): boolean {
   const message = errorMessage(error).toLowerCase();
   return Boolean(
     (typeof navigator !== "undefined" && navigator.onLine === false) ||
-      /network|fetch|timeout|offline|abort|econn|socket|unavailable/.test(message)
+      /network|fetch|timeout|offline|abort|econn|socket|unavailable/.test(
+        message
+      )
   );
 }
 
 function isBlockedError(error: unknown): boolean {
   return /forbidden|permission|unauthorized|owner|scope|office|role|blocked/.test(
     errorMessage(error).toLowerCase()
+  );
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw new Error("transport_lock_lost");
+}
+
+function isFenceError(error: unknown): boolean {
+  const message = errorMessage(error).toLowerCase();
+  return (
+    message.includes("sync_owner_mismatch") ||
+    message.includes("transport_lock_lost")
   );
 }
 
@@ -99,7 +130,9 @@ function officeAllowed(
   if (env.role === "admin") return true;
   if (!env.offices?.length || !shipment) return false;
   if (env.role === "office_manager")
-    return Boolean(shipment.officeId && env.offices.includes(shipment.officeId));
+    return Boolean(
+      shipment.officeId && env.offices.includes(shipment.officeId)
+    );
   // Server writes are governed by ownerOffice (officeId/source), not by the
   // journey branch. If the sanitized detail has no owner office, fail closed.
   return Boolean(shipment.officeId && env.offices.includes(shipment.officeId));
@@ -122,10 +155,7 @@ function commandAllowed(
     throw new Error("tracking_forbidden");
   if (env.role === "staff" && pending.command.type !== "stage")
     throw new Error("tracking_forbidden");
-  if (
-    env.role === "office_manager" &&
-    pending.command.type === "transfer"
-  )
+  if (env.role === "office_manager" && pending.command.type === "transfer")
     throw new Error("tracking_forbidden");
   if (pending.command.type === "cancel" && env.role !== "admin")
     throw new Error("tracking_forbidden");
@@ -134,8 +164,10 @@ function commandAllowed(
   if (!shipment && !canSuperviseTracking(env.role))
     throw new Error("tracking_scope_required");
   if (shipment) {
-    if (!officeAllowed(env, shipment)) throw new Error("tracking_office_forbidden");
-    const validationRole = actionRole(subject, "tracking", "manage") ?? env.role;
+    if (!officeAllowed(env, shipment))
+      throw new Error("tracking_office_forbidden");
+    const validationRole =
+      actionRole(subject, "tracking", "manage") ?? env.role;
     assertTrackingCommand(
       validationRole,
       shipment as unknown as Shipment,
@@ -161,15 +193,24 @@ function emptyResult(): TrackingSyncResult {
  * merging and request-level ownership checks.
  */
 export async function syncTrackingQueue(
-  env: TrackingSyncEnvironment
+  env: TrackingSyncEnvironment,
+  options: TrackingSyncOptions = {}
 ): Promise<TrackingSyncResult> {
+  const signal = options.signal;
   if (!env.isCurrent()) throw new Error("sync_owner_mismatch");
+  throwIfAborted(signal);
   const cache = loadTrackingCache(env.userId, env.role);
-  const queue = cache.pending.slice();
+  const selected = options.selectedIds ? new Set(options.selectedIds) : null;
+  const queue = cache.pending.filter(
+    pending =>
+      (!selected || selected.has(pending.requestId)) &&
+      !options.blockedRequestIds?.has(pending.requestId)
+  );
   const result = emptyResult();
   result.attempted = queue.length;
 
   for (const pending of queue) {
+    throwIfAborted(signal);
     if (!env.isCurrent()) throw new Error("sync_owner_mismatch");
     let latest: TrackingCache;
     try {
@@ -201,12 +242,16 @@ export async function syncTrackingQueue(
       // This is deliberately immediately before the network request: a stale
       // tab must not submit a previous user's queue under a new session.
       if (!env.isCurrent()) throw new Error("sync_owner_mismatch");
-      response = await env.commit(input);
+      throwIfAborted(signal);
+      response = signal
+        ? await env.commit(input, signal)
+        : await env.commit(input);
       // A session change during an in-flight request prevents local removal;
       // the server's receipt remains safely idempotent for the original owner.
       if (!env.isCurrent()) throw new Error("sync_owner_mismatch");
+      throwIfAborted(signal);
     } catch (error) {
-      if (errorMessage(error) === "sync_owner_mismatch") throw error;
+      if (isFenceError(error)) throw error;
       const kind = conflictKind(error);
       result.conflicts.push({
         requestId: pending.requestId,
@@ -223,6 +268,7 @@ export async function syncTrackingQueue(
     }
 
     if (!env.isCurrent()) throw new Error("sync_owner_mismatch");
+    throwIfAborted(signal);
     const merged = await acknowledgeTrackingCommit(
       env.userId,
       env.role,
@@ -230,6 +276,7 @@ export async function syncTrackingQueue(
       response
     );
     if (!env.isCurrent()) throw new Error("sync_owner_mismatch");
+    throwIfAborted(signal);
     result.applied.push({
       requestId: pending.requestId,
       shipmentId: pending.shipmentId,

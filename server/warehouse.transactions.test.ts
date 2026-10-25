@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Shipment } from "../shared/operations";
 import type { User } from "../drizzle/schema";
-import { records, syncReceipts } from "../drizzle/schema";
+import { records, syncReceipts, users } from "../drizzle/schema";
 import type { OfficeScope } from "./branches";
 let scope: OfficeScope;
 vi.mock("./branches", async () => ({
@@ -18,6 +18,7 @@ const user = {
   openId: "warehouse-test",
   role: "user",
   name: "Warehouse",
+  accountType: "employee",
 } as User;
 const shipment: Shipment = {
   id: "S1",
@@ -87,11 +88,13 @@ function database(original: Shipment = shipment) {
       select: () => ({
         from: (table: unknown) => {
           const values = structuredClone(
-            table === records
-              ? target.rows
-              : table === syncReceipts
-                ? target.receipts
-                : []
+            table === users
+              ? [user]
+              : table === records
+                ? target.rows
+                : table === syncReceipts
+                  ? target.receipts
+                  : []
           );
           const builder: any = {
             where: () => builder,

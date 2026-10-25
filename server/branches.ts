@@ -69,6 +69,7 @@ import { rememberOfficeTariff } from "./officeTariffs";
 import { changedOfficeRateViolations } from "@shared/officeRatePolicy";
 import { readShipmentPricingProjection } from "./shipmentPricing";
 import type { PriceProjection } from "@shared/shipmentPricing";
+import { lockEmployee } from "./lockedEmployee";
 
 export type OfficeScope = {
   role: AppRole | null;
@@ -685,7 +686,8 @@ export async function confirmArrival(
   )
     throw branchForbidden("Nouakchott warehouse arrival is restricted");
   return db.transaction(async (tx: any) => {
-    scope = await readOfficeScope(tx, user);
+    const freshUser = await lockEmployee(tx, user);
+    scope = await readOfficeScope(tx, freshUser, new Set<number>(), true);
     await assertActiveEntity(tx, "shipment", input.shipmentId);
     if (
       !permissionAllowed(scope, "arrival", "manage") ||
@@ -703,7 +705,7 @@ export async function confirmArrival(
       .from(syncReceipts)
       .where(
         and(
-          eq(syncReceipts.userId, user.id),
+          eq(syncReceipts.userId, freshUser.id),
           eq(syncReceipts.changeId, receiptKey)
         )
       )
@@ -760,7 +762,7 @@ export async function confirmArrival(
         version: row.version,
       };
       await tx.insert(syncReceipts).values({
-        userId: user.id,
+        userId: freshUser.id,
         changeId: receiptKey,
         result: { ...result, payloadHash },
       });
@@ -776,7 +778,7 @@ export async function confirmArrival(
     const now = new Date().toISOString();
     const actorRole: AppRole =
       scope.role === "staff" ? "staff" : (scope.role ?? "admin");
-    const acting = actorFromUser(user, actorRole);
+    const acting = actorFromUser(freshUser, actorRole);
     const mutation = {
       action: "tracking_arrival",
       shipment: {
@@ -807,11 +809,11 @@ export async function confirmArrival(
       .set({
         version: nextVersion,
         data: mutation.shipment,
-        updatedBy: user.id,
+        updatedBy: freshUser.id,
       })
       .where(eq(records.id, row.id));
     await appendAudit(tx, {
-      actor: actorFromUser(user, actorRole),
+      actor: actorFromUser(freshUser, actorRole),
       entity: "shipment",
       recordId: input.shipmentId,
       action: "tracking_arrival",
@@ -827,7 +829,7 @@ export async function confirmArrival(
       version: nextVersion,
     };
     await tx.insert(syncReceipts).values({
-      userId: user.id,
+      userId: freshUser.id,
       changeId: receiptKey,
       result: { ...result, payloadHash },
     });

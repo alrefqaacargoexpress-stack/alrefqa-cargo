@@ -127,6 +127,13 @@
       "when": 1792886154755,
       "tag": "0017_lazy_kronos",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "5",
+      "when": 1792897523173,
+      "tag": "0018_loving_loners",
+      "breakpoints": true
     }
   ]
 }

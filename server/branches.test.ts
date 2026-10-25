@@ -13,6 +13,7 @@ import {
   syncReceipts,
   officeProfiles,
   memberRoles,
+  users,
   type User,
 } from "../drizzle/schema";
 import { createPackedShipment } from "../shared/packing";
@@ -25,6 +26,7 @@ const user = {
   name: "Warehouse test",
   email: "private@example.test",
   role: "user",
+  accountType: "employee",
 } as User;
 const scope: OfficeScope = {
   role: "staff",
@@ -33,7 +35,10 @@ const scope: OfficeScope = {
   membershipVersion: 1,
 };
 const arrivalScope: OfficeScope = { ...scope, role: "supervisor" };
-function fixture(currentScope: OfficeScope = arrivalScope) {
+function fixture(
+  currentScope: OfficeScope = arrivalScope,
+  fixtureUser: User = user
+) {
   const shipment = {
     ...createPackedShipment({
       tracking: "ARRIVAL",
@@ -66,23 +71,25 @@ function fixture(currentScope: OfficeScope = arrivalScope) {
     select: () => ({
       from: (table: unknown) => {
         const selected =
-          table === memberRoles
-            ? [
-                {
-                  userId: user.id,
-                  role: currentScope.role,
-                  offices: currentScope.offices,
-                  homeOffice: currentScope.homeOffice,
-                  version: 1,
-                },
-              ]
-            : table === records
-              ? [row]
-              : table === syncReceipts
-                ? receipts
-                : table === officeProfiles
-                  ? profiles
-                  : [];
+          table === users
+            ? [fixtureUser]
+            : table === memberRoles
+              ? [
+                  {
+                    userId: fixtureUser.id,
+                    role: currentScope.role,
+                    offices: currentScope.offices,
+                    homeOffice: currentScope.homeOffice,
+                    version: 1,
+                  },
+                ]
+              : table === records
+                ? [row]
+                : table === syncReceipts
+                  ? receipts
+                  : table === officeProfiles
+                    ? profiles
+                    : [];
         const builder: any = {
           where: () => builder,
           limit: () => builder,
@@ -217,15 +224,11 @@ describe("Office backend protection and warehouse arrival", () => {
     expect(f.writes()).toBe(0);
   });
   it("does not advance a preparing shipment, a cancelled shipment or a stale version", async () => {
-    const first = fixture();
+    const admin = { ...user, role: "admin" } as User;
+    const first = fixture(arrivalScope, admin);
     first.row.data.journey.stage = "preparing" as any;
     await expect(
-      confirmArrival(
-        first.db,
-        { ...user, role: "admin" },
-        { ...scope, role: "admin", offices: null },
-        request(first.shipment.id)
-      )
+      confirmArrival(first.db, user, arrivalScope, request(first.shipment.id))
     ).rejects.toMatchObject({ code: "BAD_REQUEST" });
     const cancelled = fixture();
     (cancelled.row.data as any).deleted = {
@@ -235,7 +238,7 @@ describe("Office backend protection and warehouse arrival", () => {
     await expect(
       confirmArrival(
         cancelled.db,
-        user,
+        admin,
         arrivalScope,
         request(cancelled.shipment.id)
       )

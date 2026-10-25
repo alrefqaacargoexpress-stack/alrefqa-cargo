@@ -81,8 +81,15 @@ function RuntimeRegistration() {
           !live.localOnly
         );
       },
-      commit: async (input: Parameters<typeof commitTracking>[0]) =>
-        (await commitTracking(input)) as TrackingCommitResult,
+      commit: async (
+        input: Parameters<typeof commitTracking>[0],
+        signal?: AbortSignal
+      ) => {
+        if (signal?.aborted) throw new Error("transport_lock_lost");
+        const result = (await commitTracking(input)) as TrackingCommitResult;
+        if (signal?.aborted) throw new Error("transport_lock_lost");
+        return result;
+      },
     };
     return coordinator.registerTracking({
       userId,
@@ -96,7 +103,24 @@ function RuntimeRegistration() {
           return 0;
         }
       },
-      sync: () => syncTrackingQueue(env),
+      pendingItems: () => {
+        try {
+          return loadTrackingCache(userId, role).pending.map(item => ({
+            requestId: item.requestId,
+            shipmentId: item.shipmentId,
+            expectedVersion: item.expectedVersion,
+            command: item.command,
+            commandFingerprint: JSON.stringify({
+              command: item.command,
+              expectedVersion: item.expectedVersion,
+            }),
+          }));
+        } catch {
+          return [];
+        }
+      },
+      sync: (selection, signal) =>
+        syncTrackingQueue(env, { selectedIds: selection, signal }),
     });
   }, [
     base.accessReady,

@@ -28,6 +28,7 @@ import { permissionAllowed, type PermissionMap } from "@shared/permissions";
 import { z } from "zod";
 import { readShipmentPricingProjection } from "./shipmentPricing";
 import type { PriceProjection } from "@shared/shipmentPricing";
+import { lockEmployee } from "./lockedEmployee";
 
 export {
   destinationStorageSchema,
@@ -259,7 +260,8 @@ export async function commitWarehouseStorage(
     throw new Error("sync_owner_mismatch");
   if (!db.transaction) throw new Error("warehouse_transaction_required");
   return db.transaction(async tx => {
-    const scope = await readOfficeScope(tx, user);
+    const freshUser = await lockEmployee(tx, user);
+    const scope = await readOfficeScope(tx, freshUser, new Set<number>(), true);
     await assertActiveEntity(tx, "shipment", input.shipmentId);
     if (!canWriteWarehouse(scope))
       forbidden("warehouse_staff_nouakchott_required");
@@ -269,7 +271,10 @@ export async function commitWarehouseStorage(
       .select()
       .from(syncReceipts)
       .where(
-        and(eq(syncReceipts.userId, user.id), eq(syncReceipts.changeId, key))
+        and(
+          eq(syncReceipts.userId, freshUser.id),
+          eq(syncReceipts.changeId, key)
+        )
       )
       .limit(1)
       .for("update");
@@ -342,7 +347,7 @@ export async function commitWarehouseStorage(
       warehouse: input.warehouse,
       shelf: input.shelf,
       updatedAt: now,
-      updatedBy: user.id,
+      updatedBy: freshUser.id,
     });
     destinationStorageSchema.parse(nextStorage);
     const nextVersion = row.version + 1;
@@ -352,7 +357,7 @@ export async function commitWarehouseStorage(
     } as WarehouseShipment;
     await tx
       .update(records)
-      .set({ version: nextVersion, data: next, updatedBy: user.id })
+      .set({ version: nextVersion, data: next, updatedBy: freshUser.id })
       .where(eq(records.id, row.id));
     await tx.insert(warehouseLocationEvents).values({
       id: `warehouse-location:${key}`,
@@ -364,12 +369,12 @@ export async function commitWarehouseStorage(
       locationCode: `${input.warehouse} - ${input.shelf}`,
       action: "shelve",
       expectedVersion: row.version,
-      actorId: user.id,
+      actorId: freshUser.id,
       requestKey: key,
     });
     const actorRole = scope.role as AppRole;
     await appendAudit(tx as any, {
-      actor: actorFromUser(user, actorRole),
+      actor: actorFromUser(freshUser, actorRole),
       entity: "warehouse_storage",
       recordId: input.shipmentId,
       action: "set_location",
@@ -387,7 +392,7 @@ export async function commitWarehouseStorage(
       version: nextVersion,
     };
     await tx.insert(syncReceipts).values({
-      userId: user.id,
+      userId: freshUser.id,
       changeId: key,
       result: { payloadHash: hash, result },
     });

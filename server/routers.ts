@@ -157,6 +157,7 @@ import { financeSync, financeSnapshot } from "./finance";
 import { financeSyncInputSchema } from "@shared/finance";
 import { warehouseCommandSchema } from "@shared/warehouse";
 import { readWarehouseSnapshot, commitWarehouseStorage } from "./warehouse";
+import { lockEmployee } from "./lockedEmployee";
 import {
   lookupPublicTracking,
   publicTrackingLimiter,
@@ -1415,7 +1416,13 @@ export const appRouter = router({
           throw forbidden("tracking_permission_required");
         try {
           return await db.transaction(async tx => {
-            const scope = await readOfficeScope(tx, ctx.user);
+            const freshUser = await lockEmployee(tx, ctx.user);
+            const scope = await readOfficeScope(
+              tx,
+              freshUser,
+              new Set<number>(),
+              true
+            );
             await assertActiveEntity(tx, "shipment", request.shipmentId);
             const role = scope.role;
             const authorizationRole = permissionActionRole(
@@ -1464,7 +1471,7 @@ export const appRouter = router({
               .from(syncReceipts)
               .where(
                 and(
-                  eq(syncReceipts.userId, ctx.user.id),
+                  eq(syncReceipts.userId, freshUser.id),
                   eq(syncReceipts.changeId, receiptKey)
                 )
               )
@@ -1534,7 +1541,7 @@ export const appRouter = router({
             const mutation = applyTrackingCommand(
               row.data as Shipment,
               request.command,
-              actorFromUser(ctx.user, role, authorizationRole)
+              actorFromUser(freshUser, role, authorizationRole)
             );
             const nextVersion = row.version + 1;
             await tx
@@ -1542,11 +1549,11 @@ export const appRouter = router({
               .set({
                 version: nextVersion,
                 data: mutation.shipment,
-                updatedBy: ctx.user.id,
+                updatedBy: freshUser.id,
               })
               .where(eq(records.id, row.id));
             await appendAudit(tx, {
-              actor: actor(ctx.user, role),
+              actor: actor(freshUser, role),
               entity: "shipment",
               recordId: request.shipmentId,
               action: mutation.action,
@@ -1562,7 +1569,7 @@ export const appRouter = router({
               version: nextVersion,
             };
             await tx.insert(syncReceipts).values({
-              userId: ctx.user.id,
+              userId: freshUser.id,
               changeId: receiptKey,
               result: { ...result, payloadHash },
             });

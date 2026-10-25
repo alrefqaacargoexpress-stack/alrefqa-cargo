@@ -8,6 +8,7 @@ import {
   records,
   syncReceipts,
   financeEntries,
+  users,
 } from "../drizzle/schema";
 import type { TrpcContext } from "./_core/context";
 let membership: any;
@@ -60,21 +61,23 @@ const db: any = {
           ? { ...membership, canUpdateTracking: false }
           : membership;
       const values =
-        table === memberRoles
-          ? [member]
-          : table === records
-            ? [
-                {
-                  id: 1,
-                  entity: "shipment",
-                  recordId: "S1",
-                  version: 1,
-                  data: structuredClone(cargo),
-                },
-              ]
-            : table === syncReceipts
-              ? structuredClone(receipts)
-              : [];
+        table === users
+          ? [user]
+          : table === memberRoles
+            ? [member]
+            : table === records
+              ? [
+                  {
+                    id: 1,
+                    entity: "shipment",
+                    recordId: "S1",
+                    version: 1,
+                    data: structuredClone(cargo),
+                  },
+                ]
+              : table === syncReceipts
+                ? structuredClone(receipts)
+                : [];
       const builder: any = {
         where: () => builder,
         limit: () => builder,

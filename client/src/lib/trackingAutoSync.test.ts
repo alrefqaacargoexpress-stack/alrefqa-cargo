@@ -65,9 +65,12 @@ beforeEach(() => {
     },
     dispatchEvent: () => true,
   });
-  vi.stubGlobal("navigator", { onLine: true, locks: {
-    request: async (_key: string, callback: () => unknown) => callback(),
-  } });
+  vi.stubGlobal("navigator", {
+    onLine: true,
+    locks: {
+      request: async (_key: string, callback: () => unknown) => callback(),
+    },
+  });
   vi.stubGlobal("crypto", {
     randomUUID: () => `request-${++uuid}`,
   });
@@ -177,7 +180,39 @@ describe("tracking global sync adapter", () => {
       isCurrent: () => true,
       commit,
     });
-    expect(result.applied[0]).toMatchObject({ requestId: "request-1", version: 4 });
+    expect(result.applied[0]).toMatchObject({
+      requestId: "request-1",
+      version: 4,
+    });
     expect(commit.mock.calls[0][0]).toMatchObject({ clientUserId: "7" });
+  });
+
+  it("retries a network result without a permanent review block or new ID", async () => {
+    await saveTrackingCache(pendingCache());
+    let online = false;
+    const commit = vi.fn(async (input: { requestId: string }) => {
+      if (!online) throw new Error("network timeout");
+      return response(input.requestId);
+    });
+    const env = {
+      userId: "7",
+      role: "tracking_staff" as const,
+      offices: ["dubai"],
+      isCurrent: () => true,
+      commit,
+    };
+
+    const first = await syncTrackingQueue(env);
+    online = true;
+    const second = await syncTrackingQueue(env);
+
+    expect(first.network).toBe(true);
+    expect(second.applied).toEqual([
+      { requestId: "request-1", shipmentId: "s1", version: 4 },
+    ]);
+    expect(commit.mock.calls.map(call => call[0].requestId)).toEqual([
+      "request-1",
+      "request-1",
+    ]);
   });
 });

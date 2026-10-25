@@ -54,6 +54,12 @@ import {
   isNouakchottStaff,
   profileMatchesUser,
 } from "@/lib/offlineAccess";
+import {
+  isAuthorizationSyncError,
+  isNetworkSyncError,
+  isNonFailureSyncOutcome,
+  normalizeSyncError,
+} from "@/lib/syncErrors";
 import { assertShipmentAction } from "@shared/shipmentDeletion";
 import { reasonFromError, syncReasonMessage } from "@/lib/syncReasonCopy";
 import {
@@ -644,11 +650,28 @@ export function useOperationsWorkspace() {
   };
   const runSyncInternal = async (
     selected?: Array<{ entity: Entity; recordId: string }>,
-    _operationResult?: SyncResult | null
+    _operationResult?: SyncResult | null,
+    signal?: AbortSignal
   ): Promise<SyncResult | null> => {
     const id = activeId;
-    const current = id ? loadWorkspace(id) : ref.current;
-    if (!id || localOnly || !online) {
+    const runScope = permissionFingerprint ?? null;
+    let current: Workspace | null;
+    try {
+      current = id ? loadWorkspace(id) : ref.current;
+    } catch (error) {
+      const normalized = normalizeSyncError(error);
+      if (isNonFailureSyncOutcome(normalized)) return null;
+      setNotice(w.syncError);
+      throw normalized;
+    }
+    if (
+      !id ||
+      localOnly ||
+      !online ||
+      signal?.aborted ||
+      owner.current !== id ||
+      scopeOwner.current !== runScope
+    ) {
       setNotice(w.offline);
       return null;
     }
@@ -674,15 +697,39 @@ export function useOperationsWorkspace() {
     }
     setBusy(true);
     try {
+      if (
+        signal?.aborted ||
+        owner.current !== id ||
+        scopeOwner.current !== runScope
+      )
+        return null;
       const result = await mutation.mutateAsync({
         changes: batch,
         clientUserId: id,
       });
-      if (owner.current !== id) return null;
+      // The request may already have reached the server. Do not erase an
+      // uncertain queue entry when the account, scope, or run was superseded.
+      if (
+        signal?.aborted ||
+        owner.current !== id ||
+        scopeOwner.current !== runScope
+      )
+        return null;
       const latest = ref.current ?? current;
       const next = applySyncResult(latest, result, id);
+      if (
+        signal?.aborted ||
+        owner.current !== id ||
+        scopeOwner.current !== runScope
+      )
+        return null;
       await saveWorkspace(id, next);
-      if (owner.current !== id) return null;
+      if (
+        signal?.aborted ||
+        owner.current !== id ||
+        scopeOwner.current !== runScope
+      )
+        return null;
       ref.current = next;
       setWorkspace(next);
       setConflicts(result.conflicts);
@@ -700,21 +747,37 @@ export function useOperationsWorkspace() {
             : w.emptyReceipt
       );
       return result;
-    } catch {
+    } catch (error) {
+      const normalized = normalizeSyncError(error);
+      if (isNonFailureSyncOutcome(normalized)) return null;
       setNotice(w.syncError);
-      return null;
+      throw normalized;
     } finally {
       setBusy(false);
     }
   };
   const internalSyncRef = useRef(runSyncInternal);
   internalSyncRef.current = runSyncInternal;
-  const syncWarehouse = async (): Promise<string[]> => {
+  const syncWarehouse = async (signal?: AbortSignal): Promise<string[]> => {
     if (!userId || !accessReady || localOnly || !online) return [];
+    const runScope = permissionFingerprint ?? null;
     const accepted: string[] = [];
     const advanced = new Map<string, { from: number; to: number }>();
-    const pending = loadWarehousePending(userId).pending;
+    let pending: ReturnType<typeof loadWarehousePending>["pending"];
+    try {
+      pending = loadWarehousePending(userId).pending;
+    } catch (error) {
+      const normalized = normalizeSyncError(error);
+      if (isNonFailureSyncOutcome(normalized)) return accepted;
+      throw normalized;
+    }
     for (const draft of pending) {
+      if (
+        signal?.aborted ||
+        owner.current !== String(userId) ||
+        scopeOwner.current !== runScope
+      )
+        return accepted;
       const step = advanced.get(draft.shipmentId);
       // Rebase only before this request's first send; never mint a new request id.
       const expectedVersion =
@@ -731,6 +794,12 @@ export function useOperationsWorkspace() {
           expectedVersion,
           clientUserId: String(userId),
         })) as { version: number };
+        if (
+          signal?.aborted ||
+          owner.current !== String(userId) ||
+          scopeOwner.current !== runScope
+        )
+          return accepted;
         advanced.set(draft.shipmentId, {
           from: expectedVersion,
           to: result.version,
@@ -738,18 +807,21 @@ export function useOperationsWorkspace() {
         removeWarehouseLocation(userId, draft.requestId);
         accepted.push(draft.requestId);
       } catch (error) {
+        const normalized = normalizeSyncError(error);
+        if (isNonFailureSyncOutcome(normalized)) return accepted;
+        if (
+          isNetworkSyncError(normalized) ||
+          isAuthorizationSyncError(normalized)
+        )
+          throw normalized;
         // A conditional conflict blocks later edits for this shipment, but does not
         // freeze unrelated goods. The request remains durable for review/retry.
         if (
-          error instanceof Error &&
-          /conflict|version|permission|forbidden|session/i.test(error.message)
+          normalized.code.includes("CONFLICT") ||
+          normalized.code.includes("VERSION")
         )
           advanced.delete(draft.shipmentId);
-        else if (
-          error instanceof Error &&
-          /network|fetch|timeout|offline/i.test(error.message)
-        )
-          throw error;
+        else throw normalized;
       }
     }
     return accepted;
@@ -766,7 +838,9 @@ export function useOperationsWorkspace() {
       authReady: accessReady && !localOnly,
       online: online && !localOnly,
       pending: () => ref.current?.queue ?? [],
-      sync: selection => internalSyncRef.current(selection),
+      scopeFingerprint: permissionFingerprint ?? null,
+      sync: (selection, operationResult, signal) =>
+        internalSyncRef.current(selection, operationResult, signal),
     });
   }, [accessReady, coordinator, online, permissionFingerprint, userId]);
   useEffect(() => {

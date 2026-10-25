@@ -721,3 +721,17 @@ export const shipmentPriceOverrides = mysqlTable(
   ]
 );
 export type ShipmentPriceOverrideRow = typeof shipmentPriceOverrides.$inferSelect;
+
+/** Transactional mutex for opening cash sessions; no legacy register is rewritten. */
+export const cashRegisterLocks = mysqlTable(
+  "cash_register_locks",
+  {
+    id: varchar("id", { length: 128 }).primaryKey(),
+    officeId: varchar("officeId", { length: 32 }).notNull(),
+    currency: mysqlEnum("currency", financeCurrencies).notNull(),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  table => [
+    uniqueIndex("cash_register_locks_office_currency_uq").on(table.officeId, table.currency),
+  ]
+);
