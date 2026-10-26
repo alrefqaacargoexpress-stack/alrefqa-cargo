@@ -86,7 +86,35 @@ createRoot(document.getElementById("root")!).render(
 
 if (import.meta.env.PROD && "serviceWorker" in navigator) {
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" }).catch(error => {
+    let reloadedForUpdate = false;
+
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (reloadedForUpdate) return;
+      reloadedForUpdate = true;
+      window.location.reload();
+    });
+
+    navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" }).then(registration => {
+      const activateWaitingWorker = () => {
+        if (registration.waiting) {
+          registration.waiting.postMessage({ type: "SKIP_WAITING" });
+        }
+      };
+
+      activateWaitingWorker();
+      registration.addEventListener("updatefound", () => {
+        registration.installing?.addEventListener("statechange", () => {
+          if (registration.installing?.state === "installed") activateWaitingWorker();
+        });
+      });
+
+      const refreshServiceWorker = () => registration.update().catch(() => undefined);
+      window.addEventListener("online", refreshServiceWorker);
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") refreshServiceWorker();
+      });
+      refreshServiceWorker();
+    }).catch(error => {
       console.warn("Offline shell registration failed", error);
     });
   });

@@ -3,7 +3,7 @@ importScripts('/precache-manifest.js');
 const CACHE = `alrefqa-copy-shell-${self.ALREFQA_BUILD_ID || 'v2'}`;
 const SHELL = self.ALREFQA_PRECACHE || ['/', '/manifest.webmanifest', '/icons/logo.webp', '/icons/icon-192.png', '/icons/icon-512.png'];
 self.addEventListener('install', event => {
-  event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)));
+  event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)).then(() => self.skipWaiting()));
 });
 self.addEventListener('activate', event => {
   // Clear only this application's outdated shell caches; never touch localStorage or user data.
