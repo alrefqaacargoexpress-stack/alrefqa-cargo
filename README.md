@@ -1,14 +1,83 @@
-# نسخة الرفكة للشحن
+# مؤسسة الرفكة للشحن
 
-React / Express / tRPC / Drizzle starter, adapted from the Sandbox web-db-user template.
+نظام لإدارة عمليات الشحن ومكاتب دبي وتركيا والصين ونواكشوط، مع نافذة خاصة للموظف حسب دوره ومكتبه، ونافذة مستقلة للزبون لمتابعة بضائعه المصرح بها.
 
-- `pnpm dev`: development server; honors `PORT` (default 3000).
-- `pnpm build` / `pnpm start`: build and serve `dist/index.js` and `dist/public/`.
-- `pnpm db:migrate`: apply checked-in migrations. `pnpm db:push`: generate and apply new schema changes.
-- `pnpm check` / `pnpm test`: types and application tests.
+المستودع مخصص للتطوير والمشاركة مع المطورين المعتمدين. **تنزيل الكود لا ينقل قاعدة البيانات أو حسابات المستخدمين أو شحنات المؤسسة.**
 
-Start with the Webdev skill's default-template guide. Platform login, storage, payments and service contracts live in its shared references; read the relevant capability before extending its helper.
+## إمكانات المشروع
 
-`server/_core/publicConfig.ts` exposes only named public runtime values. Private keys stay server-side. The platform serves managed `/manus-storage/` assets; the application does not register a second proxy.
+| المجال | الوظائف |
+|---|---|
+| الشحنات | التجهيز، تجميع البضائع والكراتين، مراحل الرحلة، والإرسال والاستلام |
+| المكاتب | العناوين، مواعيد العمل، جهات الاتصال، وتعرفة الكيلو حسب المكتب والخدمة |
+| الحسابات | الفواتير، ديون العملاء، الصندوق، المحافظ، المصروفات، وتكاليف الشحن |
+| الصلاحيات | نطاق المكتب، أدوار الموظفين، مستويات منع/مشاهدة/إدارة، وتدقيق التغييرات |
+| الزبائن | شحناتي، وبوابة تتبع برقم الشحنة والهاتف دون كشف التفاصيل المالية الحساسة |
+| الهاتف | PWA قابل للتثبيت، مسودات محلية، ومزامنة تلقائية أثناء فتح التطبيق |
+| الملفات واللغات | استيراد وتصدير Excel، والعربية والإنجليزية والصينية والتركية |
 
-Platform configuration is readable and editable through `webdev.config`. Default settings are initial values, not enforced constraints. The agent may modify the files, commands and configuration or follow the flexible guide for another stack.
+المزامنة لا تستبدل التعارضات تلقائيًا، ولا يوجد ضمان بإرسال البيانات عندما يكون التطبيق مغلقًا بالكامل؛ تُستأنف عند فتحه وعودة الاتصال والجلسة المصرح بها.
+
+## تنزيل الملفات ومشاركتها
+
+من صفحة المستودع في GitHub افتح **Code → Download ZIP** لتنزيل ملفات الفرع المحدد. المستودع الخاص لا يفتح بمجرد إرسال رابطه؛ يجب أن يكون الشخص مسجلًا بحساب يملك صلاحية الوصول.
+
+راجع [دليل المشاركة](docs/SHARING.md) لتنظيم تسليم المشروع للمطورين. لا تحول المستودع إلى عام ولا تنشر ملفات البيئة أو بيانات العملاء.
+
+## التقنيات
+
+React وVite وTypeScript في الواجهة، Express وtRPC في الخادم، Drizzle ORM مع قاعدة MySQL متوافقة، وVitest للاختبارات. مدير الحزم المعتمد هو `pnpm@10.18.0`.
+
+## التشغيل للتطوير
+
+يلزم Node.js متوافق مع Vite 7؛ يوصى بـNode.js 22.12 أو أحدث، وpnpm 10.18.0، وقاعدة تطوير منفصلة. ملفات ZIP لا تتضمن الخدمات أو الأسرار التي تضبطها بيئة الاستضافة.
+
+```bash
+corepack enable
+corepack prepare pnpm@10.18.0 --activate
+pnpm install --frozen-lockfile
+cp .env.example .env
+```
+
+اضبط `.env` محليًا بقيم بيئة تطوير جديدة. اقرأ `server/_core/env.ts` وملفات المصادقة عند تجهيز استضافة مستقلة؛ قيم خدمات Manus والمصادقة والتخزين لا تنتقل تلقائيًا إلى جهاز المطور. المثال المرفق لا يحتوي على بيانات اعتماد صالحة.
+
+**لا تستخدم اتصال قاعدة المؤسسة الحية للتجربة.** بعد مراجعة الترحيلات والتأكد أن الاتصال يشير إلى قاعدة تطوير جديدة فقط، يمكن تهيئة مخططها ثم بدء الخادم:
+
+```bash
+pnpm db:migrate
+pnpm dev
+```
+
+المنفذ الافتراضي هو `3000`. أمر الترحيل ليس خطوة مطلوبة لتنزيل المشروع أو مشاركته، ولا يجوز تشغيله على القاعدة الحية دون مراجعة وموافقة منفصلة.
+
+## الفحص وبناء الإنتاج
+
+```bash
+pnpm check
+pnpm test
+pnpm build
+pnpm start
+```
+
+يُنتج البناء ملفات الخادم في `dist/index.js` والواجهة في `dist/public/`. آخر فحص موثق للإصلاحات بتاريخ 25 أكتوبر 2026 اجتاز 753 حالة اختبار؛ ذلك ليس ضمانًا لتشغيل بيئة خارجية لم تُهيّأ أو لكل جهاز هاتف.
+
+## هيكل الملفات
+
+| المسار | المسؤولية |
+|---|---|
+| `client/src/pages/` | صفحات الزبائن والموظفين والحسابات |
+| `client/src/components/` | النماذج، المكونات، ومزود المزامنة |
+| `client/src/hooks/` و`client/src/lib/` | حالة العمل، التخزين المحلي، وحجز الطوابير |
+| `server/` | قواعد العمل، المصادقة، النطاق، المعاملات والتدقيق |
+| `shared/` | العقود والتحقق ومصفوفة الصلاحيات المشتركة |
+| `drizzle/` | المخطط والترحيلات البنيوية وتاريخها |
+| `client/public/` | الأصول وملفات PWA وبيان المسارات |
+| `docs/` | إرشادات المشاركة والتطوير |
+
+`plan.md` و`TODO.md` يحتويان سجل القرارات والعمل الداخلي، ولا يمثلان تفويضًا جديدًا لتعديل البيانات. سكربتات الصيانة تحت `scripts/` ليست كلها للقراءة فقط؛ لا تشغّلها تلقائيًا بعد التنزيل.
+
+## حماية البيانات والمساهمة
+
+راجع [سياسة الأمان](SECURITY.md) و[إرشادات المساهمة](CONTRIBUTING.md). لا تضع كلمات مرور أو ملفات `.env` أو ملفات Excel حقيقية أو صورًا تكشف العملاء في Issues أو Pull Requests.
+
+ربط المستودع بـGitHub يغيّر مكان حفظ الكود فقط. لا يغيّر النطاق أو قاعدة البيانات أو صلاحيات الموظفين، والنشر له إعداد وإجراء مستقلان. ينطبق إعداد النشر التلقائي للمالك عندما يكون مفعّلًا.

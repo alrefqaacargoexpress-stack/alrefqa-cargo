@@ -112,3 +112,12 @@ test-results/
 
 # Manus version file (auto-generated, not part of source)
 client/public/__manus__/version.json
+
+# Shared repository privacy
+.env.*
+!.env.example
+exports/
+backups/
+private-review/
+.manus-logs/
+*.zip

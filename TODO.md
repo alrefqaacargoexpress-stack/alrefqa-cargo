@@ -23,3 +23,11 @@ Coordinator/Tracking/Provider اكتمل: حجزcoordinator-scopedلاmodulecach
 المراجعةreadonlyالمستقلة لمتثبتعطلًاإضافيًا فيالتبعيات/التتبع/lease/الخادم/الصندوق. حجزthrownFORBIDDEN/OpsFin المفقودأُغلقبrememberattemptedIDs وwarehousestagebarrier وUNAUTHORIZEDholduntilreauth معmanualselected/scoperelease،24focusedfakeنجحت. أعيدfullsuiteبعدالpatch:144files/753tests وpnpmcheck ناجحتان؛بناءfinalجارٍ قبلالحفظ. لايستنتجهذااكتمالمزامنةهواتففعليةأونشرالكودالجديد.
 
 نتيجةنهائيةمعتمدة:pnpmcheck و144files/753tests وbuildنجحت؛53precache/versionba99466cbc948331 وchunkswarningقديمغيرمانع. المراجعةreadonlyلاconfirmedissuesمتبقيةبالتدفقاتالمستهدفة، وحجزauthExceptionsأغلقباختباراتالجولةالأخيرة. DDLCREATEقفلواحدفقط،كلجداولالأعمالالقديمةثابتةبالhash،usersمستثنىلتغيرmetadataمصادقةولاassertثباتكلحقوله،mutexRows0 وHawaNULL50. لاLiveSync/معاملاتماليةاختباريةأودور/منععملة/نشرجديد.21page routes باستثناء/404-onlyيتطابقمعmanifest؛الشعارPWAExcelالموجودةمحفوظة. يبدأصحةpreviewوحفظcanonicalmainدونتقاريرprivate.
+
+## ربط المشروع كاملًا بـGitHub ومشاركة مرتبة —26 أكتوبر2026
+- [x] README واضح ودليل Download ZIP/المتعاونين ومثال بيئة وهمي وقواعد استبعاد، دون تغيير كود التطبيق أو أسرار/بيانات عملاء/تجارب قاعدة. تاريخ المصدر والترحيلات محفوظة، وZIP ليسنسخةبيانات.
+- [ ] تأكيد المالك لمستودع GitHub جديد خاص، جلب أحدثmain وتضمينه بالهدف، complete ناجح يجعل GitHub canonical، وإثبات الخصوصية والرابط وفرعmain. لاforce أوحذف/استبدال تاريخ أوإضافة متعاون أوPublic أوWebsitePublish. التسليم برابطGitHub والتنزيل وتعليماتمختصرة.
+
+أُعدت README وdocs/SHARING وSECURITY وCONTRIBUTING ومثال.envبقِيموهمية وتقويةgitignore؛مراجعة445trackedfilesلمتثبتsecretlive،والترحيلاتبنيوية. حسابGitHubalrefqaacargoexpress-stack متصلبموافقةالمستخدم. userاختارcanonicalGithubprivate؛GETconfigأظهرauto_publish=true،وطلبناحسمإبقائهأوإيقافهمناللوحةقبلpush. لاREADMEcommit/push/transferبعدولاقاعدة/اختباراتlive/أسرارمنسوخة. docslocalجاهزة،transfercardسيحافظعلىالتاريخوالأصولوالترحيلات ولايضململفاتignoredأوتقاريرprivateoutside.
+
+تم تأكيدمستودعGitHubالخاصالهدف؛التوثيقجاهزومنقولمعmain،ويبقىcompleteبالمراجعةالسلطويةقبلإعلاناكتمالcanonical. لاWebsitePublishأونقلDB.
