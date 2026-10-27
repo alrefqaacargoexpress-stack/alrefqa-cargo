@@ -302,10 +302,28 @@ export const appRouter = router({
             message: "invalid_credentials",
           });
         if (isOwner && (user.role !== "admin" || user.accountType !== "employee")) {
+          const before = { role: user.role, accountType: user.accountType };
           await database
             .update(users)
             .set({ role: "admin", accountType: "employee", updatedAt: new Date() })
             .where(eq(users.id, user.id));
+          await appendAudit(database, {
+            actor: {
+              id: user.id,
+              name: user.name ?? email,
+              role: "admin",
+            },
+            entity: "user_account",
+            recordId: String(user.id),
+            action: "owner_email_promoted",
+            before,
+            after: {
+              role: "admin",
+              accountType: "employee",
+              source: "configured_owner_email",
+            },
+            requestKey: `owner-email-promotion:${user.id}`,
+          });
           user = { ...user, role: "admin", accountType: "employee" };
         }
         const token = createSessionToken();
