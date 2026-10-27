@@ -84,7 +84,7 @@ function Router() {
       <Route path="/operations/finance" component={OfficeFinance} />
       <Route path="/operations/advanced" component={Operations} />
       <Route path="/operations" component={OperationsHome} />
-      <Route path="/admin" component={Operations} />
+      <Route path="/admin" component={OperationsHome} />
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />
     </Switch>

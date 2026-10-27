@@ -31,6 +31,7 @@ function uuid() {
 export type OfficeExpenseFormProps = {
   allowedOffices: readonly OfficeId[];
   initialOffice?: OfficeId;
+  initialCategory?: "daily_expense" | "monthly_expense" | "shipment_cost";
   shipments: readonly Shipment[];
   canEdit: boolean;
   online: boolean;
@@ -81,6 +82,7 @@ export function createExpenseCommand(input: {
 export default function OfficeExpenseForm({
   allowedOffices,
   initialOffice,
+  initialCategory,
   shipments,
   canEdit,
   online,
@@ -124,7 +126,15 @@ export default function OfficeExpenseForm({
     (canEdit && (role === "admin" || singleOfficeScope) && canPostSourceCost);
   const [category, setCategory] = useState<
     "daily_expense" | "monthly_expense" | "shipment_cost"
-  >(canManageExpenses ? "daily_expense" : "shipment_cost");
+  >(
+    initialCategory === "shipment_cost" && canPostSourceCost
+      ? "shipment_cost"
+      : initialCategory === "monthly_expense" && canManageExpenses
+        ? "monthly_expense"
+        : canManageExpenses
+          ? "daily_expense"
+          : "shipment_cost"
+  );
   const [officeId, setOfficeId] = useState<OfficeId>(
     initialOffice && allowedOffices.includes(initialOffice)
       ? initialOffice
@@ -162,6 +172,15 @@ export default function OfficeExpenseForm({
     ? (sourceCurrency[selectedShipment.packing.source] as FinanceCurrency)
     : undefined;
 
+  useEffect(() => {
+    if (
+      initialCategory === "shipment_cost" &&
+      canPostSourceCost &&
+      category !== "shipment_cost"
+    ) {
+      setCategory("shipment_cost");
+    }
+  }, [canPostSourceCost, initialCategory]);
   useEffect(() => {
     if (category !== "shipment_cost") setShipmentId("");
     else if (!officeShipments.some(shipment => shipment.id === shipmentId))

@@ -1,14 +1,11 @@
-import { useState, type ReactNode } from "react";
-import { Link, useLocation } from "wouter";
+import { type ReactNode } from "react";
+import { Link } from "wouter";
 import {
   AlertTriangle,
-  CheckCircle2,
   Cloud,
   CloudOff,
-  Home,
   Package,
   RefreshCw,
-  ShieldAlert,
 } from "lucide-react";
 import LanguageSwitcher from "@/components/LanguageSwitcher";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -17,24 +14,21 @@ import { startLogin } from "@/const";
 import { downloadLocalArchive } from "@/lib/offlineStore";
 import { copyFor } from "@/lib/packingCopy";
 import { roleWorkspaceCopy } from "@/lib/roleWorkspaceCopy";
-import {
-  roleWorkspaceTasks,
-  workspaceSyncStatus,
-} from "@/lib/roleWorkspace";
+import { workspaceLayoutCopy } from "@/lib/workspaceLayoutCopy";
+import { workspaceSyncStatus } from "@/lib/roleWorkspace";
 import { canUseOperations } from "@shared/tracking";
 import { permissionAllowed } from "@shared/permissions";
 import { trpc } from "@/lib/trpc";
 import RoleWorkspaceShell from "@/components/roleWorkspace/RoleWorkspaceShell";
+import WorkspaceNavigation from "@/components/roleWorkspace/WorkspaceNavigation";
 import SyncConflictPanel from "./SyncConflictPanel";
 import DutyAvailability from "./DutyAvailability";
 import {
-  PackingScopeBadge,
   packingPrimaryClass,
   packingSecondaryClass,
-} from "@/components/packing/PackingPrimitives";
+} from "./PackingPrimitives";
 
 export type PackingWorkspace = ReturnType<typeof useOperationsWorkspace>;
-
 export default function PackingLayout({
   children,
   title,
@@ -49,86 +43,22 @@ export default function PackingLayout({
   const { language } = useLanguage();
   const c = copyFor(language);
   const roleCopy = roleWorkspaceCopy[language];
-  const [, navigate] = useLocation();
+  const layoutCopy = workspaceLayoutCopy[language];
   const me = trpc.auth.me.useQuery(undefined, {
     retry: false,
     refetchOnWindowFocus: false,
   });
-  const [notice, setNotice] = useState<{
-    text: string;
-    success: boolean;
-  } | null>(null);
-  const offlineCandidate = !workspace.online && workspace.offlineAvailable;
   const subject = {
     role: workspace.role,
     offices: workspace.offices,
     permissions: workspace.permissions,
+    canUpdateTracking: workspace.canUpdateTracking,
   };
   const canViewShipments = permissionAllowed(subject, "shipments", "view");
   const canViewCustomers = permissionAllowed(subject, "customers", "view");
-  const canViewInvoices = permissionAllowed(subject, "invoices", "view");
-  const canManageSettings = permissionAllowed(
-    subject,
-    "office_settings",
-    "manage"
-  );
-  const roleTasks = roleWorkspaceTasks({
-    role: workspace.role,
-    offices: workspace.offices,
-    permissions: workspace.permissions,
-    canUpdateTracking: workspace.canUpdateTracking,
-  });
-  const routeLinks = [
-    { href: "/", label: <Home size={15} />, text: c.title },
-    {
-      href: "/operations",
-      label: <ShieldAlert size={15} />,
-      text: c.operations,
-    },
-    ...(roleTasks.some(task => task.id === "shipments")
-      ? [{ href: "/operations/shipments", label: <Package size={15} />, text: c.shipments }]
-      : []),
-    ...(roleTasks.some(task => task.id === "customers")
-      ? [{ href: "/operations/customers", label: null, text: c.customers }]
-      : []),
-    ...(roleTasks.some(task => task.id === "invoices")
-      ? [{ href: "/operations/billing", label: null, text: roleCopy.tasks.invoices }]
-      : []),
-    ...(roleTasks.some(task => task.id === "tracking")
-      ? [{ href: "/operations/tracking", label: null, text: roleCopy.tasks.tracking }]
-      : []),
-    ...(roleTasks.some(task => task.id === "settings") || roleTasks.some(task => task.id === "employees")
-      ? [{ href: "/operations/settings", label: <ShieldAlert size={15} />, text: roleCopy.tasks.settings }]
-      : []),
-    {
-      href: "/account/security",
-      label: <ShieldAlert size={15} />,
-      text: {
-        ar: "أمان الحساب",
-        en: "Account security",
-        zh: "账户安全",
-        tr: "Hesap güvenliği",
-      }[language],
-    },
-  ];
-
-  const reviewAndSync = async () => {
-    if (!workspace.queue.length) return;
-    const result = await workspace.sync();
-    if (!result) return;
-    if (result.conflicts.length)
-      setNotice({ text: c.conflicts, success: false });
-    else if (result.applied.length)
-      setNotice({
-        text: `${c.syncSuccess}: ${result.applied.length} ${c.applied}`,
-        success: true,
-      });
-    else setNotice({ text: c.syncNoSuccess, success: false });
-  };
-
+  const offlineCandidate = !workspace.online && workspace.offlineAvailable;
   const shellState = () => {
-    if (workspace.loading)
-      return <StatePanel title={c.loading} detail={c.localHint} />;
+    if (workspace.loading) return <StatePanel title={c.loading} />;
     if (!workspace.userId && !workspace.localOnly)
       return (
         <StatePanel
@@ -178,31 +108,19 @@ export default function PackingLayout({
         />
       );
     if (workspace.role === null && !workspace.localOnly)
-      return <StatePanel title={roleCopy.roles.unassigned} detail={roleCopy.waiting} />;
+      return (
+        <StatePanel
+          title={roleCopy.roles.unassigned}
+          detail={roleCopy.waiting}
+        />
+      );
     if (
       !canUseOperations(workspace.role) &&
       !canViewShipments &&
       !canViewCustomers &&
       !permissionAllowed(subject, "tracking", "view")
     )
-      return (
-        <StatePanel
-          title={c.noAccess}
-          detail={c.noPermission}
-          action={
-            <Link href="/operations/tracking" className={packingPrimaryClass}>
-              {
-                {
-                  ar: "تتبع الشحنات",
-                  en: "Shipment tracking",
-                  zh: "货运追踪",
-                  tr: "Gönderi takibi",
-                }[language]
-              }
-            </Link>
-          }
-        />
-      );
+      return <StatePanel title={c.noAccess} detail={c.noPermission} />;
     return null;
   };
   const blocked = shellState();
@@ -213,259 +131,138 @@ export default function PackingLayout({
     syncing: workspace.busy,
     conflictCount: workspace.conflicts.length,
   });
-
   return (
     <div
       className="min-h-screen bg-[#f7f8f5] text-[#112c43]"
       dir={language === "ar" ? "rtl" : "ltr"}
     >
-      <header className="border-b border-[#dce4e7] bg-white/95">
-        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-4 py-4 sm:px-6">
-          <div className="flex min-w-0 items-center gap-3">
-            <div className="grid size-10 shrink-0 place-items-center rounded-2xl bg-[#092d50] text-[#d9a441]">
+      <header className="border-b border-[#dce4e7] bg-white">
+        <div className="mx-auto flex max-w-[1600px] flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6">
+          <Link
+            href="/operations"
+            className="flex min-w-0 items-center gap-2.5"
+          >
+            <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-[#092d50] text-[#d9a441]">
               <Package size={21} />
-            </div>
-            <div className="min-w-0">
-              <p className="truncate text-lg font-black text-[#092d50]">
-                {c.title}
-              </p>
-              <p className="truncate text-xs text-[#718088]">
-                {description ?? c.description}
-              </p>
-            </div>
-          </div>
+            </span>
+            <span className="text-sm font-black text-[#092d50] sm:text-base">
+              {layoutCopy.brand}
+            </span>
+          </Link>
           <div className="flex items-center gap-2">
             <LanguageSwitcher />
             <span
-              className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-bold ${workspace.online ? "bg-emerald-50 text-emerald-800" : "bg-amber-50 text-amber-800"}`}
+              role="status"
+              className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1.5 text-[11px] font-bold ${syncStatus === "pending" || syncStatus === "review" ? "bg-amber-50 text-amber-800" : syncStatus === "offline" ? "bg-blue-50 text-blue-800" : syncStatus === "syncing" ? "bg-sky-50 text-sky-800" : "bg-emerald-50 text-emerald-800"}`}
             >
-              {workspace.online ? <Cloud size={13} /> : <CloudOff size={13} />}
-              {workspace.online ? c.online : c.offline}
+              {syncStatus === "syncing" ? (
+                <RefreshCw className="animate-spin" size={13} />
+              ) : syncStatus === "offline" ? (
+                <CloudOff size={13} />
+              ) : (
+                <Cloud size={13} />
+              )}
+              {!workspace.authenticated
+                ? workspace.online
+                  ? c.online
+                  : c.offline
+                : roleCopy.status[syncStatus]}
+              {workspace.queue.length > 0 ? ` · ${workspace.queue.length}` : ""}
             </span>
           </div>
         </div>
-        <nav
-          className="mx-auto flex max-w-7xl gap-1 overflow-x-auto px-4 pb-3 sm:px-6"
-          aria-label={c.operations}
-        >
-          {routeLinks.map(link => (
-            <Link
-              key={`${link.href}-${link.text}`}
-              href={link.href}
-              className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-bold transition ${locationMatches(link.href) ? "bg-[#e8eff1] text-[#092d50]" : "text-[#52636e] hover:bg-[#f1f5f4]"}`}
-            >
-              {link.label}
-              {link.text}
-            </Link>
-          ))}
-        </nav>
       </header>
-
-      <main className="mx-auto max-w-7xl px-4 py-5 sm:px-6 sm:py-8">
-        {offlineCandidate && (
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
-            <span className="flex items-center gap-2">
-              <CloudOff size={16} />
-              {c.localHint}
-            </span>
-            <button
-              className={packingSecondaryClass}
-              onClick={workspace.openLocal}
-            >
-              {c.openLocal}
-            </button>
-          </div>
+      <div className="mx-auto flex max-w-[1600px] items-stretch">
+        {workspace.authenticated && !workspace.loading && !blocked && (
+          <WorkspaceNavigation subject={subject} language={language} />
         )}
-        {workspace.authenticated && !workspace.loading && (
-          <RoleWorkspaceShell
-            language={language}
-            dir={language === "ar" ? "rtl" : "ltr"}
-            name={me.data?.name}
-            subject={subject}
-            tasks={roleTasks}
-          />
-        )}
-        {!blocked && (
-          <>
-            <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
-              <div>
+        <main className="min-w-0 flex-1 px-4 pt-4 pb-28 sm:px-6 lg:pb-10">
+          {workspace.authenticated && !workspace.loading && (
+            <RoleWorkspaceShell
+              language={language}
+              dir={language === "ar" ? "rtl" : "ltr"}
+              name={me.data?.name}
+              subject={subject}
+            />
+          )}
+          {offlineCandidate && (
+            <div className="my-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-950">
+              <span className="flex items-center gap-2">
+                <CloudOff size={16} />
+                {c.localHint}
+              </span>
+              <button
+                className={packingSecondaryClass}
+                onClick={workspace.openLocal}
+              >
+                {c.openLocal}
+              </button>
+            </div>
+          )}
+          {!blocked && (
+            <>
+              <div className="mt-5 mb-5">
                 <h1 className="text-2xl font-black tracking-tight text-[#092d50] sm:text-3xl">
                   {title}
                 </h1>
                 {description && (
-                  <p className="mt-1 max-w-2xl text-sm text-[#718088]">
+                  <p className="mt-1.5 max-w-3xl text-sm leading-6 text-[#718088]">
                     {description}
                   </p>
                 )}
               </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <PackingScopeBadge
-                  scope={
-                    workspace.localOnly
-                      ? "local"
-                      : workspace.queue.length
-                        ? "pending"
-                        : "shared"
-                  }
-                  c={c}
-                />
-                <button
-                  type="button"
-                  className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-bold ${syncStatus === "pending" || syncStatus === "review" ? "bg-amber-50 text-amber-800 underline" : syncStatus === "offline" ? "bg-blue-50 text-blue-800" : syncStatus === "syncing" ? "bg-sky-50 text-sky-800" : "bg-emerald-50 text-emerald-800"}`}
-                  disabled={syncStatus !== "pending" && syncStatus !== "review"}
-                  onClick={() => {
-                    if (window.confirm(roleCopy.confirmSync)) void reviewAndSync();
-                  }}
+              {(workspace.localOnly || !workspace.online) && (
+                <p className="mb-3 text-xs text-[#52636e]">{c.localHint}</p>
+              )}
+              {workspace.snapshotError && (
+                <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                  {c.snapshotError}
+                  <button
+                    className="ms-2 underline"
+                    onClick={() => void workspace.reload()}
+                  >
+                    {c.retrySnapshot}
+                  </button>
+                </div>
+              )}
+              {workspace.notice && (
+                <p
+                  role="status"
+                  className="mb-4 rounded-xl border border-[#dce4e7] bg-white p-3 text-sm text-[#23445d]"
                 >
-                  {syncStatus === "syncing" ? <RefreshCw className="animate-spin" size={13} /> : <Cloud size={13} />}
-                  {roleCopy.status[syncStatus]}
-                  {workspace.queue.length > 0 ? ` · ${workspace.queue.length}` : ""}
-                </button>
-              </div>
-            </div>
-            <p className="mb-4 text-xs text-[#52636e]">
-              {workspace.localOnly || workspace.queue.length
-                ? c.localHint
-                : c.sharedHint}
-            </p>
-            {workspace.snapshotError && (
-              <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-                {c.snapshotError}{" "}
-                <button
-                  className="ms-2 underline"
-                  onClick={() => void workspace.reload()}
-                >
-                  {c.retrySnapshot}
-                </button>
-              </div>
-            )}
-            {workspace.notice && (
-              <p
-                role="status"
-                className="mb-4 rounded-xl border border-[#dce4e7] bg-white p-3 text-sm text-[#23445d]"
-              >
-                {workspace.notice}
-              </p>
-            )}
-            {notice && (
-              <div
-                role="status"
-                className={`mb-4 flex items-center gap-2 rounded-xl border px-4 py-3 text-sm ${notice.success ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-amber-300 bg-amber-50 text-amber-950"}`}
-              >
-                {notice.success ? (
-                  <CheckCircle2 size={16} />
-                ) : (
-                  <AlertTriangle size={16} />
-                )}
-                {notice.text}
-              </div>
-            )}
-            <DutyAvailability workspace={workspace} />
-            <SyncConflictPanel
-              conflicts={workspace.conflicts}
-              queue={workspace.queue}
-              language={language}
-              busy={workspace.busy}
-              onRetry={conflict => {
-                setNotice(null);
-                void workspace.retryConflict(conflict);
-              }}
-              onKeepLocal={conflict => {
-                setNotice(null);
-                void workspace.resolveConflict(conflict, false);
-              }}
-              onUseServer={conflict =>
-                void workspace.resolveConflict(conflict, true)
-              }
-            />
-            {children}
-            <details className="mt-6 rounded-2xl border border-[#dce4e7] bg-white p-4">
-              <summary className="cursor-pointer text-sm font-black text-[#092d50]">
-                {
-                  {
-                    ar: "المزيد",
-                    en: "More",
-                    zh: "更多",
-                    tr: "Daha fazla",
-                  }[language]
+                  {workspace.notice}
+                </p>
+              )}
+              <details className="mb-5 rounded-xl border border-[#dce4e7] bg-white">
+                <summary className="cursor-pointer px-4 py-3 text-xs font-bold text-[#52636e]">
+                  {layoutCopy.duty}
+                </summary>
+                <div className="px-3 pb-1">
+                  <DutyAvailability workspace={workspace} />
+                </div>
+              </details>
+              <SyncConflictPanel
+                conflicts={workspace.conflicts}
+                queue={workspace.queue}
+                language={language}
+                busy={workspace.busy}
+                onRetry={conflict => void workspace.retryConflict(conflict)}
+                onKeepLocal={conflict =>
+                  void workspace.resolveConflict(conflict, false)
                 }
-              </summary>
-              <div className="mt-3 flex flex-wrap gap-2">
-                <Link
-                  href="/operations/advanced"
-                  className={packingSecondaryClass}
-                >
-                  {
-                    {
-                      ar: "الأدوات المتقدمة",
-                      en: "Advanced tools",
-                      zh: "高级工具",
-                      tr: "Gelişmiş araçlar",
-                    }[language]
-                  }
-                </Link>
-                <Link
-                  href="/operations/advanced?tab=accounts"
-                  className={packingSecondaryClass}
-                >
-                  Excel
-                </Link>
-                <Link
-                  href="/operations/reports"
-                  className={packingSecondaryClass}
-                >
-                  {c.reports}
-                </Link>
-                {canManageSettings && (
-                  <Link
-                    href="/operations/settings"
-                    className={packingSecondaryClass}
-                  >
-                    {
-                      {
-                        ar: "إعدادات المكاتب",
-                        en: "Office settings",
-                        zh: "办公室设置",
-                        tr: "Ofis ayarları",
-                      }[language]
-                    }
-                  </Link>
-                )}
-                {(workspace.role === "admin" ||
-                  workspace.role === "accountant" ||
-                  workspace.role === "office_manager") && (
-                  <Link
-                    href="/operations/finance"
-                    className={packingSecondaryClass}
-                  >
-                    {
-                      {
-                        ar: "حسابات المكاتب",
-                        en: "Office accounts",
-                        zh: "办公室账务",
-                        tr: "Ofis hesapları",
-                      }[language]
-                    }
-                  </Link>
-                )}
-              </div>
-            </details>
-          </>
-        )}
-        {blocked}
-      </main>
+                onUseServer={conflict =>
+                  void workspace.resolveConflict(conflict, true)
+                }
+              />
+              {children}
+            </>
+          )}
+          {blocked}
+        </main>
+      </div>
     </div>
   );
 }
-
-function locationMatches(href: string) {
-  if (typeof window === "undefined") return false;
-  return href === "/"
-    ? window.location.pathname === "/"
-    : window.location.pathname === href ||
-        window.location.pathname.startsWith(`${href}/`);
-}
-
 function StatePanel({
   title,
   detail,
@@ -476,7 +273,7 @@ function StatePanel({
   action?: ReactNode;
 }) {
   return (
-    <section className="mx-auto grid max-w-xl gap-3 rounded-3xl border border-[#dce4e7] bg-white p-6 text-center shadow-sm">
+    <section className="mx-auto mt-6 grid max-w-xl gap-3 rounded-2xl border border-[#dce4e7] bg-white p-6 text-center shadow-sm">
       <AlertTriangle className="mx-auto text-[#d9a441]" size={28} />
       <h2 className="text-xl font-black text-[#092d50]">{title}</h2>
       {detail && <p className="text-sm text-[#718088]">{detail}</p>}

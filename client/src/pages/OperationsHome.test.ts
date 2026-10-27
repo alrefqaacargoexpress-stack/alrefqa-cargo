@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { legacyDestination, operationActionsForRole } from "./OperationsHome";
-
+import { blankPermissions } from "@shared/permissions";
 const labels = {
   newShipment: "new",
   shipments: "shipments",
@@ -12,36 +12,42 @@ const labels = {
 } as const;
 
 describe("operations home routing", () => {
-  it("preserves legacy context while moving tabs to focused pages", () => {
-    expect(legacyDestination("/operations?tab=accounts&account=a-7&office=dubai")).toBe(
-      "/operations/customers?account=a-7&office=dubai",
-    );
-    expect(legacyDestination("/operations?tab=invoices&customer=a-7&invoice=i-2")).toBe(
-      "/operations/billing?customer=a-7&invoice=i-2",
-    );
+  it("preserves legacy context and opens the employee section for permissions", () => {
+    expect(
+      legacyDestination("/operations?tab=accounts&account=a-7&office=dubai")
+    ).toBe("/operations/customers?account=a-7&office=dubai");
+    expect(
+      legacyDestination("/operations?tab=invoices&customer=a-7&invoice=i-2")
+    ).toBe("/operations/billing?customer=a-7&invoice=i-2");
     expect(legacyDestination("/operations?tab=permissions&office=china")).toBe(
-      "/operations/settings?office=china",
+      "/operations/settings?office=china&panel=employees"
     );
   });
-
-  it("keeps role shortcuts focused and never gives finance to staff or viewers", () => {
+  it("organizes owner management first and never gives finance to source staff or viewers", () => {
     const admin = operationActionsForRole("admin", labels);
-    const staff = operationActionsForRole("staff", labels);
-    const viewer = operationActionsForRole("viewer", labels);
-    expect(admin.map(item => item.href)).toEqual([
-      "/operations/shipments/new",
-      "/operations/shipments",
-      "/operations/customers",
-      "/operations/billing",
-      "/operations/finance",
-      "/operations/tracking",
-      "/operations/settings",
+    const staff = operationActionsForRole("source_warehouse", labels, [
+      "dubai",
+    ]);
+    const viewer = operationActionsForRole("viewer", labels, ["dubai"]);
+    expect(admin.slice(0, 3).map(item => item.href)).toEqual([
+      "/operations/offices",
+      "/operations/settings?panel=employees",
+      "/operations/settings?panel=profile",
     ]);
     expect(staff.map(item => item.href)).toEqual([
       "/operations/shipments/new",
       "/operations/shipments",
-      "/operations/customers",
+      "/operations/tracking",
     ]);
     expect(viewer.map(item => item.href)).toEqual(["/operations/tracking"]);
+    expect(
+      operationActionsForRole(
+        "staff",
+        labels,
+        ["dubai"],
+        false,
+        blankPermissions()
+      )
+    ).toEqual([]);
   });
 });

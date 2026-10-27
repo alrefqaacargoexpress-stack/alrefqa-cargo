@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { Link } from "wouter";
+import { useEffect, useMemo, useState } from "react";
+import { Link, useSearch } from "wouter";
 import {
   CalendarDays,
   CheckCircle2,
@@ -8,6 +8,7 @@ import {
   Truck,
 } from "lucide-react";
 import PackingLayout from "@/components/packing/PackingLayout";
+import AuditLogPanel from "@/components/operations/AuditLogPanel";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useOperationsWorkspace } from "@/hooks/useOperationsWorkspace";
 import {
@@ -141,6 +142,8 @@ export default function Reports() {
   const { language, dir } = useLanguage();
   const t = copy[(language in copy ? language : "ar") as Language];
   const workspace = useOperationsWorkspace();
+  const search = new URLSearchParams(useSearch());
+  const panel = search.get("panel");
   const [filter, setFilter] = useState<ReportFilter>("all");
   const [scope, setScope] = useState<"all" | "shared">("all");
   const state = workspace.state;
@@ -153,6 +156,23 @@ export default function Reports() {
     "reports",
     "view"
   );
+  const auditSubject = {
+    role: workspace.role,
+    offices: workspace.offices,
+    homeOffice: workspace.homeOffice,
+    permissions: workspace.permissions,
+  };
+  const canViewAudit = permissionAllowed(auditSubject, "audit", "view");
+  useEffect(() => {
+    if (panel !== "audit") return;
+    const frame = window.requestAnimationFrame(() =>
+      document.getElementById("audit-panel")?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      })
+    );
+    return () => window.cancelAnimationFrame(frame);
+  }, [panel, canViewAudit]);
   const now = useMemo(() => new Date(), []);
   const scopedShipments = useMemo(
     () =>
@@ -311,6 +331,25 @@ export default function Reports() {
               )}
             </div>
           </section>
+        )}
+        {panel === "audit" && (
+          <AuditLogPanel
+            language={language}
+            subject={auditSubject}
+            online={workspace.online}
+            accessReady={workspace.accessReady}
+            userId={workspace.userId}
+            localOnly={workspace.localOnly}
+            shipments={state.shipments
+              .filter(
+                shipment => !shipment.deleted && shipment.scope === "shared"
+              )
+              .map(shipment => ({
+                id: shipment.id,
+                tracking: shipment.tracking,
+              }))}
+            initialShipmentId={search.get("shipmentId") ?? ""}
+          />
         )}
       </div>
     </PackingLayout>

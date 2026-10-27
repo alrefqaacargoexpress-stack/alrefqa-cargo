@@ -210,6 +210,28 @@ function officeEntries(
   );
 }
 
+export type OfficeFinancePanel =
+  | "cash"
+  | "expenses"
+  | "shipment-cost"
+  | "arrival-cost"
+  | "price";
+const officeFinancePanelTargets: Record<
+  OfficeFinancePanel,
+  { id: string }
+> = {
+  cash: { id: "finance-panel-cash" },
+  expenses: { id: "finance-panel-expenses" },
+  "shipment-cost": { id: "finance-panel-shipment-cost" },
+  "arrival-cost": { id: "finance-panel-arrival-cost" },
+  price: { id: "finance-panel-price" },
+};
+
+export function officeFinancePanelTarget(panel: string | null) {
+  if (!panel || !(panel in officeFinancePanelTargets)) return null;
+  return officeFinancePanelTargets[panel as OfficeFinancePanel];
+}
+
 export default function OfficeFinance() {
   const { language } = useLanguage();
   const c = officeFinanceCopyFor(language);
@@ -217,6 +239,8 @@ export default function OfficeFinance() {
   const [, navigate] = useLocation();
   const search = useSearch();
   const params = new URLSearchParams(search);
+  const activePanelName = params.get("panel") as OfficeFinancePanel | null;
+  const activePanel = officeFinancePanelTarget(activePanelName);
   const requested = params.get("office");
   const allowedOffices = useMemo<readonly OfficeId[]>(
     () => (finance.offices === null ? officeIds : finance.offices),
@@ -247,7 +271,9 @@ export default function OfficeFinance() {
 
   const chooseOffice = (value: OfficeId | "all") => {
     setSelectedOffice(value);
-    navigate(`/operations/finance?office=${encodeURIComponent(value)}`);
+    const nextParams = new URLSearchParams(search);
+    nextParams.set("office", value);
+    navigate(`/operations/finance?${nextParams.toString()}`);
   };
 
   const visibleEntries = useMemo(
@@ -309,6 +335,37 @@ export default function OfficeFinance() {
     "shipment_prices",
     "manage"
   );
+  const canManageShipmentCost = permissionAllowed(
+    ownFinancePermissions,
+    "shipment_cost",
+    "manage"
+  );
+  const canManageArrivalCost =
+    permissionAllowed(ownFinancePermissions, "arrival_cost", "manage") &&
+    (selectedOffice === "all" || selectedOffice === "nouakchott");
+  const canFocusPanel =
+    activePanelName === "cash"
+      ? canUseFinance
+      : activePanelName === "expenses"
+        ? canWrite &&
+          permissionAllowed(ownFinancePermissions, "expenses", "manage")
+      : activePanelName === "shipment-cost"
+        ? canWrite && canManageShipmentCost
+        : activePanelName === "arrival-cost"
+          ? canManageArrivalCost
+          : activePanelName === "price"
+            ? canChangePrice
+            : false;
+  useEffect(() => {
+    if (!activePanel || !canFocusPanel) return;
+    const frame = window.requestAnimationFrame(() =>
+      document.getElementById(activePanel.id)?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      })
+    );
+    return () => window.cancelAnimationFrame(frame);
+  }, [activePanel, canFocusPanel]);
   const [openingCurrency, setOpeningCurrency] =
     useState<FinanceCurrency>("MRU");
   const [openingDirection, setOpeningDirection] = useState<"debit" | "credit">(
@@ -447,7 +504,14 @@ export default function OfficeFinance() {
             )}
           </section>
 
-          <section className="grid gap-4">
+          <section
+            id={
+              activePanelName === "cash" && canFocusPanel
+                ? activePanel?.id
+                : undefined
+            }
+            className={`grid gap-4 ${activePanelName === "cash" && canFocusPanel ? "rounded-2xl ring-2 ring-sky-300 ring-offset-2" : ""}`}
+          >
             <div className="flex flex-wrap items-center justify-between gap-3">
               <h2 className="text-xl font-black text-[#092d50]">
                 {c.balances}
@@ -678,13 +742,26 @@ export default function OfficeFinance() {
           </section>
 
           {canChangePrice && (
-            <ShipmentPriceOverrideForm
-              shipments={shipmentSource.filter(
-                shipment => !shipment.deleted && Boolean(shipment.packing)
-              )}
-              workspace={{ ...finance, snapshot: finance.store?.snapshot }}
-              projections={finance.store?.snapshot.pricingProjections ?? []}
-            />
+            <div
+              id={
+                activePanelName === "price" && canFocusPanel
+                  ? activePanel?.id
+                  : undefined
+              }
+              className={
+                activePanelName === "price" && canFocusPanel
+                  ? "rounded-2xl ring-2 ring-sky-300 ring-offset-2"
+                  : ""
+              }
+            >
+              <ShipmentPriceOverrideForm
+                shipments={shipmentSource.filter(
+                  shipment => !shipment.deleted && Boolean(shipment.packing)
+                )}
+                workspace={{ ...finance, snapshot: finance.store?.snapshot }}
+                projections={finance.store?.snapshot.pricingProjections ?? []}
+              />
+            </div>
           )}
 
           <OfficeWalletLedger
@@ -693,11 +770,24 @@ export default function OfficeFinance() {
             selectedOffice={selectedOffice}
           />
 
-          <ShipmentSettlementPanel
-            workspace={finance}
-            language={language}
-            selectedOffice={selectedOffice}
-          />
+          <div
+            id={
+              activePanelName === "arrival-cost" && canFocusPanel
+                ? activePanel?.id
+                : undefined
+            }
+            className={
+              activePanelName === "arrival-cost" && canFocusPanel
+                ? "rounded-2xl ring-2 ring-sky-300 ring-offset-2"
+                : ""
+            }
+          >
+            <ShipmentSettlementPanel
+              workspace={finance}
+              language={language}
+              selectedOffice={selectedOffice}
+            />
+          </div>
 
           {canWrite ? (
             <>
@@ -828,20 +918,42 @@ export default function OfficeFinance() {
                 key={finance.base.userId ?? "local"}
                 workspace={finance}
               />
-              <OfficeExpenseForm
-                key={finance.base.userId ?? "local"}
-                allowedOffices={allowedOffices}
-                initialOffice={
-                  selectedOffice === "all" ? firstOffice : selectedOffice
+              <div
+                id={
+                  (activePanelName === "expenses" ||
+                    activePanelName === "shipment-cost") &&
+                  canFocusPanel
+                    ? activePanel?.id
+                    : undefined
                 }
-                shipments={shipmentSource}
-                canEdit={canWrite && finance.canEdit}
-                online={finance.online}
-                saveCommand={finance.saveCommand}
-                role={finance.role}
-                homeOffice={finance.homeOffice}
-                permissions={finance.permissions}
-              />
+                className={
+                  (activePanelName === "expenses" ||
+                    activePanelName === "shipment-cost") &&
+                  canFocusPanel
+                    ? "rounded-2xl ring-2 ring-sky-300 ring-offset-2"
+                    : ""
+                }
+              >
+                <OfficeExpenseForm
+                  key={finance.base.userId ?? "local"}
+                  allowedOffices={allowedOffices}
+                  initialOffice={
+                    selectedOffice === "all" ? firstOffice : selectedOffice
+                  }
+                  initialCategory={
+                    activePanelName === "shipment-cost" && canFocusPanel
+                      ? "shipment_cost"
+                      : undefined
+                  }
+                  shipments={shipmentSource}
+                  canEdit={canWrite && finance.canEdit}
+                  online={finance.online}
+                  saveCommand={finance.saveCommand}
+                  role={finance.role}
+                  homeOffice={finance.homeOffice}
+                  permissions={finance.permissions}
+                />
+              </div>
             </>
           ) : (
             <p className="rounded-2xl border border-[#dce4e7] bg-white p-4 text-sm text-[#52636e] shadow-sm">

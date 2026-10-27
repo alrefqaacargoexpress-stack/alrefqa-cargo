@@ -3,10 +3,15 @@ import { renderToStaticMarkup } from "react-dom/server";
 import OfficeMemberships, {
   automaticPermissionPreview,
   delegationPayloadForSave,
+  effectivePermissionPreview,
+  permissionCeilingViolations,
   permissionPayloadForSave,
   permissionsWithinCeiling,
 } from "./OfficeMemberships";
-import { blankPermissions } from "../../../../shared/permissions";
+import {
+  blankPermissions,
+  defaultPermissions,
+} from "../../../../shared/permissions";
 
 vi.mock("@/contexts/LanguageContext", () => ({
   useLanguage: () => ({ language: "en", dir: "ltr" }),
@@ -38,7 +43,7 @@ describe("office memberships SSR safeguards", () => {
         onResetPassword={async () => true}
       />
     );
-    expect(html).toContain("Root administrator");
+    expect(html).toContain("General administrator");
     expect(html).toContain("The root administrator cannot be changed");
     expect(html).not.toContain("Reset account password");
   });
@@ -101,7 +106,7 @@ describe("automatic membership permissions", () => {
     expect(preview.shipment_send).toBe("none");
   });
 
-  it("does not load old customization into the automatic preview", () => {
+  it("retains an existing same-role map while changing offices", () => {
     const old = { ...blankPermissions(), reports: "view" as const };
     const preview = automaticPermissionPreview(
       "staff",
@@ -112,7 +117,75 @@ describe("automatic membership permissions", () => {
       old,
       "staff"
     );
-    expect(preview.reports).toBe("none");
+    expect(preview).toEqual(old);
+  });
+
+  it("keeps stored shipments manage while geography blocks its effective manage value", () => {
+    const stored = { ...blankPermissions(), shipments: "manage" as const };
+    const effective = effectivePermissionPreview(
+      "staff",
+      ["nouakchott"],
+      "nouakchott",
+      false,
+      stored,
+      blankPermissions("manage")
+    );
+    expect(stored.shipments).toBe("manage");
+    expect(effective.shipments).toBe("view");
+  });
+
+  it("does not lift a stored denial during a role change and restores it on roundtrip", () => {
+    const original = { ...blankPermissions(), shipments: "none" as const };
+    const changed = automaticPermissionPreview(
+      "accountant",
+      ["dubai"],
+      "dubai",
+      false,
+      blankPermissions("manage"),
+      original,
+      "staff"
+    );
+    const roundtrip = automaticPermissionPreview(
+      "staff",
+      ["china"],
+      "china",
+      false,
+      blankPermissions("manage"),
+      original,
+      "staff"
+    );
+    expect(changed.shipments).toBe("none");
+    expect(roundtrip).toEqual(original);
+  });
+
+  it("keeps raw role templates above an actor ceiling while clamping a new stored map", () => {
+    const ceiling = blankPermissions("view");
+    const rawTemplate = defaultPermissions({
+      role: "office_manager",
+      offices: ["nouakchott"],
+      homeOffice: "nouakchott",
+    });
+    const stored = automaticPermissionPreview(
+      "office_manager",
+      ["nouakchott"],
+      "nouakchott",
+      false,
+      ceiling
+    );
+    expect(rawTemplate.shipments).toBe("manage");
+    expect(stored.shipments).toBe("view");
+  });
+
+  it("lists above-ceiling permissions without lowering the saved map", () => {
+    const ceiling = blankPermissions("view");
+    const saved = { ...blankPermissions(), shipments: "manage" as const };
+    expect(permissionCeilingViolations(saved, ceiling)).toEqual(["shipments"]);
+    expect(
+      permissionPayloadForSave({
+        permissions: saved,
+        permissionsMode: "manual",
+      })
+    ).toEqual(saved);
   });
 
   it("sends the full intended map only after manual matrix editing", () => {
@@ -177,6 +250,43 @@ describe("automatic membership permissions", () => {
     );
     expect(html).toContain("Retired legacy tracking role");
     expect(html).toContain('value="tracking_staff"');
-    expect(html).not.toContain('value="viewer"');
+    expect(html).toContain('value="tracking_staff"');
+    expect(html).toContain('selected=""');
+    expect(html).toContain("Search employees");
+  });
+
+  it("renders stored member permissions as current and effective permissions separately", () => {
+    const stored = { ...blankPermissions(), shipments: "manage" as const };
+    const effective = { ...blankPermissions(), shipments: "view" as const };
+    const html = renderToStaticMarkup(
+      <OfficeMemberships
+        members={[
+          {
+            userId: 12,
+            name: "Saved member",
+            email: "saved@example.test",
+            accountType: "employee",
+            role: "staff",
+            offices: ["dubai"],
+            version: 2,
+            permissions: stored,
+            effectivePermissions: effective,
+          },
+        ]}
+        actorRole="admin"
+        actorUserId={99}
+        permissionCeiling={blankPermissions("view")}
+        canEdit
+        online
+        onSave={async () => null}
+        onResetPassword={async () => true}
+      />
+    );
+    expect(html).toContain("Saved customization");
+    expect(html).toContain("Effective");
+    expect(html).toContain('value="manage"');
+    expect(html).toContain('selected=""');
+    expect(html).toContain("Saved value is above the ceiling");
+    expect(html).not.toContain("Reset password");
   });
 });

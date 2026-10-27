@@ -23,7 +23,9 @@ describe("new permissions matrix", () => {
       permissionKeys.length
     );
     expect(html).toContain("Assign offices");
-    expect(html).toContain("Root administrator only");
+    expect(html).toContain("General administrator only");
+    expect(html).toContain("Office and employee management");
+    expect(html).toContain("Reports, Excel, and audit");
   });
 
   it("keeps choices above an office manager ceiling disabled", () => {
@@ -38,5 +40,28 @@ describe("new permissions matrix", () => {
     );
     expect(html).toContain("Unavailable within your ceiling");
     expect(html).toContain('value="manage" disabled=""');
+  });
+
+  it("preserves a saved value above the ceiling while showing a separate effective value", () => {
+    const stored = blankPermissions();
+    stored.shipments = "manage";
+    const effective = blankPermissions();
+    effective.shipments = "view";
+    const ceiling = blankPermissions();
+    ceiling.shipments = "view";
+    const html = renderToStaticMarkup(
+      <NewPermissionsMatrix
+        value={stored}
+        effectiveValue={effective}
+        ceiling={ceiling}
+        source="saved"
+        canEdit
+      />
+    );
+    expect(html).toContain('value="manage"');
+    expect(html).toContain('selected=""');
+    expect(html).toContain("Saved customization");
+    expect(html).toContain("Effective");
+    expect(html).toContain("Saved value is above the ceiling");
   });
 });

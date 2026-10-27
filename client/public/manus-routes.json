@@ -22,7 +22,7 @@
     },
     {
       "path": "/operations",
-      "title": "مركز عمليات الرفكة"
+      "title": "لوحة العمل حسب الوظيفة"
     },
     {
       "path": "/operations/advanced",
@@ -30,7 +30,7 @@
     },
     {
       "path": "/admin",
-      "title": "مركز عمليات الرفكة"
+      "title": "لوحة العمل حسب الوظيفة"
     },
     {
       "path": "/operations/shipments",

@@ -1,7 +1,4 @@
-import {
-  officeNames,
-  type OfficeId,
-} from "@shared/branches";
+import { officeNames, type OfficeId } from "@shared/branches";
 import {
   permissionAllowed,
   type PermissionKey,
@@ -17,7 +14,6 @@ export type SyncWorkspaceStatus =
   | "syncing"
   | "offline"
   | "review";
-
 export type RoleWorkspaceSubject = {
   role: AppRole | null;
   offices?: readonly OfficeId[] | null;
@@ -25,7 +21,6 @@ export type RoleWorkspaceSubject = {
   permissions?: PermissionMap | null;
   canUpdateTracking?: boolean;
 };
-
 export type RoleWorkspaceTaskId =
   | "new-shipment"
   | "shipments"
@@ -47,44 +42,268 @@ export type RoleWorkspaceTaskId =
   | "excel"
   | "advanced"
   | "settings"
-  | "audit";
-
+  | "audit"
+  | "finance-summary"
+  | "expenses";
+export type WorkspaceGroupId =
+  | "management"
+  | "shipping"
+  | "warehouse"
+  | "sales"
+  | "finance"
+  | "insights";
 export type RoleWorkspaceTask = {
   id: RoleWorkspaceTaskId;
   href: string;
   permission: PermissionKey;
   level: PermissionLevel;
   priority: number;
+  group: WorkspaceGroupId;
 };
 
+// Links identify real screens; related work is grouped instead of duplicating shortcuts.
 const taskCatalog: readonly RoleWorkspaceTask[] = [
-  { id: "new-shipment", href: "/operations/shipments/new", permission: "shipments", level: "manage", priority: 1 },
-  { id: "shipments", href: "/operations/shipments", permission: "shipments", level: "view", priority: 2 },
-  { id: "customers", href: "/operations/customers", permission: "customers", level: "view", priority: 3 },
-  { id: "offices", href: "/operations/offices", permission: "office_settings", level: "view", priority: 4 },
-  { id: "employees", href: "/operations/settings?panel=employees", permission: "employees", level: "view", priority: 5 },
-  { id: "tracking", href: "/operations/tracking", permission: "tracking", level: "view", priority: 6 },
-  { id: "warehouse-arrivals", href: "/operations/warehouse?panel=arrivals", permission: "arrival", level: "manage", priority: 1 },
-  { id: "warehouse-storage", href: "/operations/warehouse?panel=storage", permission: "storage", level: "view", priority: 2 },
-  { id: "warehouse-rack", href: "/operations/warehouse?panel=rack", permission: "storage", level: "manage", priority: 3 },
-  { id: "warehouse-delivery", href: "/operations/warehouse?panel=delivery", permission: "storage", level: "manage", priority: 4 },
-  { id: "invoices", href: "/operations/billing", permission: "invoices", level: "view", priority: 1 },
-  { id: "receipts", href: "/operations/billing?panel=receipts", permission: "payments", level: "view", priority: 2 },
-  { id: "cash", href: "/operations/finance?panel=cash", permission: "payments", level: "manage", priority: 3 },
-  { id: "shipment-cost", href: "/operations/finance?panel=shipment-cost", permission: "shipment_cost", level: "view", priority: 1 },
-  { id: "arrival-cost", href: "/operations/finance?panel=arrival-cost", permission: "arrival_cost", level: "view", priority: 2 },
-  { id: "pricing", href: "/operations/finance?panel=price", permission: "shipment_prices", level: "manage", priority: 3 },
-  { id: "reports", href: "/operations/reports", permission: "reports", level: "view", priority: 7 },
-  { id: "excel", href: "/operations/advanced?tab=accounts", permission: "excel", level: "view", priority: 8 },
-  { id: "advanced", href: "/operations/advanced", permission: "audit", level: "view", priority: 9 },
-  { id: "settings", href: "/operations/settings", permission: "office_settings", level: "manage", priority: 10 },
-  { id: "audit", href: "/operations/reports?panel=audit", permission: "audit", level: "view", priority: 11 },
+  {
+    id: "offices",
+    href: "/operations/offices",
+    permission: "office_settings",
+    level: "view",
+    priority: 1,
+    group: "management",
+  },
+  {
+    id: "employees",
+    href: "/operations/settings?panel=employees",
+    permission: "employees",
+    level: "view",
+    priority: 2,
+    group: "management",
+  },
+  {
+    id: "settings",
+    href: "/operations/settings?panel=profile",
+    permission: "office_settings",
+    level: "manage",
+    priority: 3,
+    group: "management",
+  },
+  {
+    id: "new-shipment",
+    href: "/operations/shipments/new",
+    permission: "shipments",
+    level: "manage",
+    priority: 1,
+    group: "shipping",
+  },
+  {
+    id: "shipments",
+    href: "/operations/shipments",
+    permission: "shipments",
+    level: "view",
+    priority: 2,
+    group: "shipping",
+  },
+  {
+    id: "tracking",
+    href: "/operations/tracking",
+    permission: "tracking",
+    level: "view",
+    priority: 3,
+    group: "shipping",
+  },
+  {
+    id: "warehouse-arrivals",
+    href: "/operations/offices?office=nouakchott",
+    permission: "arrival",
+    level: "manage",
+    priority: 1,
+    group: "warehouse",
+  },
+  {
+    id: "warehouse-storage",
+    href: "/operations/warehouse",
+    permission: "storage",
+    level: "view",
+    priority: 2,
+    group: "warehouse",
+  },
+  {
+    id: "warehouse-delivery",
+    href: "/operations/tracking",
+    permission: "arrival",
+    level: "manage",
+    priority: 3,
+    group: "warehouse",
+  },
+  {
+    id: "invoices",
+    href: "/operations/billing",
+    permission: "invoices",
+    level: "view",
+    priority: 1,
+    group: "sales",
+  },
+  {
+    id: "customers",
+    href: "/operations/customers",
+    permission: "customers",
+    level: "view",
+    priority: 2,
+    group: "sales",
+  },
+  {
+    id: "cash",
+    href: "/operations/finance?panel=cash",
+    permission: "payments",
+    level: "manage",
+    priority: 1,
+    group: "finance",
+  },
+  {
+    id: "shipment-cost",
+    href: "/operations/finance?panel=shipment-cost",
+    permission: "shipment_cost",
+    level: "view",
+    priority: 2,
+    group: "finance",
+  },
+  {
+    id: "arrival-cost",
+    href: "/operations/finance?panel=arrival-cost",
+    permission: "arrival_cost",
+    level: "view",
+    priority: 3,
+    group: "finance",
+  },
+  {
+    id: "pricing",
+    href: "/operations/finance?panel=price",
+    permission: "shipment_prices",
+    level: "manage",
+    priority: 4,
+    group: "finance",
+  },
+  {
+    id: "finance-summary",
+    href: "/operations/finance",
+    permission: "finance_reports",
+    level: "view",
+    priority: 5,
+    group: "finance",
+  },
+  {
+    id: "expenses",
+    href: "/operations/finance?panel=expenses",
+    permission: "expenses",
+    level: "manage",
+    priority: 6,
+    group: "finance",
+  },
+
+  {
+    id: "reports",
+    href: "/operations/reports",
+    permission: "reports",
+    level: "view",
+    priority: 1,
+    group: "insights",
+  },
+  {
+    id: "excel",
+    href: "/operations/advanced?tab=accounts",
+    permission: "excel",
+    level: "view",
+    priority: 2,
+    group: "insights",
+  },
+  {
+    id: "audit",
+    href: "/operations/reports?panel=audit",
+    permission: "audit",
+    level: "view",
+    priority: 3,
+    group: "insights",
+  },
 ];
 
-export function roleWorkspaceTasks(subject: RoleWorkspaceSubject): RoleWorkspaceTask[] {
+export function workspaceGroupOrder(
+  subject: RoleWorkspaceSubject
+): WorkspaceGroupId[] {
+  if (subject.role === "admin" || subject.role === "office_manager")
+    return [
+      "management",
+      "shipping",
+      "warehouse",
+      "sales",
+      "finance",
+      "insights",
+    ];
+  if (
+    subject.role === "destination_warehouse" ||
+    (subject.role === "staff" && subject.offices?.[0] === "nouakchott")
+  )
+    return [
+      "warehouse",
+      "shipping",
+      "sales",
+      "finance",
+      "insights",
+      "management",
+    ];
+  if (subject.role === "general_accountant")
+    return [
+      "finance",
+      "sales",
+      "shipping",
+      "insights",
+      "warehouse",
+      "management",
+    ];
+  if (subject.role === "accountant" || subject.role === "cashier")
+    return [
+      "sales",
+      "finance",
+      "shipping",
+      "insights",
+      "warehouse",
+      "management",
+    ];
+  return [
+    "shipping",
+    "warehouse",
+    "insights",
+    "sales",
+    "finance",
+    "management",
+  ];
+}
+
+export function roleWorkspaceTasks(
+  subject: RoleWorkspaceSubject
+): RoleWorkspaceTask[] {
+  const order = workspaceGroupOrder(subject);
   return taskCatalog
-    .filter(task => permissionAllowed(subject, task.permission, task.level))
-    .sort((a, b) => a.priority - b.priority);
+    .filter(
+      task =>
+        permissionAllowed(subject, task.permission, task.level) &&
+        (task.id !== "audit" ||
+          subject.role === "admin" ||
+          permissionAllowed(subject, "tracking", "view"))
+    )
+    .sort(
+      (a, b) =>
+        order.indexOf(a.group) - order.indexOf(b.group) ||
+        a.priority - b.priority
+    );
+}
+
+export function groupedWorkspaceTasks(
+  subject: RoleWorkspaceSubject,
+  tasks = roleWorkspaceTasks(subject)
+) {
+  return workspaceGroupOrder(subject)
+    .map(id => ({ id, tasks: tasks.filter(task => task.group === id) }))
+    .filter(group => group.tasks.length > 0);
 }
 
 export function splitRoleWorkspaceTasks(
@@ -110,23 +329,40 @@ export function workspaceSyncStatus(input: {
   if (input.pendingCount > 0) return "pending";
   return "idle";
 }
-
 export function roleDisplayKey(role: AppRole | null) {
   return role ?? "unassigned";
 }
-
 export function officeDisplayLabel(
   offices: readonly OfficeId[] | null | undefined,
   language: Language,
   isAdmin = false
 ) {
-  if (isAdmin) return officeNames[language].nouakchott === "نواكشوط" && language === "ar" ? "كل المكاتب" : language === "en" ? "All offices" : language === "zh" ? "所有办公室" : "Tüm ofisler";
-  if (!offices?.length) return language === "ar" ? "بانتظار تعيين المكتب" : language === "en" ? "Waiting for office assignment" : language === "zh" ? "等待分配办公室" : "Ofis ataması bekleniyor";
-  return offices.map(office => officeNames[language][office]).join(language === "ar" ? "، " : ", ");
+  if (isAdmin)
+    return {
+      ar: "كل المكاتب",
+      en: "All offices",
+      zh: "所有办公室",
+      tr: "Tüm ofisler",
+    }[language];
+  if (!offices?.length)
+    return {
+      ar: "بانتظار تعيين المكتب",
+      en: "Waiting for office assignment",
+      zh: "等待分配办公室",
+      tr: "Ofis ataması bekleniyor",
+    }[language];
+  return offices
+    .map(office => officeNames[language][office])
+    .join(language === "ar" ? "، " : ", ");
 }
-
 export function taskUsesFinance(task: RoleWorkspaceTask) {
-  return ["invoices", "receipts", "cash", "shipment-cost", "arrival-cost", "pricing"].includes(task.id);
+  return [
+    "invoices",
+    "receipts",
+    "cash",
+    "shipment-cost",
+    "arrival-cost",
+    "pricing",
+  ].includes(task.id);
 }
-
 export { taskCatalog };

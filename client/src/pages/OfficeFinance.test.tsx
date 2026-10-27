@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { receivablesForSnapshot } from "./OfficeFinance";
+import {
+  officeFinancePanelTarget,
+  receivablesForSnapshot,
+} from "./OfficeFinance";
 
 describe("OfficeFinance receivables", () => {
   it("prefers shipmentReceivables and exposes gross, sold, remaining, and unpriced totals", () => {
@@ -90,5 +93,30 @@ describe("OfficeFinance receivables", () => {
     expect(row.soldTotal).toBe(12);
     expect(row.remainingTotal).toBe(38);
     expect(row.unpricedShipments).toBe(0);
+  });
+});
+
+describe("OfficeFinance panel links", () => {
+  it("maps each approved panel query to an existing finance section", () => {
+    expect(officeFinancePanelTarget("cash")).toEqual({
+      id: "finance-panel-cash",
+    });
+    expect(officeFinancePanelTarget("expenses")).toEqual({
+      id: "finance-panel-expenses",
+    });
+    expect(officeFinancePanelTarget("shipment-cost")).toEqual({
+      id: "finance-panel-shipment-cost",
+    });
+    expect(officeFinancePanelTarget("arrival-cost")).toEqual({
+      id: "finance-panel-arrival-cost",
+    });
+    expect(officeFinancePanelTarget("price")).toEqual({
+      id: "finance-panel-price",
+    });
+  });
+
+  it("ignores unknown panel queries", () => {
+    expect(officeFinancePanelTarget("cashier")).toBeNull();
+    expect(officeFinancePanelTarget(null)).toBeNull();
   });
 });

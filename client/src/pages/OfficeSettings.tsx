@@ -1,11 +1,9 @@
 import NewPermissionsMatrix from "@/components/offices/newPermissionsMatrix";
 import { useEffect, useMemo, useState, type ComponentType } from "react";
-import { Link, useLocation, useSearch } from "wouter";
+import { useLocation, useSearch } from "wouter";
 import PackingLayout from "@/components/packing/PackingLayout";
 import {
-  PackingField,
   packingInputClass,
-  packingPrimaryClass,
   packingSecondaryClass,
 } from "@/components/packing/PackingPrimitives";
 import OfficeProfileEditor from "@/components/offices/OfficeProfileEditor";
@@ -20,6 +18,12 @@ import {
   officeIds,
   officeName,
 } from "@/lib/branchSettingsCopy";
+import {
+  officeSettingsCopyFor,
+  officeSettingsLocationWithQuery,
+  officeSettingsSectionFromPanel,
+  type OfficeSettingsSection,
+} from "@/lib/officeSettingsSection";
 import WalletMethodsEditor from "@/components/offices/WalletMethodsEditor";
 import { canUseOperations } from "@shared/tracking";
 import {
@@ -48,15 +52,28 @@ type WalletMethodsEditorProps = {
 const OfficeWalletEditor =
   WalletMethodsEditor as unknown as ComponentType<WalletMethodsEditorProps>;
 
+type AccessWithPermissions = {
+  role: AppRole | null;
+  userId: number;
+  offices: OfficeId[] | null;
+  homeOffice: OfficeId | null;
+  canUpdateTracking: boolean;
+  permissions?: PermissionMap | null;
+  delegationCeiling?: PermissionMap;
+  delegationPolicyConfigured?: boolean;
+  delegatedBy?: number | null;
+};
+
 export default function OfficeSettings() {
   const { language } = useLanguage();
   const copy = branchSettingsCopyFor(language);
+  const sectionCopy = officeSettingsCopyFor(language);
   const workspace = useOperationsWorkspace();
   const [location, navigate] = useLocation();
   const search = useSearch();
-  const requestedOffice = new URLSearchParams(search).get(
-    "office"
-  ) as OfficeId | null;
+  const params = useMemo(() => new URLSearchParams(search), [search]);
+  const requestedOffice = params.get("office") as OfficeId | null;
+  const requestedSection = officeSettingsSectionFromPanel(params.get("panel"));
   const [selectedOffice, setSelectedOffice] = useState<OfficeId>(
     requestedOffice && officeIds.includes(requestedOffice)
       ? requestedOffice
@@ -69,34 +86,12 @@ export default function OfficeSettings() {
     canUseOperations(workspace.role) ||
     workspace.role === "viewer" ||
     workspace.role === "tracking_staff";
-  const canEditProfile =
-    (workspace.role === "admin" || workspace.role === "office_manager") &&
-    workspace.online &&
-    !workspace.localOnly &&
-    Boolean(workspace.userId);
-  const canReadProfiles =
-    canOpenSettings && workspace.online && Boolean(workspace.userId);
-  const profilesQuery = trpc.branches.profiles.useQuery(undefined, {
-    enabled: canReadProfiles,
-    retry: false,
-    refetchOnWindowFocus: false,
-  });
+
   const accessQuery = trpc.operations.access.useQuery(undefined, {
     enabled: Boolean(workspace.userId && workspace.online),
     retry: false,
     refetchOnWindowFocus: false,
   });
-  type AccessWithPermissions = {
-    role: AppRole | null;
-    userId: number;
-    offices: OfficeId[] | null;
-    homeOffice: OfficeId | null;
-    canUpdateTracking: boolean;
-    permissions?: PermissionMap | null;
-    delegationCeiling?: PermissionMap;
-    delegationPolicyConfigured?: boolean;
-    delegatedBy?: number | null;
-  };
   const access = accessQuery.data as AccessWithPermissions | undefined;
   const permissionScope: PermissionSubject = {
     role: access?.role ?? workspace.role,
@@ -112,6 +107,7 @@ export default function OfficeSettings() {
         ? (access.delegationCeiling ?? blankPermissions())
         : ownPermissions
       : ownPermissions;
+
   const canReadMemberships = permissionAllowed(
     permissionScope,
     "employees",
@@ -122,6 +118,29 @@ export default function OfficeSettings() {
     permissionAllowed(permissionScope, "employees", "manage") &&
     workspace.online &&
     !workspace.localOnly;
+  const canReadProfileAccess =
+    canOpenSettings &&
+    permissionAllowed(permissionScope, "office_settings", "view");
+  const canEditProfile =
+    ["admin", "office_manager"].includes(permissionScope.role ?? "") &&
+    permissionAllowed(permissionScope, "office_settings", "manage") &&
+    workspace.online &&
+    !workspace.localOnly &&
+    Boolean(workspace.userId);
+  const canReadOfficeWallets = permissionAllowed(
+    permissionScope,
+    "office_wallets",
+    "view"
+  );
+  const canManageOfficeWallets = permissionAllowed(
+    permissionScope,
+    "office_wallets",
+    "manage"
+  );
+  const canSeePermissions = ["admin", "office_manager"].includes(
+    permissionScope.role ?? ""
+  );
+
   const managedOffice: OfficeId | null =
     permissionScope.role === "office_manager"
       ? (access?.homeOffice ?? workspace.offices?.[0] ?? null)
@@ -130,17 +149,47 @@ export default function OfficeSettings() {
     permissionScope.role === "admin"
       ? officeIds
       : permissionScope.role === "office_manager"
-      ? managedOffice
-        ? [managedOffice]
-        : []
-      : permissionScope.role === "general_accountant"
-        ? (access?.offices ?? workspace.offices ?? [])
-        : access?.homeOffice ?? workspace.offices?.[0]
-          ? [(access?.homeOffice ?? workspace.offices?.[0]) as OfficeId]
-          : [];
+        ? managedOffice
+          ? [managedOffice]
+          : []
+        : permissionScope.role === "general_accountant"
+          ? (access?.offices ?? workspace.offices ?? [])
+          : (access?.homeOffice ?? workspace.offices?.[0])
+            ? [(access?.homeOffice ?? workspace.offices?.[0]) as OfficeId]
+            : [];
+
+  const visibleSections = useMemo<OfficeSettingsSection[]>(() => {
+    const sections: OfficeSettingsSection[] = [];
+    if (canReadProfileAccess) sections.push("profile");
+    if (canReadMemberships) sections.push("employees");
+    if (canReadOfficeWallets) sections.push("wallets");
+    if (canSeePermissions) sections.push("permissions");
+    return sections;
+  }, [
+    canReadMemberships,
+    canReadOfficeWallets,
+    canReadProfileAccess,
+    canSeePermissions,
+  ]);
+  const activeSection = visibleSections.includes(requestedSection)
+    ? requestedSection
+    : (visibleSections[0] ?? requestedSection);
+
+  const profilesQuery = trpc.branches.profiles.useQuery(undefined, {
+    enabled:
+      activeSection === "profile" &&
+      canReadProfileAccess &&
+      workspace.online &&
+      Boolean(workspace.userId),
+    retry: false,
+    refetchOnWindowFocus: false,
+  });
   const membersQuery = trpc.branches.members.useQuery(undefined, {
     enabled:
-      canReadMemberships && workspace.online && Boolean(workspace.userId),
+      activeSection === "employees" &&
+      canReadMemberships &&
+      workspace.online &&
+      Boolean(workspace.userId),
     retry: false,
     refetchOnWindowFocus: false,
   });
@@ -168,10 +217,17 @@ export default function OfficeSettings() {
         : (selectableOffices[0] ?? "nouakchott");
     if (nextOffice !== selectedOffice) setSelectedOffice(nextOffice);
   }, [requestedOffice, selectableOffices, selectedOffice]);
+
   const chooseOffice = (officeId: OfficeId) => {
     setSelectedOffice(officeId);
-    const path = location.split("?")[0] || "/operations/settings";
-    navigate(`${path}?office=${officeId}`);
+    navigate(officeSettingsLocationWithQuery(location, { office: officeId }));
+  };
+  const chooseSection = (section: OfficeSettingsSection) => {
+    navigate(
+      officeSettingsLocationWithQuery(location, {
+        panel: section,
+      })
+    );
   };
   const saveProfile = async (
     next: OfficeProfile,
@@ -255,18 +311,89 @@ export default function OfficeSettings() {
       return false;
     }
   };
-  const roleCanSeeProfile = canOpenSettings;
 
-  const canReadOfficeWallets = permissionAllowed(
-    permissionScope,
-    "office_wallets",
-    "view"
-  );
-  const canManageOfficeWallets = permissionAllowed(
-    permissionScope,
-    "office_wallets",
-    "manage"
-  );
+  const renderProfile = () => {
+    if (!canReadProfileAccess)
+      return (
+        <p className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-[#52636e]">
+          {copy.noOfficeAccess}
+        </p>
+      );
+    if (profilesQuery.isLoading)
+      return <p className="rounded-xl bg-white p-5 text-sm">{copy.loading}</p>;
+    if (profilesQuery.isError)
+      return (
+        <div className="rounded-xl border border-red-200 bg-red-50 p-5 text-sm text-red-900">
+          {copy.loadError}
+          <button
+            className={`${packingSecondaryClass} mt-3`}
+            onClick={() => void profilesQuery.refetch()}
+          >
+            {copy.retry}
+          </button>
+        </div>
+      );
+    return profile ? (
+      <OfficeProfileEditor
+        profile={profile}
+        canEdit={canEditProfile}
+        online={workspace.online}
+        pending={updateProfile.isPending}
+        onSave={saveProfile}
+        onReload={reloadProfile}
+      />
+    ) : (
+      <p className="rounded-xl bg-white p-5 text-sm">{copy.noProfile}</p>
+    );
+  };
+
+  const renderEmployees = () => {
+    if (!canReadMemberships)
+      return (
+        <p className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-[#52636e]">
+          {copy.noMemberAccess}
+        </p>
+      );
+    if (membersQuery.isLoading)
+      return <p className="rounded-xl bg-white p-5 text-sm">{copy.loading}</p>;
+    if (membersQuery.isError)
+      return (
+        <div className="rounded-xl border border-red-200 bg-red-50 p-5 text-sm text-red-900">
+          {copy.memberLoadError}
+          <button
+            className={`${packingSecondaryClass} mt-3`}
+            onClick={() => void membersQuery.refetch()}
+          >
+            {copy.retry}
+          </button>
+        </div>
+      );
+    return (
+      <>
+        <p className="rounded-xl border border-[#dce4e7] bg-[#f7faf9] p-4 text-sm text-[#52636e]">
+          {sectionCopy.employeeScopeHint}
+        </p>
+        <OfficeMemberships
+          members={membersQuery.data ?? []}
+          actorRole={access?.role ?? workspace.role}
+          actorUserId={
+            access?.userId ??
+            (workspace.userId ? Number(workspace.userId) : null)
+          }
+          managerHomeOffice={managedOffice}
+          permissionCeiling={permissionCeiling}
+          actorPermissions={ownPermissions}
+          canEdit={canEditMemberships}
+          online={workspace.online}
+          pending={assignMember.isPending}
+          onSave={saveMember}
+          onResetPassword={resetMemberPassword}
+          onDisable={disableMember}
+        />
+      </>
+    );
+  };
+
   return (
     <PackingLayout
       title={copy.title}
@@ -274,112 +401,108 @@ export default function OfficeSettings() {
       workspace={workspace}
     >
       <section className="grid gap-5">
-        {(permissionScope.role === "admin" ||
-          permissionScope.role === "office_manager") && (
-          <NewPermissionsMatrix
-            value={ownPermissions}
-            ceiling={ownPermissions}
-            canEdit={false}
-            showRootPermissions={permissionScope.role === "admin"}
-          />
+        {visibleSections.length > 0 && (
+          <nav
+            aria-label={copy.title}
+            className="flex flex-wrap gap-2 rounded-2xl border border-[#dce4e7] bg-white p-3 shadow-sm"
+          >
+            {visibleSections.map(section => {
+              const label = sectionCopy[section];
+              const selected = activeSection === section;
+              return (
+                <button
+                  key={section}
+                  type="button"
+                  role="tab"
+                  aria-selected={selected}
+                  className={`rounded-xl px-4 py-2.5 text-sm font-bold transition ${
+                    selected
+                      ? "bg-[#092d50] text-white"
+                      : "border border-[#dce4e7] bg-white text-[#315b5a] hover:bg-[#f7faf9]"
+                  }`}
+                  onClick={() => chooseSection(section)}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </nav>
         )}
-        <div className="rounded-2xl border border-[#dce4e7] bg-white p-5 shadow-sm">
-          <div className="flex flex-wrap items-end justify-between gap-4">
-            <div>
-              <p className="text-xs font-bold uppercase tracking-wide text-[#718088]">
-                {copy.chooseOffice}
-              </p>
-              <h2 className="mt-1 text-2xl font-black text-[#092d50]">
-                {officeName(language, selectedOffice)}
-              </h2>
+        {selectableOffices.length > 0 && (
+          <div className="rounded-2xl border border-[#dce4e7] bg-white p-5 shadow-sm">
+            <div className="flex flex-wrap items-end justify-between gap-4">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-wide text-[#718088]">
+                  {copy.chooseOffice}
+                </p>
+                <h2 className="mt-1 text-2xl font-black text-[#092d50]">
+                  {officeName(language, selectedOffice)}
+                </h2>
+              </div>
+              <label className="grid min-w-64 gap-1.5 text-sm font-semibold text-[#243f52]">
+                <span>{copy.office}</span>
+                <select
+                  className={packingInputClass}
+                  value={selectedOffice}
+                  onChange={event =>
+                    chooseOffice(event.target.value as OfficeId)
+                  }
+                  disabled={permissionScope.role === "office_manager"}
+                >
+                  {selectableOffices.map(officeId => (
+                    <option key={officeId} value={officeId}>
+                      {officeName(language, officeId)}
+                    </option>
+                  ))}
+                </select>
+              </label>
             </div>
-            <label className="grid min-w-64 gap-1.5 text-sm font-semibold text-[#243f52]">
-              <span>{copy.office}</span>
-              <select
-                className={packingInputClass}
-                value={selectedOffice}
-                onChange={event => chooseOffice(event.target.value as OfficeId)}
-                disabled={permissionScope.role === "office_manager"}
-              >
-                {selectableOffices.map(officeId => (
-                  <option key={officeId} value={officeId}>
-                    {officeName(language, officeId)}
-                  </option>
-                ))}
-              </select>
-            </label>
           </div>
-        </div>
+        )}
         {!workspace.online && (
           <p className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-950">
             {copy.onlineRequired}
           </p>
         )}
-        {profilesQuery.isLoading && (
-          <p className="rounded-xl bg-white p-5 text-sm">{copy.loading}</p>
-        )}
-        {profilesQuery.isError && (
-          <div className="rounded-xl border border-red-200 bg-red-50 p-5 text-sm text-red-900">
-            {copy.loadError}
-            <button
-              className={`${packingSecondaryClass} mt-3`}
-              onClick={() => void profilesQuery.refetch()}
-            >
-              {copy.retry}
-            </button>
-          </div>
-        )}
-        {!profilesQuery.isLoading &&
-          !profilesQuery.isError &&
-          roleCanSeeProfile &&
-          (profile ? (
-            <OfficeProfileEditor
-              profile={profile}
-              canEdit={canEditProfile}
-              online={workspace.online}
-              pending={updateProfile.isPending}
-              onSave={saveProfile}
-              onReload={reloadProfile}
+        {activeSection === "profile" && renderProfile()}
+        {activeSection === "employees" && renderEmployees()}
+        {activeSection === "wallets" &&
+          (canReadOfficeWallets ? (
+            <OfficeWalletEditor
+              workspace={workspace}
+              officeId={selectedOffice}
+              canRead={canReadOfficeWallets}
+              canEdit={canManageOfficeWallets}
+              allowed={canReadOfficeWallets}
             />
           ) : (
-            <p className="rounded-xl bg-white p-5 text-sm">{copy.noProfile}</p>
+            <p className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-[#52636e]">
+              {copy.noOfficeAccess}
+            </p>
           ))}
-        {canReadMemberships && (
-          <OfficeMemberships
-            members={membersQuery.data ?? []}
-            actorRole={access?.role ?? workspace.role}
-            actorUserId={
-              access?.userId ??
-              (workspace.userId ? Number(workspace.userId) : null)
-            }
-            managerHomeOffice={managedOffice}
-            permissionCeiling={permissionCeiling}
-            actorPermissions={ownPermissions}
-            canEdit={canEditMemberships}
-            online={workspace.online}
-            pending={assignMember.isPending}
-            onSave={saveMember}
-            onResetPassword={resetMemberPassword}
-            onDisable={disableMember}
-          />
+        {activeSection === "permissions" && canSeePermissions && (
+          <section className="rounded-2xl border border-[#dce4e7] bg-white p-5 shadow-sm">
+            <h2 className="text-lg font-black text-[#092d50]">
+              {sectionCopy.permissions}
+            </h2>
+            <p className="mt-1 text-sm text-[#718088]">
+              {sectionCopy.permissionsHint}
+            </p>
+            <NewPermissionsMatrix
+              value={ownPermissions}
+              ceiling={ownPermissions}
+              canEdit={false}
+              showRootPermissions={permissionScope.role === "admin"}
+              title={sectionCopy.permissions}
+              hint={sectionCopy.permissionsHint}
+            />
+          </section>
         )}
-        {!canReadMemberships && (
-          <p className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-[#52636e]">
-            {copy.noMemberAccess}
+        {activeSection === "profile" && (
+          <p className="text-xs text-[#718088]">
+            {copy.publicProfile}: {copy.publicNotice}
           </p>
         )}
-        {canReadOfficeWallets && (
-          <OfficeWalletEditor
-            workspace={workspace}
-            officeId={selectedOffice}
-            canRead={canReadOfficeWallets}
-            canEdit={canManageOfficeWallets}
-            allowed={canReadOfficeWallets}
-          />
-        )}
-        <p className="text-xs text-[#718088]">
-          {copy.publicProfile}: {copy.publicNotice}
-        </p>
       </section>
     </PackingLayout>
   );
