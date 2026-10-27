@@ -76,8 +76,8 @@ export async function appendAudit(
   if (!existing[0]) {
     await tx
       .insert(auditHeads)
-      .ignore()
-      .values({ id: 1, sequence: 0, lastHash: "", updatedAt: new Date() });
+      .values({ id: 1, sequence: 0, lastHash: "", updatedAt: new Date() })
+      .onConflictDoNothing();
   }
   const headRows = await tx
     .select()

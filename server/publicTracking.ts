@@ -420,7 +420,7 @@ async function rowByRecordId(
 }
 
 export function canonicalTrackingExpression(): SQL {
-  let expression: SQL = sql`JSON_UNQUOTE(JSON_EXTRACT(${records.data}, '$.tracking'))`;
+  let expression: SQL = sql`${records.data}->>'tracking'`;
   for (const digits of ["٠١٢٣٤٥٦٧٨٩", "۰۱۲۳۴۵۶۷۸۹"]) {
     for (let index = 0; index < 10; index++) {
       expression = sql`REPLACE(${expression}, ${digits[index]}, ${String(index)})`;

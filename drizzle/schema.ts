@@ -1,8 +1,7 @@
 import {
-  int,
-  json,
-  mysqlEnum,
-  mysqlTable,
+  integer,
+  jsonb,
+  pgTable,
   boolean,
   decimal,
   text,
@@ -10,26 +9,35 @@ import {
   varchar,
   index,
   uniqueIndex,
-} from "drizzle-orm/mysql-core";
+  serial,
+} from "drizzle-orm/pg-core";
+
+const int = integer;
+
+/** PostgreSQL keeps the application enums type-safe in TypeScript while migrations remain additive. */
+function enumText<const T extends readonly [string, ...string[]]>(name: string, values: T) {
+  void values;
+  return text(name).$type<T[number]>();
+}
 
 import { sql } from "drizzle-orm";
 
 import type { PermissionMap } from "../shared/permissions";
 /** Core user table backing auth flow. */
-export const users = mysqlTable("users", {
-  id: int("id").autoincrement().primaryKey(),
+export const users = pgTable("users", {
+  id: serial("id").primaryKey(),
   openId: varchar("openId", { length: 64 }).notNull().unique(),
   name: text("name"),
   email: varchar("email", { length: 320 }).unique(),
   loginMethod: varchar("loginMethod", { length: 64 }),
-  accountType: mysqlEnum("accountType", ["customer", "employee"])
+  accountType: enumText("accountType", ["customer", "employee"])
     .default("employee")
     .notNull(),
   passwordHash: varchar("passwordHash", { length: 255 }),
   mustChangePassword: boolean("mustChangePassword").default(false).notNull(),
-  role: mysqlEnum("role", ["user", "admin"]).default("user").notNull(),
+  role: enumText("role", ["user", "admin"]).default("user").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
   lastSignedIn: timestamp("lastSignedIn").defaultNow().notNull(),
 });
 
@@ -37,10 +45,10 @@ export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 
 /** Application-owned email sessions. Manus OAuth sessions remain in webdev_app_session. */
-export const localSessions = mysqlTable(
+export const localSessions = pgTable(
   "local_sessions",
   {
-    id: int("id").autoincrement().primaryKey(),
+    id: serial("id").primaryKey(),
     tokenHash: varchar("tokenHash", { length: 64 }).notNull(),
     userId: int("userId")
       .notNull()
@@ -52,7 +60,7 @@ export const localSessions = mysqlTable(
 );
 
 /** Owner-approved one-time enrollment capabilities, never regular login sessions. */
-export const emailEnrollments = mysqlTable("email_enrollments", {
+export const emailEnrollments = pgTable("email_enrollments", {
   tokenHash: varchar("tokenHash", { length: 64 }).primaryKey(),
   userId: int("userId").notNull().references(() => users.id),
   expiresAt: timestamp("expiresAt").notNull(),
@@ -76,55 +84,55 @@ export const appRoleValues = [
 ] as const;
 
 /** Durable application role assignments. The users.role column remains the root admin flag. */
-export const memberRoles = mysqlTable(
+export const memberRoles = pgTable(
   "member_roles",
   {
-    id: int("id").autoincrement().primaryKey(),
+    id: serial("id").primaryKey(),
     userId: int("userId")
       .notNull()
       .references(() => users.id),
-    role: mysqlEnum("role", appRoleValues).notNull(),
+    role: enumText("role", appRoleValues).notNull(),
     /** null preserves legacy unrestricted membership; JSON is an explicit office allow-list. */
-    offices: json("offices"),
+    offices: jsonb("offices"),
     /** Optional finance home office; null preserves legacy unrestricted membership. */
     homeOffice: varchar("homeOffice", { length: 32 }),
     /** Explicit opt-in for source-warehouse stage updates; never grants financial access. */
     canUpdateTracking: boolean("canUpdateTracking").notNull().default(false),
-    permissions: json("permissions").$type<PermissionMap>(),
+    permissions: jsonb("permissions").$type<PermissionMap>(),
     delegatedBy: int("delegatedBy"),
     /** Optimistic-concurrency version for admin membership edits. */
     version: int("version").notNull().default(0),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
-    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().notNull(),
   },
   table => [uniqueIndex("member_roles_user_unique").on(table.userId)]
 );
 
 /** Four public office profiles; profile JSON is validated by shared/branches.ts at the API boundary. */
-export const officeProfiles = mysqlTable(
+export const officeProfiles = pgTable(
   "office_profiles",
   {
     officeId: varchar("officeId", { length: 32 }).primaryKey(),
     version: int("version").notNull().default(0),
-    profile: json("profile").notNull(),
+    profile: jsonb("profile").notNull(),
     updatedBy: int("updatedBy"),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
-    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().notNull(),
   },
   table => [uniqueIndex("office_profiles_office_unique").on(table.officeId)]
 );
 
 /** Generic records preserve the shared contract while keeping writes additive and versioned. */
-export const records = mysqlTable(
+export const records = pgTable(
   "records",
   {
-    id: int("id").autoincrement().primaryKey(),
-    entity: mysqlEnum("entity", recordEntityValues).notNull(),
+    id: serial("id").primaryKey(),
+    entity: enumText("entity", recordEntityValues).notNull(),
     recordId: varchar("recordId", { length: 128 }).notNull(),
     version: int("version").notNull().default(1),
-    data: json("data").notNull(),
+    data: jsonb("data").notNull(),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
-    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().notNull(),
     updatedBy: int("updatedBy").notNull(),
   },
   table => [
@@ -136,15 +144,15 @@ export const records = mysqlTable(
 );
 
 /** One row per user/changeId makes sync retries safe and replayable. */
-export const syncReceipts = mysqlTable(
+export const syncReceipts = pgTable(
   "sync_receipts",
   {
-    id: int("id").autoincrement().primaryKey(),
+    id: serial("id").primaryKey(),
     userId: int("userId")
       .notNull()
       .references(() => users.id),
     changeId: varchar("changeId", { length: 128 }).notNull(),
-    result: json("result").notNull(),
+    result: jsonb("result").notNull(),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
   },
   table => [
@@ -156,18 +164,18 @@ export const syncReceipts = mysqlTable(
 );
 
 /** Unique identity/tracking keys are separate so a tracking-number collision is atomic. */
-export const recordKeys = mysqlTable(
+export const recordKeys = pgTable(
   "record_keys",
   {
-    id: int("id").autoincrement().primaryKey(),
-    keyType: mysqlEnum("keyType", [
+    id: serial("id").primaryKey(),
+    keyType: enumText("keyType", [
       "account-id",
       "shipment-id",
       "shipment-tracking",
       "invoice-id",
     ]).notNull(),
     keyValue: varchar("keyValue", { length: 128 }).notNull(),
-    entity: mysqlEnum("entity", recordEntityValues).notNull(),
+    entity: enumText("entity", recordEntityValues).notNull(),
     recordId: varchar("recordId", { length: 128 }).notNull(),
   },
   table => [
@@ -179,30 +187,30 @@ export const recordKeys = mysqlTable(
 );
 
 /** Singleton office payment-method settings. A missing row means the version-zero defaults apply. */
-export const officeSettings = mysqlTable("office_settings", {
+export const officeSettings = pgTable("office_settings", {
   id: int("id").primaryKey().default(1),
   office: varchar("office", { length: 32 }).notNull(),
-  methods: json("methods").notNull(),
+  methods: jsonb("methods").notNull(),
   version: int("version").notNull().default(0),
   updatedBy: int("updatedBy").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
 });
 
 /** Hash-chained append-only audit events; immutability is enforced by application transactions (TiDB has no unsupported triggers here). */
-export const auditEvents = mysqlTable(
+export const auditEvents = pgTable(
   "audit_events",
   {
-    id: int("id").autoincrement().primaryKey(),
+    id: serial("id").primaryKey(),
     sequence: int("sequence").notNull(),
     actorId: int("actorId").notNull(),
     actorName: varchar("actorName", { length: 320 }).notNull(),
-    role: mysqlEnum("role", appRoleValues).notNull(),
+    role: enumText("role", appRoleValues).notNull(),
     entity: varchar("entity", { length: 64 }).notNull(),
     recordId: varchar("recordId", { length: 128 }).notNull(),
     action: varchar("action", { length: 64 }).notNull(),
-    beforeData: json("beforeData"),
-    afterData: json("afterData"),
+    beforeData: jsonb("beforeData"),
+    afterData: jsonb("afterData"),
     beforeVersion: int("beforeVersion"),
     afterVersion: int("afterVersion"),
     requestKey: varchar("requestKey", { length: 128 }).notNull(),
@@ -214,11 +222,11 @@ export const auditEvents = mysqlTable(
 );
 
 /** Singleton chain head locked by every audit append. */
-export const auditHeads = mysqlTable("audit_heads", {
+export const auditHeads = pgTable("audit_heads", {
   id: int("id").primaryKey().default(1),
   sequence: int("sequence").notNull().default(0),
   lastHash: varchar("lastHash", { length: 64 }).notNull().default(""),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
 });
 
 export const financeEntryKinds = [
@@ -244,14 +252,14 @@ export const financeCurrencies = [
 ] as const;
 
 /** Immutable finance facts. The complete contract object is retained in data. */
-export const financeEntries = mysqlTable(
+export const financeEntries = pgTable(
   "finance_entries",
   {
     id: varchar("id", { length: 128 }).primaryKey(),
-    kind: mysqlEnum("kind", financeEntryKinds).notNull(),
+    kind: enumText("kind", financeEntryKinds).notNull(),
     officeId: varchar("officeId", { length: 32 }).notNull(),
-    currency: mysqlEnum("currency", financeCurrencies).notNull(),
-    data: json("data").notNull(),
+    currency: enumText("currency", financeCurrencies).notNull(),
+    data: jsonb("data").notNull(),
     invoiceId: varchar("invoiceId", { length: 128 }),
     shipmentId: varchar("shipmentId", { length: 128 }),
     actorId: int("actorId").notNull(),
@@ -261,16 +269,16 @@ export const financeEntries = mysqlTable(
 );
 
 /** Command receipts are actor-scoped and hash-bound, so replay with altered payload is rejected. */
-export const financeReceipts = mysqlTable(
+export const financeReceipts = pgTable(
   "finance_receipts",
   {
-    id: int("id").autoincrement().primaryKey(),
+    id: serial("id").primaryKey(),
     actorId: int("actorId")
       .notNull()
       .references(() => users.id),
     commandId: varchar("commandId", { length: 128 }).notNull(),
     payloadHash: varchar("payloadHash", { length: 64 }).notNull(),
-    result: json("result").notNull(),
+    result: jsonb("result").notNull(),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
   },
   table => [
@@ -282,10 +290,10 @@ export const financeReceipts = mysqlTable(
 );
 
 /** Claimed shipment goods prevent a good from being invoiced twice. */
-export const financeGoods = mysqlTable(
+export const financeGoods = pgTable(
   "finance_goods",
   {
-    id: int("id").autoincrement().primaryKey(),
+    id: serial("id").primaryKey(),
     shipmentId: varchar("shipmentId", { length: 128 }).notNull(),
     goodsId: varchar("goodsId", { length: 128 }).notNull(),
     invoiceId: varchar("invoiceId", { length: 128 }).notNull(),
@@ -300,20 +308,20 @@ export const financeGoods = mysqlTable(
 );
 
 /** Append-only delegation history. Existing member_roles permissions remain the compatibility source. */
-export const permissionDelegations = mysqlTable(
+export const permissionDelegations = pgTable(
   "permission_delegations",
   {
-    id: int("id").autoincrement().primaryKey(),
+    id: serial("id").primaryKey(),
     targetUserId: int("targetUserId")
       .notNull()
       .references(() => users.id),
     officeId: varchar("officeId", { length: 32 }),
     permissionKey: varchar("permissionKey", { length: 64 }).notNull(),
-    level: mysqlEnum("level", ["none", "view", "manage"]).notNull(),
+    level: enumText("level", ["none", "view", "manage"]).notNull(),
     delegatedBy: int("delegatedBy")
       .notNull()
       .references(() => users.id),
-    status: mysqlEnum("status", ["active", "revoked"]).notNull().default("active"),
+    status: enumText("status", ["active", "revoked"]).notNull().default("active"),
     reason: varchar("reason", { length: 500 }),
     version: int("version").notNull().default(1),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
@@ -326,13 +334,13 @@ export const permissionDelegations = mysqlTable(
 );
 
 /** Independent invoice correction facts; original invoice data is never rewritten. */
-export const invoiceAdjustments = mysqlTable(
+export const invoiceAdjustments = pgTable(
   "invoice_adjustments",
   {
     id: varchar("id", { length: 128 }).primaryKey(),
     invoiceId: varchar("invoiceId", { length: 128 }).notNull(),
     officeId: varchar("officeId", { length: 32 }).notNull(),
-    direction: mysqlEnum("direction", ["increase", "decrease"]).notNull(),
+    direction: enumText("direction", ["increase", "decrease"]).notNull(),
     amount: decimal("amount", { precision: 18, scale: 2 }).notNull(),
     reason: varchar("reason", { length: 500 }).notNull(),
     actorId: int("actorId").notNull().references(() => users.id),
@@ -348,14 +356,14 @@ export const cashRegisterStatuses = ["open", "closed"] as const;
 export const cashMovementKinds = ["receipt", "expense", "closing_adjustment"] as const;
 
 /** One cash register session per office/currency; historical sessions are retained. */
-export const cashRegisters = mysqlTable(
+export const cashRegisters = pgTable(
   "cash_registers",
   {
     id: varchar("id", { length: 128 }).primaryKey(),
     officeId: varchar("officeId", { length: 32 }).notNull(),
-    currency: mysqlEnum("currency", financeCurrencies).notNull(),
+    currency: enumText("currency", financeCurrencies).notNull(),
     openingBalance: decimal("openingBalance", { precision: 18, scale: 2 }).notNull(),
-    status: mysqlEnum("status", cashRegisterStatuses).notNull().default("open"),
+    status: enumText("status", cashRegisterStatuses).notNull().default("open"),
     openedBy: int("openedBy").notNull().references(() => users.id),
     closedBy: int("closedBy").references(() => users.id),
     openedAt: timestamp("openedAt").defaultNow().notNull(),
@@ -368,18 +376,18 @@ export const cashRegisters = mysqlTable(
 );
 
 /** Append-only cash movements linked to a register and optionally an invoice. */
-export const cashMovements = mysqlTable(
+export const cashMovements = pgTable(
   "cash_movements",
   {
     id: varchar("id", { length: 128 }).primaryKey(),
     registerId: varchar("registerId", { length: 128 }).notNull(),
     officeId: varchar("officeId", { length: 32 }).notNull(),
-    kind: mysqlEnum("kind", cashMovementKinds).notNull(),
+    kind: enumText("kind", cashMovementKinds).notNull(),
     amount: decimal("amount", { precision: 18, scale: 2 }).notNull(),
-    currency: mysqlEnum("currency", financeCurrencies).notNull(),
+    currency: enumText("currency", financeCurrencies).notNull(),
     invoiceId: varchar("invoiceId", { length: 128 }),
     actorId: int("actorId").notNull().references(() => users.id),
-    data: json("data"),
+    data: jsonb("data"),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
   },
   table => [
@@ -389,19 +397,19 @@ export const cashMovements = mysqlTable(
 );
 
 /** Immutable tariff snapshot captured when a shipment is created or repriced. */
-export const shipmentTariffSnapshots = mysqlTable(
+export const shipmentTariffSnapshots = pgTable(
   "shipment_tariff_snapshots",
   {
     id: varchar("id", { length: 128 }).primaryKey(),
     shipmentId: varchar("shipmentId", { length: 128 }).notNull(),
     officeId: varchar("officeId", { length: 32 }).notNull(),
     serviceType: varchar("serviceType", { length: 64 }).notNull(),
-    currency: mysqlEnum("currency", financeCurrencies).notNull(),
+    currency: enumText("currency", financeCurrencies).notNull(),
     pricePerKg: decimal("pricePerKg", { precision: 18, scale: 2 }).notNull(),
     pricePerKgMRU: decimal("pricePerKgMRU", { precision: 18, scale: 2 }),
     capturedBy: int("capturedBy").notNull().references(() => users.id),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
-    data: json("data"),
+    data: jsonb("data"),
   },
   table => [
     index("shipment_tariff_snapshots_shipment_idx").on(table.shipmentId),
@@ -410,7 +418,7 @@ export const shipmentTariffSnapshots = mysqlTable(
 );
 
 /** Append-only warehouse placement events; the current shelf is derived from the latest event. */
-export const warehouseLocationEvents = mysqlTable(
+export const warehouseLocationEvents = pgTable(
   "warehouse_location_events",
   {
     id: varchar("id", { length: 128 }).primaryKey(),
@@ -420,7 +428,7 @@ export const warehouseLocationEvents = mysqlTable(
     warehouseCode: varchar("warehouseCode", { length: 32 }).notNull(),
     shelfCode: varchar("shelfCode", { length: 32 }).notNull(),
     locationCode: varchar("locationCode", { length: 80 }).notNull(),
-    action: mysqlEnum("action", ["shelve", "release", "deliver"]).notNull(),
+    action: enumText("action", ["shelve", "release", "deliver"]).notNull(),
     expectedVersion: int("expectedVersion").notNull(),
     actorId: int("actorId").notNull().references(() => users.id),
     requestKey: varchar("requestKey", { length: 128 }).notNull(),
@@ -450,15 +458,15 @@ export type ShipmentTariffSnapshotRow = typeof shipmentTariffSnapshots.$inferSel
 export type WarehouseLocationEventRow = typeof warehouseLocationEvents.$inferSelect;
 
 /** Append-only published rate versions, used to verify creation-time tariffs. */
-export const officeTariffHistory = mysqlTable(
+export const officeTariffHistory = pgTable(
   "office_tariff_history",
   {
     id: varchar("id", { length: 128 }).primaryKey(),
     officeId: varchar("officeId", { length: 32 }).notNull(),
     profileVersion: int("profileVersion").notNull(),
-    announcedAt: timestamp("announcedAt", { fsp: 3 }).notNull(),
-    shippingRates: json("shippingRates"),
-    sourceShippingRates: json("sourceShippingRates"),
+    announcedAt: timestamp("announcedAt", { precision: 3 }).notNull(),
+    shippingRates: jsonb("shippingRates"),
+    sourceShippingRates: jsonb("sourceShippingRates"),
     recordedBy: int("recordedBy"),
     recordedAt: timestamp("recordedAt").defaultNow().notNull(),
   },
@@ -470,20 +478,20 @@ export const officeTariffHistory = mysqlTable(
 export type OfficeTariffHistoryRow = typeof officeTariffHistory.$inferSelect;
 
 /** Permanent operational tombstones. Originals remain untouched for forensic audit. */
-export const entityLifecycle = mysqlTable(
+export const entityLifecycle = pgTable(
   "entity_lifecycle",
   {
     id: varchar("id", { length: 128 }).primaryKey(),
-    entity: mysqlEnum("entity", ["shipment", "invoice", "finance_entry", "employee", "public_employee", "account"]).notNull(),
+    entity: enumText("entity", ["shipment", "invoice", "finance_entry", "employee", "public_employee", "account"]).notNull(),
     recordId: varchar("recordId", { length: 128 }).notNull(),
-    action: mysqlEnum("action", ["delete", "void", "disable"]).notNull(),
+    action: enumText("action", ["delete", "void", "disable"]).notNull(),
     officeId: varchar("officeId", { length: 32 }),
     reason: varchar("reason", { length: 500 }).notNull(),
     expectedVersion: int("expectedVersion").notNull(),
     actorId: int("actorId").notNull().references(() => users.id),
     requestKey: varchar("requestKey", { length: 128 }).notNull(),
-    snapshot: json("snapshot"),
-    createdAt: timestamp("createdAt", { fsp: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
+    snapshot: jsonb("snapshot"),
+    createdAt: timestamp("createdAt", { precision: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
   },
   table => [
     uniqueIndex("entity_lifecycle_record_unique").on(table.entity, table.recordId),
@@ -493,7 +501,7 @@ export const entityLifecycle = mysqlTable(
 );
 
 /** Signed contra effects linked to immutable original entries; never delete posted facts. */
-export const financeReversals = mysqlTable(
+export const financeReversals = pgTable(
   "finance_reversals",
   {
     id: varchar("id", { length: 128 }).primaryKey(),
@@ -501,14 +509,14 @@ export const financeReversals = mysqlTable(
     originalEntryId: varchar("originalEntryId", { length: 128 }).notNull(),
     originalKind: varchar("originalKind", { length: 64 }).notNull(),
     officeId: varchar("officeId", { length: 32 }).notNull(),
-    currency: mysqlEnum("currency", financeCurrencies).notNull(),
+    currency: enumText("currency", financeCurrencies).notNull(),
     amount: decimal("amount", { precision: 18, scale: 2 }).notNull(),
     invoiceId: varchar("invoiceId", { length: 128 }),
     shipmentId: varchar("shipmentId", { length: 128 }),
     customerId: varchar("customerId", { length: 128 }),
     actorId: int("actorId").notNull().references(() => users.id),
-    data: json("data").notNull(),
-    createdAt: timestamp("createdAt", { fsp: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
+    data: jsonb("data").notNull(),
+    createdAt: timestamp("createdAt", { precision: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
   },
   table => [
     uniqueIndex("finance_reversals_original_unique").on(table.originalEntryId),
@@ -518,21 +526,21 @@ export const financeReversals = mysqlTable(
 );
 
 /** Frozen per-good charge components; export and destination charges are not billed twice. */
-export const shipmentChargeComponents = mysqlTable(
+export const shipmentChargeComponents = pgTable(
   "shipment_charge_components",
   {
     id: varchar("id", { length: 128 }).primaryKey(),
     shipmentId: varchar("shipmentId", { length: 128 }).notNull(),
     goodsId: varchar("goodsId", { length: 128 }).notNull(),
     chargeKey: varchar("chargeKey", { length: 128 }).notNull(),
-    kind: mysqlEnum("kind", ["export", "destination_local"]).notNull(),
+    kind: enumText("kind", ["export", "destination_local"]).notNull(),
     officeId: varchar("officeId", { length: 32 }).notNull(),
-    currency: mysqlEnum("currency", financeCurrencies).notNull(),
+    currency: enumText("currency", financeCurrencies).notNull(),
     amount: decimal("amount", { precision: 18, scale: 2 }).notNull(),
     actorId: int("actorId").notNull().references(() => users.id),
     requestKey: varchar("requestKey", { length: 128 }).notNull(),
-    data: json("data").notNull(),
-    createdAt: timestamp("createdAt", { fsp: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
+    data: jsonb("data").notNull(),
+    createdAt: timestamp("createdAt", { precision: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
   },
   table => [
     uniqueIndex("shipment_charge_component_unique").on(table.shipmentId, table.goodsId, table.chargeKey),
@@ -542,18 +550,18 @@ export const shipmentChargeComponents = mysqlTable(
 );
 
 /** Append-only billing/payment/void allocations, not a replacement for old goods claims. */
-export const shipmentChargeAllocations = mysqlTable(
+export const shipmentChargeAllocations = pgTable(
   "shipment_charge_allocations",
   {
     id: varchar("id", { length: 128 }).primaryKey(),
     componentId: varchar("componentId", { length: 128 }).notNull(),
     invoiceId: varchar("invoiceId", { length: 128 }).notNull(),
-    kind: mysqlEnum("kind", ["invoice", "payment", "void"]).notNull(),
+    kind: enumText("kind", ["invoice", "payment", "void"]).notNull(),
     amount: decimal("amount", { precision: 18, scale: 2 }).notNull(),
     actorId: int("actorId").notNull().references(() => users.id),
     requestKey: varchar("requestKey", { length: 128 }).notNull(),
-    data: json("data"),
-    createdAt: timestamp("createdAt", { fsp: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
+    data: jsonb("data"),
+    createdAt: timestamp("createdAt", { precision: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
   },
   table => [
     uniqueIndex("shipment_charge_allocation_request_unique").on(table.componentId, table.kind, table.requestKey),
@@ -563,20 +571,20 @@ export const shipmentChargeAllocations = mysqlTable(
 );
 
 /** Explicit availability events; role and office snapshots never grant authority. */
-export const dutyEvents = mysqlTable(
+export const dutyEvents = pgTable(
   "duty_events",
   {
-    id: int("id").autoincrement().primaryKey(),
+    id: serial("id").primaryKey(),
     userId: int("userId").notNull().references(() => users.id),
     actorId: int("actorId").notNull().references(() => users.id),
-    role: mysqlEnum("role", appRoleValues).notNull(),
+    role: enumText("role", appRoleValues).notNull(),
     officeId: varchar("officeId", { length: 32 }).notNull(),
-    status: mysqlEnum("status", ["on", "off"]).notNull(),
+    status: enumText("status", ["on", "off"]).notNull(),
     reason: varchar("reason", { length: 64 }).notNull(),
     membershipVersion: int("membershipVersion").notNull(),
-    expiresAt: timestamp("expiresAt", { fsp: 3 }),
+    expiresAt: timestamp("expiresAt", { precision: 3 }),
     requestKey: varchar("requestKey", { length: 128 }).notNull(),
-    createdAt: timestamp("createdAt", { fsp: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
+    createdAt: timestamp("createdAt", { precision: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
   },
   table => [
     uniqueIndex("duty_events_request_unique").on(table.userId, table.requestKey),
@@ -592,7 +600,7 @@ export type DutyEventRow = typeof dutyEvents.$inferSelect;
 
 
 /** Root-approved delegation ceilings; a policy applies only to its membership version. */
-export const officeDelegationPolicies = mysqlTable(
+export const officeDelegationPolicies = pgTable(
   "office_delegation_policies",
   {
     id: varchar("id", { length: 128 }).primaryKey(),
@@ -600,10 +608,10 @@ export const officeDelegationPolicies = mysqlTable(
     officeId: varchar("officeId", { length: 32 }).notNull(),
     managerMembershipVersion: int("managerMembershipVersion").notNull(),
     policyVersion: int("policyVersion").notNull(),
-    permissions: json("permissions").$type<PermissionMap>().notNull(),
+    permissions: jsonb("permissions").$type<PermissionMap>().notNull(),
     enabled: boolean("enabled").notNull().default(true),
     actorId: int("actorId").notNull().references(() => users.id),
-    createdAt: timestamp("createdAt", { fsp: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
+    createdAt: timestamp("createdAt", { precision: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
   },
   table => [
     uniqueIndex("office_delegation_policy_version_unique").on(table.managerUserId, table.officeId, table.policyVersion),
@@ -612,7 +620,7 @@ export const officeDelegationPolicies = mysqlTable(
 );
 
 /** Explicit, revocable customer ownership. Names, phone numbers and self-claims never grant access. */
-export const customerShipmentAccess = mysqlTable(
+export const customerShipmentAccess = pgTable(
   "customer_shipment_access",
   {
     id: varchar("id", { length: 128 }).primaryKey(),
@@ -621,12 +629,12 @@ export const customerShipmentAccess = mysqlTable(
     shipmentId: varchar("shipmentId", { length: 128 }).notNull(),
     goodsId: varchar("goodsId", { length: 128 }).notNull(),
     officeId: varchar("officeId", { length: 32 }).notNull(),
-    status: mysqlEnum("status", ["active", "revoked"]).notNull().default("active"),
+    status: enumText("status", ["active", "revoked"]).notNull().default("active"),
     version: int("version").notNull().default(1),
     grantedBy: int("grantedBy").notNull().references(() => users.id),
     updatedBy: int("updatedBy").notNull().references(() => users.id),
-    createdAt: timestamp("createdAt", { fsp: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
-    updatedAt: timestamp("updatedAt", { fsp: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).onUpdateNow().notNull(),
+    createdAt: timestamp("createdAt", { precision: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
+    updatedAt: timestamp("updatedAt", { precision: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
   },
   table => [
     uniqueIndex("customer_shipment_access_goods_unique").on(table.shipmentId, table.goodsId),
@@ -636,17 +644,17 @@ export const customerShipmentAccess = mysqlTable(
 );
 
 /** One immutable expense fact per explicitly approved shipment-cost reference. */
-export const shipmentCostApprovals = mysqlTable(
+export const shipmentCostApprovals = pgTable(
   "shipment_cost_approvals",
   {
     id: varchar("id", { length: 128 }).primaryKey(),
     shipmentId: varchar("shipmentId", { length: 128 }).notNull(),
     officeId: varchar("officeId", { length: 32 }).notNull(),
-    currency: mysqlEnum("currency", financeCurrencies).notNull(),
+    currency: enumText("currency", financeCurrencies).notNull(),
     referenceKey: varchar("referenceKey", { length: 128 }).notNull(),
     financeEntryId: varchar("financeEntryId", { length: 128 }).notNull(),
     actorId: int("actorId").notNull().references(() => users.id),
-    createdAt: timestamp("createdAt", { fsp: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
+    createdAt: timestamp("createdAt", { precision: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
   },
   table => [
     uniqueIndex("shipment_cost_approval_reference_unique").on(table.shipmentId, table.officeId, table.referenceKey),
@@ -655,33 +663,33 @@ export const shipmentCostApprovals = mysqlTable(
 );
 
 /** Per-source payment settings; legacy Nouakchott office_settings is not rewritten. */
-export const officePaymentSettings = mysqlTable(
+export const officePaymentSettings = pgTable(
   "office_payment_settings",
   {
     officeId: varchar("officeId", { length: 32 }).primaryKey(),
-    methods: json("methods").notNull(),
+    methods: jsonb("methods").notNull(),
     version: int("version").notNull().default(1),
     updatedBy: int("updatedBy").notNull().references(() => users.id),
-    createdAt: timestamp("createdAt", { fsp: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
-    updatedAt: timestamp("updatedAt", { fsp: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).onUpdateNow().notNull(),
+    createdAt: timestamp("createdAt", { precision: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
+    updatedAt: timestamp("updatedAt", { precision: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
   }
 );
 
 /** Actual wallet cash effects. Voiding an invoice alone never implies a refund. */
-export const walletMovements = mysqlTable(
+export const walletMovements = pgTable(
   "wallet_movements",
   {
     id: varchar("id", { length: 128 }).primaryKey(),
     officeId: varchar("officeId", { length: 32 }).notNull(),
     methodId: varchar("methodId", { length: 64 }).notNull(),
-    currency: mysqlEnum("currency", financeCurrencies).notNull(),
-    kind: mysqlEnum("kind", ["receipt", "refund"]).notNull(),
+    currency: enumText("currency", financeCurrencies).notNull(),
+    kind: enumText("kind", ["receipt", "refund"]).notNull(),
     amount: decimal("amount", { precision: 18, scale: 2 }).notNull(),
     invoiceId: varchar("invoiceId", { length: 128 }).notNull(),
     financeEntryId: varchar("financeEntryId", { length: 128 }).notNull(),
     actorId: int("actorId").notNull().references(() => users.id),
-    data: json("data"),
-    createdAt: timestamp("createdAt", { fsp: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
+    data: jsonb("data"),
+    createdAt: timestamp("createdAt", { precision: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
   },
   table => [
     uniqueIndex("wallet_movement_entry_unique").on(table.financeEntryId),
@@ -697,14 +705,14 @@ export type OfficePaymentSettingsRow = typeof officePaymentSettings.$inferSelect
 export type WalletMovementRow = typeof walletMovements.$inferSelect;
 
 /** Append-only explicit price overrides; original shipment and announcement remain immutable. */
-export const shipmentPriceOverrides = mysqlTable(
+export const shipmentPriceOverrides = pgTable(
   "shipment_price_overrides",
   {
     id: varchar("id", { length: 190 }).primaryKey(),
     shipmentId: varchar("shipmentId", { length: 128 }).notNull(),
     officeId: varchar("officeId", { length: 32 }).notNull(),
-    side: mysqlEnum("side", ["source", "destination"]).notNull(),
-    currency: mysqlEnum("currency", financeCurrencies).notNull(),
+    side: enumText("side", ["source", "destination"]).notNull(),
+    currency: enumText("currency", financeCurrencies).notNull(),
     pricePerKg: decimal("pricePerKg", { precision: 18, scale: 2 }).notNull(),
     revision: int("revision").notNull(),
     recordVersion: int("recordVersion").notNull(),
@@ -712,7 +720,7 @@ export const shipmentPriceOverrides = mysqlTable(
     previousOverrideId: varchar("previousOverrideId", { length: 190 }),
     requestKey: varchar("requestKey", { length: 190 }).notNull(),
     approvedBy: int("approvedBy").notNull().references(() => users.id),
-    createdAt: timestamp("createdAt", { fsp: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
+    createdAt: timestamp("createdAt", { precision: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
   },
   table => [
     uniqueIndex("shipment_price_override_request_unique").on(table.requestKey),
@@ -723,12 +731,12 @@ export const shipmentPriceOverrides = mysqlTable(
 export type ShipmentPriceOverrideRow = typeof shipmentPriceOverrides.$inferSelect;
 
 /** Transactional mutex for opening cash sessions; no legacy register is rewritten. */
-export const cashRegisterLocks = mysqlTable(
+export const cashRegisterLocks = pgTable(
   "cash_register_locks",
   {
     id: varchar("id", { length: 128 }).primaryKey(),
     officeId: varchar("officeId", { length: 32 }).notNull(),
-    currency: mysqlEnum("currency", financeCurrencies).notNull(),
+    currency: enumText("currency", financeCurrencies).notNull(),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
   },
   table => [

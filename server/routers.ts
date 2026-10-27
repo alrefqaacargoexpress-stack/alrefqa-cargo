@@ -419,15 +419,17 @@ export const appRouter = router({
       const cookies = parseCookieHeader(ctx.req.headers.cookie ?? "");
       const localToken = cookies[LOCAL_SESSION_COOKIE];
       if (ctx.user?.accountType === "employee") {
-        const database = await dbOrThrow();
-        const key =
-          "logout-" +
-          createHash("sha256")
-            .update(
-              String(ctx.user.id) + ":" + (localToken ?? "no-local-session")
-            )
-            .digest("hex");
-        await endDutyForLogout(database, ctx.user.id, key);
+        const database = await getDb();
+        if (database) {
+          const key =
+            "logout-" +
+            createHash("sha256")
+              .update(
+                String(ctx.user.id) + ":" + (localToken ?? "no-local-session")
+              )
+              .digest("hex");
+          await endDutyForLogout(database, ctx.user.id, key);
+        }
       }
       if (localToken) {
         await dbQueries.deleteLocalSession(hashSessionToken(localToken));
@@ -1127,16 +1129,15 @@ export const appRouter = router({
                     ],
                   };
                 else {
-                  await tx.insert(recordKeys).ignore().values({
+                  await tx.insert(recordKeys).values({
                     keyType: idKeyType,
                     keyValue: change.recordId,
                     entity: change.entity,
                     recordId: change.recordId,
-                  });
+                  }).onConflictDoNothing();
                   if (change.entity === "shipment")
                     await tx
                       .insert(recordKeys)
-                      .ignore()
                       .values({
                         keyType: "shipment-tracking",
                         keyValue: normalizeTracking(
@@ -1144,14 +1145,14 @@ export const appRouter = router({
                         ),
                         entity: change.entity,
                         recordId: change.recordId,
-                      });
-                  await tx.insert(records).ignore().values({
+                      }).onConflictDoNothing();
+                  await tx.insert(records).values({
                     entity: change.entity,
                     recordId: change.recordId,
                     version: nextVersion,
                     data: nextData,
                     updatedBy: ctx.user.id,
-                  });
+                  }).onConflictDoNothing();
                   const after = (
                     await tx
                       .select()

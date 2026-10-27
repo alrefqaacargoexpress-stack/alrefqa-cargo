@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MySqlDialect } from "drizzle-orm/mysql-core";
+import { PgDialect } from "drizzle-orm/pg-core";
 import {
   canonicalTrackingExpression,
   lookupPublicTracking,
@@ -7,7 +7,7 @@ import {
 } from "./publicTracking";
 import { normalizePublicTracking } from "@shared/publicTracking";
 import { createPackedShipment, addPackingGoods } from "@shared/packing";
-const dialect = new MySqlDialect();
+const dialect = new PgDialect();
 describe("public shipment number canonicalization", () => {
   it("generates parameterized exact Arabic and Persian replacements in SQL", () => {
     const q = dialect.sqlToQuery(canonicalTrackingExpression());
@@ -36,14 +36,14 @@ describe("public shipment number canonicalization", () => {
         scope: "shared" as const,
       };
       let call = 0;
-      const clauses: ReturnType<MySqlDialect["sqlToQuery"]>[] = [];
+      const clauses: ReturnType<PgDialect["sqlToQuery"]>[] = [];
       const db = {
         select: () => {
           call++;
           const n = call;
           const b = {
             from: () => b,
-            where: (clause: Parameters<MySqlDialect["sqlToQuery"]>[0]) => {
+            where: (clause: Parameters<PgDialect["sqlToQuery"]>[0]) => {
               clauses.push(dialect.sqlToQuery(clause));
               return b;
             },

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { MySqlDialect } from "drizzle-orm/mysql-core";
+import { PgDialect } from "drizzle-orm/pg-core";
 import { emailEnrollments, users } from "../drizzle/schema";
 import { hashSessionToken } from "./localAuth";
 import { issueInitialManagerSetup, initialManagerSetupInfo, completeInitialManagerSetup } from "./initialManagerSetup";
@@ -14,7 +14,7 @@ vi.mock("./accountSecurity", () => ({
 }));
 vi.mock("./audit", () => ({ appendAudit: async (_tx: unknown, event: unknown) => { memory.events.push(event); return 1; } }));
 vi.mock("./db", () => {
-  const dialect = new MySqlDialect();
+  const dialect = new PgDialect();
   const parameters = (condition: any) => dialect.sqlToQuery(condition).params;
   const select = () => ({ from: (table: unknown) => {
     let params: any[] = [];

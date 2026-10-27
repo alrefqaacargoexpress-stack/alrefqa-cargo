@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { MySqlDialect } from "drizzle-orm/mysql-core";
+import { PgDialect } from "drizzle-orm/pg-core";
 import { memberRoles, users, type User } from "../drizzle/schema";
 import { blankPermissions, type PermissionMap } from "../shared/permissions";
 import { assignPermissionMembership } from "./permissionMemberships";
 import { readOfficeScope } from "./branches";
 import { appendAudit } from "./audit";
 vi.mock("./audit", () => ({ appendAudit: vi.fn(async () => {}) }));
-const dialect = new MySqlDialect();
+const dialect = new PgDialect();
 const root = {
   id: 1,
   openId: "permission-root",
