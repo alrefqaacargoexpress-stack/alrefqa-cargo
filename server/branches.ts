@@ -106,9 +106,12 @@ export const confirmArrivalSchema = z
   })
   .strict();
 
-export function rootAdmin(user: Pick<User, "openId" | "role">): boolean {
+export function rootAdmin(
+  user: Pick<User, "openId" | "role"> & { email?: string | null }
+): boolean {
   return Boolean(
     (ENV.ownerOpenId && user.openId === ENV.ownerOpenId) ||
+      (ENV.ownerEmail && user.email?.trim().toLowerCase() === ENV.ownerEmail) ||
       user.role === "admin"
   );
 }

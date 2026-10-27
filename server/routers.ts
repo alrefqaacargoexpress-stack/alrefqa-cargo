@@ -283,7 +283,8 @@ export const appRouter = router({
       )
       .mutation(async ({ ctx, input }) => {
         const email = normalizeEmail(input.email);
-        const user = await dbQueries.getUserByEmail(email);
+        let user = await dbQueries.getUserByEmail(email);
+        const isOwner = Boolean(ENV.ownerEmail && email === ENV.ownerEmail);
         const valid = Boolean(
           user?.passwordHash &&
             (await verifyPassword(input.password, user.passwordHash))
@@ -294,11 +295,19 @@ export const appRouter = router({
             message: "invalid_credentials",
           });
 
-        if (await isEmployeeDisabled(await dbOrThrow(), user.id))
+        const database = await dbOrThrow();
+        if (await isEmployeeDisabled(database, user.id))
           throw new TRPCError({
             code: "UNAUTHORIZED",
             message: "invalid_credentials",
           });
+        if (isOwner && (user.role !== "admin" || user.accountType !== "employee")) {
+          await database
+            .update(users)
+            .set({ role: "admin", accountType: "employee", updatedAt: new Date() })
+            .where(eq(users.id, user.id));
+          user = { ...user, role: "admin", accountType: "employee" };
+        }
         const token = createSessionToken();
         await dbQueries.createLocalSession({
           tokenHash: hashSessionToken(token),
@@ -332,6 +341,7 @@ export const appRouter = router({
       )
       .mutation(async ({ ctx, input }) => {
         const email = normalizeEmail(input.email);
+        const isOwner = Boolean(ENV.ownerEmail && email === ENV.ownerEmail);
         const existing = await dbQueries.getUserByEmail(email);
         if (existing)
           throw new TRPCError({
@@ -348,9 +358,9 @@ export const appRouter = router({
             name: input.name.trim(),
             email,
             loginMethod: "email",
-            accountType: input.accountType,
+            accountType: isOwner ? "employee" : input.accountType,
             passwordHash,
-            role: "user",
+            role: isOwner ? "admin" : "user",
           });
         } catch (error) {
           if (isDuplicateEmailError(error))

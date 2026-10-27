@@ -8,6 +8,7 @@ export const ENV = {
   get oAuthServerUrl() { return process.env.MANUS_OAUTH_API_URL ?? ""; },
   // Preserve the legacy hint when supplied; otherwise roles remain application data.
   get ownerOpenId() { return process.env.OWNER_OPEN_ID ?? ""; },
+  get ownerEmail() { return (process.env.OWNER_EMAIL ?? "").trim().toLowerCase(); },
   get isProduction() { return process.env.NODE_ENV === "production"; },
   get forgeApiUrl() { return process.env.MANUS_API_URL ?? ""; },
   get forgeApiKey() { return process.env.MANUS_API_KEY ?? ""; },

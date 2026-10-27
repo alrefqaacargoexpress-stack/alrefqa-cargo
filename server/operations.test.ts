@@ -55,8 +55,12 @@ const user = (role: "user" | "admin" = "user", openId = "member") => ({
 describe("operations pure policy", () => {
   it("never promotes the first visitor and only a configured owner/root admin gets admin", () => {
     vi.stubEnv("OWNER_OPEN_ID", "owner-open-id");
+    vi.stubEnv("OWNER_EMAIL", "owner@example.com");
     expect(roleForUser(user("user", "visitor"), null)).toBeNull();
     expect(roleForUser(user("user", "owner-open-id"), null)).toBe("admin");
+    expect(
+      roleForUser({ ...user(), email: "Owner@Example.com" }, null)
+    ).toBe("admin");
     expect(roleForUser(user("admin", "database-admin"), null)).toBe("admin");
     expect(canManageMembers(user("user", "visitor"), "staff")).toBe(false);
     vi.unstubAllEnvs();

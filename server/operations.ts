@@ -141,19 +141,25 @@ export type MemoryRow = {
   data: EntityRecord;
 };
 
-/** Root owner and the database's real admin flag are authoritative; a first visitor is never promoted. */
+type RoleUser = Pick<User, "openId" | "role"> & { email?: string | null };
+
+/** Root owner email/openId and the database's real admin flag are authoritative; a first visitor is never promoted. */
 export function roleForUser(
-  user: Pick<User, "openId" | "role"> | null,
+  user: RoleUser | null,
   membership?: AppRole | null
 ): AppRole | null {
   if (!user) return null;
-  if (ENV.ownerOpenId && user.openId === ENV.ownerOpenId) return "admin";
+  if (
+    (ENV.ownerOpenId && user.openId === ENV.ownerOpenId) ||
+    (ENV.ownerEmail && user.email?.trim().toLowerCase() === ENV.ownerEmail)
+  )
+    return "admin";
   if (user.role === "admin") return "admin";
   return membership ?? null;
 }
 
 export function canManageMembers(
-  user: Pick<User, "openId" | "role"> | null,
+  user: RoleUser | null,
   membership?: AppRole | null
 ): boolean {
   return roleForUser(user, membership) === "admin";
