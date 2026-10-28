@@ -11,6 +11,9 @@ import FinanceExcelPanel from "@/components/finance/FinanceExcelPanel";
 import InvoiceFinancialForm from "@/components/finance/InvoiceFinancialForm";
 import FinancialVoidPanel from "@/components/finance/FinancialVoidPanel";
 import { canWriteFinanceUi, invoiceCopyFor } from "@/lib/financeInvoiceCopy";
+import InvoicePrintButton from "@/components/finance/InvoicePrintButton";
+import { invoicePrintCopy } from "@/lib/invoicePrintCopy";
+import { invoiceDocumentAmounts } from "@shared/invoiceDocument";
 import { canReadAnyFinance, permissionAllowed } from "@shared/permissions";
 import {
   formatLocalNumber,
@@ -73,6 +76,11 @@ function InvoiceTable({
     );
     const cashMethod = methods.find(method => method.id === "cash");
     const amount = Number(amounts[invoice.id]);
+    const facts = invoiceDocumentAmounts(invoice);
+    if (!facts.ok) {
+      setMessage(invoicePrintCopy[language][facts.reason]);
+      return;
+    }
     if (
       !canWrite ||
       !Number.isFinite(amount) ||
@@ -80,12 +88,7 @@ function InvoiceTable({
       !invoice.finance
     )
       return;
-    if (
-      amount >
-      (Math.round(invoice.amount * 100) -
-        Math.round(invoice.finance.paidAmount * 100)) /
-        100
-    ) {
+    if (amount > facts.remaining) {
       setMessage(c.invalidTotal);
       return;
     }
@@ -192,20 +195,15 @@ function InvoiceTable({
               <th className="p-3">{c.settlementMethod}</th>
               <th className="p-3">{c.actor}</th>
               <th className="p-3">{c.partialSettlement}</th>
+              <th className="p-3">{invoicePrintCopy[language].action}</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-[#edf1f1]">
             {invoices.map(invoice => {
               const finance = invoice.finance;
-              const remaining = finance
-                ? Math.max(
-                    0,
-                    (Math.round(invoice.amount * 100) -
-                      Math.round(finance.paidAmount * 100)) /
-                      100
-                  )
-                : 0;
-              const readonly = !finance;
+              const facts = invoiceDocumentAmounts(invoice);
+              const remaining = facts.ok ? facts.remaining : 0;
+              const readonly = !facts.ok;
               const settlementMode = settlementModes[invoice.id] ?? "cash";
               const invoiceOffice =
                 finance?.financialOfficeId ??
@@ -228,7 +226,7 @@ function InvoiceTable({
                   <td className="p-3 font-mono text-xs">
                     {invoice.id}
                     <span className="mt-1 block text-[10px]">
-                      {readonly
+                      {!finance
                         ? c.oldInvoice
                         : invoice.scope === "pending"
                           ? c.draft
@@ -283,9 +281,9 @@ function InvoiceTable({
                         {c.paymentReference}: {invoice.payment.reference}
                       </span>
                     )}
-                    {finance && (
+                    {finance && facts.ok && (
                       <span className="block text-xs text-[#718088]">
-                        {formatLocalNumber(finance.paidAmount, language, 2)} /{" "}
+                        {formatLocalNumber(facts.paid, language, 2)} /{" "}
                         {formatLocalNumber(remaining, language, 2)}
                       </span>
                     )}
@@ -300,6 +298,7 @@ function InvoiceTable({
                   </td>
                   <td className="p-3">
                     {!readonly &&
+                    canWrite &&
                     remaining > 0 &&
                     invoice.status !== "مدفوعة" ? (
                       <div className="flex flex-wrap items-center gap-1">
@@ -388,9 +387,32 @@ function InvoiceTable({
                       </div>
                     ) : (
                       <span className="text-xs text-[#718088]">
-                        {readonly ? c.readonly : c.paid}
+                        {!facts.ok
+                          ? invoicePrintCopy[language][facts.reason]
+                          : !canWrite
+                            ? c.readonly
+                            : c.paid}
                       </span>
                     )}
+                  </td>
+                  <td className="p-3">
+                    <InvoicePrintButton
+                      invoice={invoice}
+                      subject={{
+                        role: workspace.role,
+                        offices: workspace.offices,
+                        homeOffice: workspace.homeOffice,
+                        permissions: workspace.permissions,
+                      }}
+                      userId={workspace.base.userId}
+                      permissionFingerprint={
+                        workspace.base.permissionFingerprint
+                      }
+                      commands={workspace.store?.commands ?? workspace.commands}
+                      online={workspace.online}
+                      lastReadAt={workspace.store?.snapshot.lastReadAt ?? null}
+                      language={language}
+                    />
                   </td>
                 </tr>
               );
