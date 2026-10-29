@@ -35,7 +35,7 @@ import {
   type PermissionKey,
 } from "@shared/permissions";
 import { hideForOfficeScope } from "./branches";
-import { and, eq, gt, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { createHash } from "node:crypto";
 import { TRPCError } from "@trpc/server";
@@ -76,6 +76,7 @@ import {
   syncReceipts,
   users,
   shipmentTariffSnapshots,
+  shipmentTrackingEvents,
 } from "../drizzle/schema";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
@@ -155,6 +156,15 @@ import {
 } from "./branches";
 import { financeSync, financeSnapshot } from "./finance";
 import { financeSyncInputSchema } from "@shared/finance";
+import {
+  marketShipmentMatches,
+  marketStageForShipment,
+  marketWarehouseSearchSchema,
+  normalizedMarketSearch,
+  paymentStatusForShipment,
+  safeTimelineItems,
+  shipmentGoods,
+} from "./marketWarehouse";
 import { warehouseCommandSchema } from "@shared/warehouse";
 import { readWarehouseSnapshot, commitWarehouseStorage } from "./warehouse";
 import { lockEmployee } from "./lockedEmployee";
@@ -301,11 +311,18 @@ export const appRouter = router({
             code: "UNAUTHORIZED",
             message: "invalid_credentials",
           });
-        if (isOwner && (user.role !== "admin" || user.accountType !== "employee")) {
+        if (
+          isOwner &&
+          (user.role !== "admin" || user.accountType !== "employee")
+        ) {
           const before = { role: user.role, accountType: user.accountType };
           await database
             .update(users)
-            .set({ role: "admin", accountType: "employee", updatedAt: new Date() })
+            .set({
+              role: "admin",
+              accountType: "employee",
+              updatedAt: new Date(),
+            })
             .where(eq(users.id, user.id));
           await appendAudit(database, {
             actor: {
@@ -1157,12 +1174,15 @@ export const appRouter = router({
                     ],
                   };
                 else {
-                  await tx.insert(recordKeys).values({
-                    keyType: idKeyType,
-                    keyValue: change.recordId,
-                    entity: change.entity,
-                    recordId: change.recordId,
-                  }).onConflictDoNothing();
+                  await tx
+                    .insert(recordKeys)
+                    .values({
+                      keyType: idKeyType,
+                      keyValue: change.recordId,
+                      entity: change.entity,
+                      recordId: change.recordId,
+                    })
+                    .onConflictDoNothing();
                   if (change.entity === "shipment")
                     await tx
                       .insert(recordKeys)
@@ -1173,14 +1193,18 @@ export const appRouter = router({
                         ),
                         entity: change.entity,
                         recordId: change.recordId,
-                      }).onConflictDoNothing();
-                  await tx.insert(records).values({
-                    entity: change.entity,
-                    recordId: change.recordId,
-                    version: nextVersion,
-                    data: nextData,
-                    updatedBy: ctx.user.id,
-                  }).onConflictDoNothing();
+                      })
+                      .onConflictDoNothing();
+                  await tx
+                    .insert(records)
+                    .values({
+                      entity: change.entity,
+                      recordId: change.recordId,
+                      version: nextVersion,
+                      data: nextData,
+                      updatedBy: ctx.user.id,
+                    })
+                    .onConflictDoNothing();
                   const after = (
                     await tx
                       .select()
@@ -1289,6 +1313,36 @@ export const appRouter = router({
                   conflicts: [],
                 };
               }
+            }
+            if (
+              change.entity === "shipment" &&
+              result.applied.length &&
+              financeShipment
+            ) {
+              const nextShipment = financeShipment;
+              const previousStage = current
+                ? marketStageForShipment(current.data as Shipment)
+                : null;
+              const nextStage = marketStageForShipment(nextShipment);
+              if (!current || previousStage !== nextStage)
+                await tx.insert(shipmentTrackingEvents).values({
+                  id: `market-event:${change.id}`,
+                  shipmentId: nextShipment.id,
+                  eventType: current ? "stage" : "registered",
+                  stage: nextStage,
+                  status: nextShipment.status,
+                  actorId: ctx.user.id,
+                  actorName: ctx.user.name?.trim() || `user-${ctx.user.id}`,
+                  actorRole: role,
+                  officeId:
+                    nextShipment.packing?.source ??
+                    nextShipment.officeId ??
+                    null,
+                  reason: current
+                    ? (change.action ?? "sync_update")
+                    : "registered",
+                  requestKey: `market:${change.id}`,
+                });
             }
             if (
               change.entity === "shipment" &&
@@ -1592,6 +1646,22 @@ export const appRouter = router({
               afterVersion: nextVersion,
               requestKey: receiptKey,
             });
+            await tx.insert(shipmentTrackingEvents).values({
+              id: `market-event:${receiptKey}`,
+              shipmentId: mutation.shipment.id,
+              eventType: "stage",
+              stage: marketStageForShipment(mutation.shipment),
+              status: mutation.shipment.status,
+              actorId: freshUser.id,
+              actorName: freshUser.name?.trim() || `user-${freshUser.id}`,
+              actorRole: role,
+              officeId:
+                mutation.shipment.packing?.source ??
+                mutation.shipment.officeId ??
+                null,
+              reason: request.command.type,
+              requestKey: `market:${receiptKey}`,
+            });
             const result = {
               requestId: request.requestId,
               shipment: mutation.shipment,
@@ -1724,6 +1794,88 @@ export const appRouter = router({
                   )
                 : event.after,
           })),
+        };
+      }),
+  }),
+
+  marketWarehouse: router({
+    search: protectedProcedure
+      .input(marketWarehouseSearchSchema)
+      .query(async ({ ctx, input }) => {
+        const db = await dbOrThrow();
+        const scope = await readOfficeScope(db, ctx.user);
+        if (!permissionAllowed(scope, "market_warehouse", "view"))
+          throw forbidden("market_warehouse_permission_required");
+        const retired = await loadLifecycle(db);
+        const rows = await db.select().from(records);
+        const invoiceRows = rows.filter(row => row.entity === "invoice");
+        const invoices = invoiceRows.map(row => row.data as any);
+        const search = normalizedMarketSearch(input.search);
+        const matching = rows.filter(row => {
+          if (
+            row.entity !== "shipment" ||
+            !recordIsActive(retired, "shipment", row.data as Shipment)
+          )
+            return false;
+          const shipment = row.data as Shipment;
+          return (
+            canReadPermissionRecord(
+              scope,
+              "shipment",
+              shipment,
+              "market_warehouse"
+            ) && marketShipmentMatches(shipment, search)
+          );
+        });
+        const page = matching.slice(input.cursor, input.cursor + input.limit);
+        const ids = page.map(row => row.recordId);
+        const eventRows = ids.length
+          ? await db
+              .select()
+              .from(shipmentTrackingEvents)
+              .where(inArray(shipmentTrackingEvents.shipmentId, ids))
+              .orderBy(asc(shipmentTrackingEvents.createdAt))
+          : [];
+        const eventsByShipment = new Map<string, typeof eventRows>();
+        for (const event of eventRows) {
+          const list = eventsByShipment.get(event.shipmentId) ?? [];
+          list.push(event);
+          eventsByShipment.set(event.shipmentId, list);
+        }
+        return {
+          items: page.map(row => {
+            const shipment = row.data as Shipment;
+            const safeShipment = sanitizePermissionRecord(scope, "shipment", {
+              ...shipment,
+              scope: "shared",
+              version: row.version,
+            });
+            const timeline = safeTimelineItems(
+              eventsByShipment.get(row.recordId) ?? []
+            );
+            return {
+              id: shipment.id,
+              tracking: shipment.tracking,
+              customerName: shipment.account,
+              phoneNumbers: shipmentGoods(shipment)
+                .map(item => item.phone)
+                .filter(Boolean),
+              route: shipment.route,
+              service: shipment.service,
+              status: shipment.status,
+              currentStage: marketStageForShipment(shipment),
+              paymentStatus: paymentStatusForShipment(invoices, shipment.id),
+              goods: shipmentGoods(safeShipment),
+              timeline,
+              timelineAvailable: timeline.length > 0,
+              officeId: shipment.packing?.source ?? shipment.officeId ?? null,
+            };
+          }),
+          total: matching.length,
+          nextCursor:
+            input.cursor + page.length < matching.length
+              ? input.cursor + page.length
+              : null,
         };
       }),
   }),

@@ -7,6 +7,7 @@ export const permissionKeys = [
   "shipment_send",
   "shipment_delete",
   "tracking",
+  "market_warehouse",
   "arrival",
   "storage",
   "customers",
@@ -83,6 +84,7 @@ export function defaultPermissions(subject: PermissionSubject): PermissionMap {
         "shipment_send",
         "shipment_delete",
         "tracking",
+        "market_warehouse",
         "office_settings",
         "employees",
       ],
@@ -108,9 +110,9 @@ export function defaultPermissions(subject: PermissionSubject): PermissionMap {
       put(["storage", "arrival"], "manage");
   } else if (subject.role === "staff" || subject.role === "source_warehouse") {
     if (subject.offices?.length === 1 && subject.offices[0] === "nouakchott")
-      put(["storage", "arrival"], "manage");
+      put(["storage", "arrival", "market_warehouse"], "manage");
     else if (subject.offices?.length === 1) {
-      put(["shipments", "shipment_send"], "manage");
+      put(["shipments", "shipment_send", "market_warehouse"], "manage");
       if (subject.role === "source_warehouse" || subject.canUpdateTracking)
         put(["tracking"], "manage");
     }
@@ -161,12 +163,13 @@ export function defaultPermissions(subject: PermissionSubject): PermissionMap {
     put(["reports"], "view");
   } else if (subject.role === "destination_warehouse") {
     if (subject.offices?.includes("nouakchott"))
-      put(["storage", "arrival"], "manage");
+      put(["storage", "arrival", "market_warehouse"], "manage");
   } else if (subject.role === "supervisor") {
-    put(["tracking"], "manage");
+    put(["tracking", "market_warehouse"], "manage");
     put(["reports", "audit", "storage", "excel"], "view");
     if (subject.offices?.includes("nouakchott")) put(["arrival"], "manage");
-  } else if (subject.role === "tracking_staff") put(["tracking"], "manage");
+  } else if (subject.role === "tracking_staff")
+    put(["tracking", "market_warehouse"], "manage");
   if (["viewer", "tracking_staff"].includes(subject.role))
     result.shipments = "none";
   return result;

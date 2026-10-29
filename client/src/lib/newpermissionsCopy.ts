@@ -56,6 +56,7 @@ const ar: PermissionCopy = {
     shipment_send: "إرسال الشحنات",
     shipment_delete: "حذف الشحنات",
     tracking: "التتبع",
+    market_warehouse: "مستودع الماركت والاستعلام",
     arrival: "تأكيد الوصول",
     storage: "التخزين والرفوف",
     customers: "العملاء",
@@ -111,6 +112,7 @@ const en: PermissionCopy = {
     shipment_send: "Send shipments",
     shipment_delete: "Delete shipments",
     tracking: "Tracking",
+    market_warehouse: "Market warehouse inquiry",
     arrival: "Confirm arrival",
     storage: "Storage and shelves",
     customers: "Customers",
@@ -166,6 +168,7 @@ const zh: PermissionCopy = {
     shipment_send: "发送货运",
     shipment_delete: "删除货运",
     tracking: "追踪",
+    market_warehouse: "市场仓查询",
     arrival: "确认到达",
     storage: "仓储和货架",
     customers: "客户",
@@ -221,6 +224,7 @@ const tr: PermissionCopy = {
     shipment_send: "Gönderi gönderme",
     shipment_delete: "Gönderi silme",
     tracking: "Takip",
+    market_warehouse: "Market depo sorgusu",
     arrival: "Varışı onaylama",
     storage: "Depo ve raflar",
     customers: "Müşteriler",
@@ -245,7 +249,10 @@ const tr: PermissionCopy = {
   },
 };
 
-export const newPermissionsCopy: Record<PermissionCopyLanguage, PermissionCopy> = {
+export const newPermissionsCopy: Record<
+  PermissionCopyLanguage,
+  PermissionCopy
+> = {
   ar,
   en,
   zh,

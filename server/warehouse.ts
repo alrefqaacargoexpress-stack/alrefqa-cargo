@@ -6,6 +6,7 @@ import type { User } from "../drizzle/schema";
 import {
   records,
   syncReceipts,
+  shipmentTrackingEvents,
   warehouseLocationEvents,
 } from "../drizzle/schema";
 import { appendAudit } from "./audit";
@@ -29,6 +30,7 @@ import { z } from "zod";
 import { readShipmentPricingProjection } from "./shipmentPricing";
 import type { PriceProjection } from "@shared/shipmentPricing";
 import { lockEmployee } from "./lockedEmployee";
+import { marketStageForShipment } from "./marketWarehouse";
 
 export {
   destinationStorageSchema,
@@ -384,6 +386,23 @@ export async function commitWarehouseStorage(
       afterVersion: nextVersion,
       requestKey: key,
     });
+    const previousStage = marketStageForShipment(shipment);
+    const nextStage = marketStageForShipment(next);
+    if (previousStage !== nextStage)
+      await tx.insert(shipmentTrackingEvents).values({
+        id: `market-event:${key}`,
+        shipmentId: input.shipmentId,
+        goodsId: input.goodsId,
+        eventType: "stage",
+        stage: nextStage,
+        status: next.status,
+        actorId: freshUser.id,
+        actorName: freshUser.name?.trim() || `user-${freshUser.id}`,
+        actorRole,
+        officeId: "nouakchott",
+        reason: "warehouse_shelved",
+        requestKey: `market:${key}`,
+      });
     const result = {
       requestId: input.requestId,
       shipmentId: input.shipmentId,

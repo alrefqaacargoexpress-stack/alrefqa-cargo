@@ -17,11 +17,22 @@ import { packingInputClass } from "@/components/packing/PackingPrimitives";
 export const permissionGroups = [
   {
     id: "management",
-    keys: ["office_settings", "employees", "office_assign", "employee_disable"] as const,
+    keys: [
+      "office_settings",
+      "employees",
+      "office_assign",
+      "employee_disable",
+    ] as const,
   },
   {
     id: "shipping",
-    keys: ["shipments", "shipment_send", "shipment_delete", "tracking"] as const,
+    keys: [
+      "shipments",
+      "shipment_send",
+      "shipment_delete",
+      "tracking",
+      "market_warehouse",
+    ] as const,
   },
   {
     id: "warehouse",
@@ -50,7 +61,9 @@ export const permissionGroups = [
   },
 ] as const;
 
-const groupedPermissionKeys = permissionGroups.flatMap(group => [...group.keys]);
+const groupedPermissionKeys = permissionGroups.flatMap(group => [
+  ...group.keys,
+]);
 
 // Keep this assertion close to the display contract: every shared key appears once.
 if (
@@ -58,7 +71,9 @@ if (
   new Set(groupedPermissionKeys).size !== permissionKeys.length ||
   permissionKeys.some(key => !groupedPermissionKeys.includes(key))
 ) {
-  throw new Error("Permission groups must contain every permission key exactly once");
+  throw new Error(
+    "Permission groups must contain every permission key exactly once"
+  );
 }
 
 type PermissionDisplaySource = "saved" | "default" | "preview";

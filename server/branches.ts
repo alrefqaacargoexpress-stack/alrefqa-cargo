@@ -58,6 +58,7 @@ import {
   officeDelegationPolicies,
   officeProfiles,
   syncReceipts,
+  shipmentTrackingEvents,
   users,
 } from "../drizzle/schema";
 import type { User } from "../drizzle/schema";
@@ -70,6 +71,7 @@ import { changedOfficeRateViolations } from "@shared/officeRatePolicy";
 import { readShipmentPricingProjection } from "./shipmentPricing";
 import type { PriceProjection } from "@shared/shipmentPricing";
 import { lockEmployee } from "./lockedEmployee";
+import { marketStageForShipment } from "./marketWarehouse";
 
 export type OfficeScope = {
   role: AppRole | null;
@@ -825,6 +827,19 @@ export async function confirmArrival(
       beforeVersion: row.version,
       afterVersion: nextVersion,
       requestKey: receiptKey,
+    });
+    await tx.insert(shipmentTrackingEvents).values({
+      id: `market-event:${receiptKey}`,
+      shipmentId: input.shipmentId,
+      eventType: "stage",
+      stage: marketStageForShipment(mutation.shipment),
+      status: mutation.shipment.status,
+      actorId: freshUser.id,
+      actorName: freshUser.name?.trim() || `user-${freshUser.id}`,
+      actorRole,
+      officeId: "nouakchott",
+      reason: input.reason,
+      requestKey: `market:${receiptKey}`,
     });
     const result = {
       requestId: input.requestId,

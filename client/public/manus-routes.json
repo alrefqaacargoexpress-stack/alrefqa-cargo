@@ -77,6 +77,10 @@
       "title": "مستودع نواكشوط ورفوف التخزين"
     },
     {
+      "path": "/operations/market-warehouse",
+      "title": "مستودع الماركت والاستعلام"
+    },
+    {
       "path": "/operations/billing",
       "title": "الفواتير والديون"
     },

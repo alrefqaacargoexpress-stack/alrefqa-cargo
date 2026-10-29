@@ -15,7 +15,10 @@ import {
 const int = integer;
 
 /** PostgreSQL keeps the application enums type-safe in TypeScript while migrations remain additive. */
-function enumText<const T extends readonly [string, ...string[]]>(name: string, values: T) {
+function enumText<const T extends readonly [string, ...string[]]>(
+  name: string,
+  values: T
+) {
   void values;
   return text(name).$type<T[number]>();
 }
@@ -62,7 +65,9 @@ export const localSessions = pgTable(
 /** Owner-approved one-time enrollment capabilities, never regular login sessions. */
 export const emailEnrollments = pgTable("email_enrollments", {
   tokenHash: varchar("tokenHash", { length: 64 }).primaryKey(),
-  userId: int("userId").notNull().references(() => users.id),
+  userId: int("userId")
+    .notNull()
+    .references(() => users.id),
   expiresAt: timestamp("expiresAt").notNull(),
   consumedAt: timestamp("consumedAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
@@ -139,6 +144,52 @@ export const records = pgTable(
     uniqueIndex("records_entity_record_unique").on(
       table.entity,
       table.recordId
+    ),
+  ]
+);
+
+export const marketStageValues = [
+  "registered",
+  "in_transit",
+  "arrived_destination",
+  "ready_for_pickup",
+  "delivered",
+] as const;
+export const marketEventTypeValues = ["registered", "stage"] as const;
+
+/** Append-only operational timeline for the Market Warehouse inquiry view. */
+export const shipmentTrackingEvents = pgTable(
+  "shipment_tracking_events",
+  {
+    id: varchar("id", { length: 128 }).primaryKey(),
+    shipmentId: varchar("shipmentId", { length: 128 }).notNull(),
+    goodsId: varchar("goodsId", { length: 128 }),
+    eventType: enumText("eventType", marketEventTypeValues).notNull(),
+    stage: enumText("stage", marketStageValues).notNull(),
+    status: varchar("status", { length: 128 }).notNull(),
+    actorId: int("actorId")
+      .notNull()
+      .references(() => users.id),
+    actorName: varchar("actorName", { length: 320 }).notNull(),
+    actorRole: enumText("actorRole", appRoleValues).notNull(),
+    officeId: varchar("officeId", { length: 32 }),
+    reason: varchar("reason", { length: 500 }),
+    requestKey: varchar("requestKey", { length: 128 }).notNull(),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  table => [
+    uniqueIndex("shipment_tracking_events_request_unique").on(table.requestKey),
+    index("shipment_tracking_events_shipment_created_idx").on(
+      table.shipmentId,
+      table.createdAt
+    ),
+    index("shipment_tracking_events_goods_created_idx").on(
+      table.goodsId,
+      table.createdAt
+    ),
+    index("shipment_tracking_events_office_created_idx").on(
+      table.officeId,
+      table.createdAt
     ),
   ]
 );
@@ -321,7 +372,9 @@ export const permissionDelegations = pgTable(
     delegatedBy: int("delegatedBy")
       .notNull()
       .references(() => users.id),
-    status: enumText("status", ["active", "revoked"]).notNull().default("active"),
+    status: enumText("status", ["active", "revoked"])
+      .notNull()
+      .default("active"),
     reason: varchar("reason", { length: 500 }),
     version: int("version").notNull().default(1),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
@@ -343,7 +396,9 @@ export const invoiceAdjustments = pgTable(
     direction: enumText("direction", ["increase", "decrease"]).notNull(),
     amount: decimal("amount", { precision: 18, scale: 2 }).notNull(),
     reason: varchar("reason", { length: 500 }).notNull(),
-    actorId: int("actorId").notNull().references(() => users.id),
+    actorId: int("actorId")
+      .notNull()
+      .references(() => users.id),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
   },
   table => [
@@ -353,7 +408,11 @@ export const invoiceAdjustments = pgTable(
 );
 
 export const cashRegisterStatuses = ["open", "closed"] as const;
-export const cashMovementKinds = ["receipt", "expense", "closing_adjustment"] as const;
+export const cashMovementKinds = [
+  "receipt",
+  "expense",
+  "closing_adjustment",
+] as const;
 
 /** One cash register session per office/currency; historical sessions are retained. */
 export const cashRegisters = pgTable(
@@ -362,9 +421,14 @@ export const cashRegisters = pgTable(
     id: varchar("id", { length: 128 }).primaryKey(),
     officeId: varchar("officeId", { length: 32 }).notNull(),
     currency: enumText("currency", financeCurrencies).notNull(),
-    openingBalance: decimal("openingBalance", { precision: 18, scale: 2 }).notNull(),
+    openingBalance: decimal("openingBalance", {
+      precision: 18,
+      scale: 2,
+    }).notNull(),
     status: enumText("status", cashRegisterStatuses).notNull().default("open"),
-    openedBy: int("openedBy").notNull().references(() => users.id),
+    openedBy: int("openedBy")
+      .notNull()
+      .references(() => users.id),
     closedBy: int("closedBy").references(() => users.id),
     openedAt: timestamp("openedAt").defaultNow().notNull(),
     closedAt: timestamp("closedAt"),
@@ -386,7 +450,9 @@ export const cashMovements = pgTable(
     amount: decimal("amount", { precision: 18, scale: 2 }).notNull(),
     currency: enumText("currency", financeCurrencies).notNull(),
     invoiceId: varchar("invoiceId", { length: 128 }),
-    actorId: int("actorId").notNull().references(() => users.id),
+    actorId: int("actorId")
+      .notNull()
+      .references(() => users.id),
     data: jsonb("data"),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
   },
@@ -407,7 +473,9 @@ export const shipmentTariffSnapshots = pgTable(
     currency: enumText("currency", financeCurrencies).notNull(),
     pricePerKg: decimal("pricePerKg", { precision: 18, scale: 2 }).notNull(),
     pricePerKgMRU: decimal("pricePerKgMRU", { precision: 18, scale: 2 }),
-    capturedBy: int("capturedBy").notNull().references(() => users.id),
+    capturedBy: int("capturedBy")
+      .notNull()
+      .references(() => users.id),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     data: jsonb("data"),
   },
@@ -430,14 +498,18 @@ export const warehouseLocationEvents = pgTable(
     locationCode: varchar("locationCode", { length: 80 }).notNull(),
     action: enumText("action", ["shelve", "release", "deliver"]).notNull(),
     expectedVersion: int("expectedVersion").notNull(),
-    actorId: int("actorId").notNull().references(() => users.id),
+    actorId: int("actorId")
+      .notNull()
+      .references(() => users.id),
     requestKey: varchar("requestKey", { length: 128 }).notNull(),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
   },
   table => [
     index("warehouse_location_events_goods_idx").on(table.goodsId),
     index("warehouse_location_events_shipment_idx").on(table.shipmentId),
-    uniqueIndex("warehouse_location_events_request_unique").on(table.requestKey),
+    uniqueIndex("warehouse_location_events_request_unique").on(
+      table.requestKey
+    ),
   ]
 );
 
@@ -454,8 +526,10 @@ export type PermissionDelegationRow = typeof permissionDelegations.$inferSelect;
 export type InvoiceAdjustmentRow = typeof invoiceAdjustments.$inferSelect;
 export type CashRegisterRow = typeof cashRegisters.$inferSelect;
 export type CashMovementRow = typeof cashMovements.$inferSelect;
-export type ShipmentTariffSnapshotRow = typeof shipmentTariffSnapshots.$inferSelect;
-export type WarehouseLocationEventRow = typeof warehouseLocationEvents.$inferSelect;
+export type ShipmentTariffSnapshotRow =
+  typeof shipmentTariffSnapshots.$inferSelect;
+export type WarehouseLocationEventRow =
+  typeof warehouseLocationEvents.$inferSelect;
 
 /** Append-only published rate versions, used to verify creation-time tariffs. */
 export const officeTariffHistory = pgTable(
@@ -471,8 +545,14 @@ export const officeTariffHistory = pgTable(
     recordedAt: timestamp("recordedAt").defaultNow().notNull(),
   },
   table => [
-    uniqueIndex("office_tariff_history_version_unique").on(table.officeId, table.profileVersion),
-    index("office_tariff_history_effective_idx").on(table.officeId, table.announcedAt),
+    uniqueIndex("office_tariff_history_version_unique").on(
+      table.officeId,
+      table.profileVersion
+    ),
+    index("office_tariff_history_effective_idx").on(
+      table.officeId,
+      table.announcedAt
+    ),
   ]
 );
 export type OfficeTariffHistoryRow = typeof officeTariffHistory.$inferSelect;
@@ -482,20 +562,37 @@ export const entityLifecycle = pgTable(
   "entity_lifecycle",
   {
     id: varchar("id", { length: 128 }).primaryKey(),
-    entity: enumText("entity", ["shipment", "invoice", "finance_entry", "employee", "public_employee", "account"]).notNull(),
+    entity: enumText("entity", [
+      "shipment",
+      "invoice",
+      "finance_entry",
+      "employee",
+      "public_employee",
+      "account",
+    ]).notNull(),
     recordId: varchar("recordId", { length: 128 }).notNull(),
     action: enumText("action", ["delete", "void", "disable"]).notNull(),
     officeId: varchar("officeId", { length: 32 }),
     reason: varchar("reason", { length: 500 }).notNull(),
     expectedVersion: int("expectedVersion").notNull(),
-    actorId: int("actorId").notNull().references(() => users.id),
+    actorId: int("actorId")
+      .notNull()
+      .references(() => users.id),
     requestKey: varchar("requestKey", { length: 128 }).notNull(),
     snapshot: jsonb("snapshot"),
-    createdAt: timestamp("createdAt", { precision: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
+    createdAt: timestamp("createdAt", { precision: 3 })
+      .default(sql`CURRENT_TIMESTAMP(3)`)
+      .notNull(),
   },
   table => [
-    uniqueIndex("entity_lifecycle_record_unique").on(table.entity, table.recordId),
-    uniqueIndex("entity_lifecycle_request_unique").on(table.actorId, table.requestKey),
+    uniqueIndex("entity_lifecycle_record_unique").on(
+      table.entity,
+      table.recordId
+    ),
+    uniqueIndex("entity_lifecycle_request_unique").on(
+      table.actorId,
+      table.requestKey
+    ),
     index("entity_lifecycle_office_idx").on(table.officeId),
   ]
 );
@@ -514,14 +611,21 @@ export const financeReversals = pgTable(
     invoiceId: varchar("invoiceId", { length: 128 }),
     shipmentId: varchar("shipmentId", { length: 128 }),
     customerId: varchar("customerId", { length: 128 }),
-    actorId: int("actorId").notNull().references(() => users.id),
+    actorId: int("actorId")
+      .notNull()
+      .references(() => users.id),
     data: jsonb("data").notNull(),
-    createdAt: timestamp("createdAt", { precision: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
+    createdAt: timestamp("createdAt", { precision: 3 })
+      .default(sql`CURRENT_TIMESTAMP(3)`)
+      .notNull(),
   },
   table => [
     uniqueIndex("finance_reversals_original_unique").on(table.originalEntryId),
     index("finance_reversals_lifecycle_idx").on(table.lifecycleId),
-    index("finance_reversals_office_currency_idx").on(table.officeId, table.currency),
+    index("finance_reversals_office_currency_idx").on(
+      table.officeId,
+      table.currency
+    ),
   ]
 );
 
@@ -537,14 +641,25 @@ export const shipmentChargeComponents = pgTable(
     officeId: varchar("officeId", { length: 32 }).notNull(),
     currency: enumText("currency", financeCurrencies).notNull(),
     amount: decimal("amount", { precision: 18, scale: 2 }).notNull(),
-    actorId: int("actorId").notNull().references(() => users.id),
+    actorId: int("actorId")
+      .notNull()
+      .references(() => users.id),
     requestKey: varchar("requestKey", { length: 128 }).notNull(),
     data: jsonb("data").notNull(),
-    createdAt: timestamp("createdAt", { precision: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
+    createdAt: timestamp("createdAt", { precision: 3 })
+      .default(sql`CURRENT_TIMESTAMP(3)`)
+      .notNull(),
   },
   table => [
-    uniqueIndex("shipment_charge_component_unique").on(table.shipmentId, table.goodsId, table.chargeKey),
-    index("shipment_charge_components_office_idx").on(table.officeId, table.currency),
+    uniqueIndex("shipment_charge_component_unique").on(
+      table.shipmentId,
+      table.goodsId,
+      table.chargeKey
+    ),
+    index("shipment_charge_components_office_idx").on(
+      table.officeId,
+      table.currency
+    ),
     index("shipment_charge_components_shipment_idx").on(table.shipmentId),
   ]
 );
@@ -558,13 +673,21 @@ export const shipmentChargeAllocations = pgTable(
     invoiceId: varchar("invoiceId", { length: 128 }).notNull(),
     kind: enumText("kind", ["invoice", "payment", "void"]).notNull(),
     amount: decimal("amount", { precision: 18, scale: 2 }).notNull(),
-    actorId: int("actorId").notNull().references(() => users.id),
+    actorId: int("actorId")
+      .notNull()
+      .references(() => users.id),
     requestKey: varchar("requestKey", { length: 128 }).notNull(),
     data: jsonb("data"),
-    createdAt: timestamp("createdAt", { precision: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
+    createdAt: timestamp("createdAt", { precision: 3 })
+      .default(sql`CURRENT_TIMESTAMP(3)`)
+      .notNull(),
   },
   table => [
-    uniqueIndex("shipment_charge_allocation_request_unique").on(table.componentId, table.kind, table.requestKey),
+    uniqueIndex("shipment_charge_allocation_request_unique").on(
+      table.componentId,
+      table.kind,
+      table.requestKey
+    ),
     index("shipment_charge_allocations_invoice_idx").on(table.invoiceId),
     index("shipment_charge_allocations_component_idx").on(table.componentId),
   ]
@@ -575,8 +698,12 @@ export const dutyEvents = pgTable(
   "duty_events",
   {
     id: serial("id").primaryKey(),
-    userId: int("userId").notNull().references(() => users.id),
-    actorId: int("actorId").notNull().references(() => users.id),
+    userId: int("userId")
+      .notNull()
+      .references(() => users.id),
+    actorId: int("actorId")
+      .notNull()
+      .references(() => users.id),
     role: enumText("role", appRoleValues).notNull(),
     officeId: varchar("officeId", { length: 32 }).notNull(),
     status: enumText("status", ["on", "off"]).notNull(),
@@ -584,38 +711,57 @@ export const dutyEvents = pgTable(
     membershipVersion: int("membershipVersion").notNull(),
     expiresAt: timestamp("expiresAt", { precision: 3 }),
     requestKey: varchar("requestKey", { length: 128 }).notNull(),
-    createdAt: timestamp("createdAt", { precision: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
+    createdAt: timestamp("createdAt", { precision: 3 })
+      .default(sql`CURRENT_TIMESTAMP(3)`)
+      .notNull(),
   },
   table => [
-    uniqueIndex("duty_events_request_unique").on(table.userId, table.requestKey),
+    uniqueIndex("duty_events_request_unique").on(
+      table.userId,
+      table.requestKey
+    ),
     index("duty_events_user_id_idx").on(table.userId, table.id),
     index("duty_events_office_id_idx").on(table.officeId, table.id),
   ]
 );
 export type EntityLifecycleRow = typeof entityLifecycle.$inferSelect;
 export type FinanceReversalRow = typeof financeReversals.$inferSelect;
-export type ShipmentChargeComponentRow = typeof shipmentChargeComponents.$inferSelect;
-export type ShipmentChargeAllocationRow = typeof shipmentChargeAllocations.$inferSelect;
+export type ShipmentChargeComponentRow =
+  typeof shipmentChargeComponents.$inferSelect;
+export type ShipmentChargeAllocationRow =
+  typeof shipmentChargeAllocations.$inferSelect;
 export type DutyEventRow = typeof dutyEvents.$inferSelect;
-
 
 /** Root-approved delegation ceilings; a policy applies only to its membership version. */
 export const officeDelegationPolicies = pgTable(
   "office_delegation_policies",
   {
     id: varchar("id", { length: 128 }).primaryKey(),
-    managerUserId: int("managerUserId").notNull().references(() => users.id),
+    managerUserId: int("managerUserId")
+      .notNull()
+      .references(() => users.id),
     officeId: varchar("officeId", { length: 32 }).notNull(),
     managerMembershipVersion: int("managerMembershipVersion").notNull(),
     policyVersion: int("policyVersion").notNull(),
     permissions: jsonb("permissions").$type<PermissionMap>().notNull(),
     enabled: boolean("enabled").notNull().default(true),
-    actorId: int("actorId").notNull().references(() => users.id),
-    createdAt: timestamp("createdAt", { precision: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
+    actorId: int("actorId")
+      .notNull()
+      .references(() => users.id),
+    createdAt: timestamp("createdAt", { precision: 3 })
+      .default(sql`CURRENT_TIMESTAMP(3)`)
+      .notNull(),
   },
   table => [
-    uniqueIndex("office_delegation_policy_version_unique").on(table.managerUserId, table.officeId, table.policyVersion),
-    index("office_delegation_policy_manager_idx").on(table.managerUserId, table.officeId),
+    uniqueIndex("office_delegation_policy_version_unique").on(
+      table.managerUserId,
+      table.officeId,
+      table.policyVersion
+    ),
+    index("office_delegation_policy_manager_idx").on(
+      table.managerUserId,
+      table.officeId
+    ),
   ]
 );
 
@@ -624,22 +770,40 @@ export const customerShipmentAccess = pgTable(
   "customer_shipment_access",
   {
     id: varchar("id", { length: 128 }).primaryKey(),
-    userId: int("userId").notNull().references(() => users.id),
+    userId: int("userId")
+      .notNull()
+      .references(() => users.id),
     customerAccountId: varchar("customerAccountId", { length: 128 }).notNull(),
     shipmentId: varchar("shipmentId", { length: 128 }).notNull(),
     goodsId: varchar("goodsId", { length: 128 }).notNull(),
     officeId: varchar("officeId", { length: 32 }).notNull(),
-    status: enumText("status", ["active", "revoked"]).notNull().default("active"),
+    status: enumText("status", ["active", "revoked"])
+      .notNull()
+      .default("active"),
     version: int("version").notNull().default(1),
-    grantedBy: int("grantedBy").notNull().references(() => users.id),
-    updatedBy: int("updatedBy").notNull().references(() => users.id),
-    createdAt: timestamp("createdAt", { precision: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
-    updatedAt: timestamp("updatedAt", { precision: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
+    grantedBy: int("grantedBy")
+      .notNull()
+      .references(() => users.id),
+    updatedBy: int("updatedBy")
+      .notNull()
+      .references(() => users.id),
+    createdAt: timestamp("createdAt", { precision: 3 })
+      .default(sql`CURRENT_TIMESTAMP(3)`)
+      .notNull(),
+    updatedAt: timestamp("updatedAt", { precision: 3 })
+      .default(sql`CURRENT_TIMESTAMP(3)`)
+      .notNull(),
   },
   table => [
-    uniqueIndex("customer_shipment_access_goods_unique").on(table.shipmentId, table.goodsId),
+    uniqueIndex("customer_shipment_access_goods_unique").on(
+      table.shipmentId,
+      table.goodsId
+    ),
     index("customer_shipment_access_user_idx").on(table.userId, table.status),
-    index("customer_shipment_access_account_idx").on(table.customerAccountId, table.officeId),
+    index("customer_shipment_access_account_idx").on(
+      table.customerAccountId,
+      table.officeId
+    ),
   ]
 );
 
@@ -653,27 +817,38 @@ export const shipmentCostApprovals = pgTable(
     currency: enumText("currency", financeCurrencies).notNull(),
     referenceKey: varchar("referenceKey", { length: 128 }).notNull(),
     financeEntryId: varchar("financeEntryId", { length: 128 }).notNull(),
-    actorId: int("actorId").notNull().references(() => users.id),
-    createdAt: timestamp("createdAt", { precision: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
+    actorId: int("actorId")
+      .notNull()
+      .references(() => users.id),
+    createdAt: timestamp("createdAt", { precision: 3 })
+      .default(sql`CURRENT_TIMESTAMP(3)`)
+      .notNull(),
   },
   table => [
-    uniqueIndex("shipment_cost_approval_reference_unique").on(table.shipmentId, table.officeId, table.referenceKey),
+    uniqueIndex("shipment_cost_approval_reference_unique").on(
+      table.shipmentId,
+      table.officeId,
+      table.referenceKey
+    ),
     index("shipment_cost_approval_entry_idx").on(table.financeEntryId),
   ]
 );
 
 /** Per-source payment settings; legacy Nouakchott office_settings is not rewritten. */
-export const officePaymentSettings = pgTable(
-  "office_payment_settings",
-  {
-    officeId: varchar("officeId", { length: 32 }).primaryKey(),
-    methods: jsonb("methods").notNull(),
-    version: int("version").notNull().default(1),
-    updatedBy: int("updatedBy").notNull().references(() => users.id),
-    createdAt: timestamp("createdAt", { precision: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
-    updatedAt: timestamp("updatedAt", { precision: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
-  }
-);
+export const officePaymentSettings = pgTable("office_payment_settings", {
+  officeId: varchar("officeId", { length: 32 }).primaryKey(),
+  methods: jsonb("methods").notNull(),
+  version: int("version").notNull().default(1),
+  updatedBy: int("updatedBy")
+    .notNull()
+    .references(() => users.id),
+  createdAt: timestamp("createdAt", { precision: 3 })
+    .default(sql`CURRENT_TIMESTAMP(3)`)
+    .notNull(),
+  updatedAt: timestamp("updatedAt", { precision: 3 })
+    .default(sql`CURRENT_TIMESTAMP(3)`)
+    .notNull(),
+});
 
 /** Actual wallet cash effects. Voiding an invoice alone never implies a refund. */
 export const walletMovements = pgTable(
@@ -687,21 +862,32 @@ export const walletMovements = pgTable(
     amount: decimal("amount", { precision: 18, scale: 2 }).notNull(),
     invoiceId: varchar("invoiceId", { length: 128 }).notNull(),
     financeEntryId: varchar("financeEntryId", { length: 128 }).notNull(),
-    actorId: int("actorId").notNull().references(() => users.id),
+    actorId: int("actorId")
+      .notNull()
+      .references(() => users.id),
     data: jsonb("data"),
-    createdAt: timestamp("createdAt", { precision: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
+    createdAt: timestamp("createdAt", { precision: 3 })
+      .default(sql`CURRENT_TIMESTAMP(3)`)
+      .notNull(),
   },
   table => [
     uniqueIndex("wallet_movement_entry_unique").on(table.financeEntryId),
-    index("wallet_movements_office_wallet_idx").on(table.officeId, table.methodId, table.currency),
+    index("wallet_movements_office_wallet_idx").on(
+      table.officeId,
+      table.methodId,
+      table.currency
+    ),
     index("wallet_movements_invoice_idx").on(table.invoiceId),
   ]
 );
 
-export type OfficeDelegationPolicyRow = typeof officeDelegationPolicies.$inferSelect;
-export type CustomerShipmentAccessRow = typeof customerShipmentAccess.$inferSelect;
+export type OfficeDelegationPolicyRow =
+  typeof officeDelegationPolicies.$inferSelect;
+export type CustomerShipmentAccessRow =
+  typeof customerShipmentAccess.$inferSelect;
 export type ShipmentCostApprovalRow = typeof shipmentCostApprovals.$inferSelect;
-export type OfficePaymentSettingsRow = typeof officePaymentSettings.$inferSelect;
+export type OfficePaymentSettingsRow =
+  typeof officePaymentSettings.$inferSelect;
 export type WalletMovementRow = typeof walletMovements.$inferSelect;
 
 /** Append-only explicit price overrides; original shipment and announcement remain immutable. */
@@ -719,16 +905,25 @@ export const shipmentPriceOverrides = pgTable(
     reason: text("reason").notNull(),
     previousOverrideId: varchar("previousOverrideId", { length: 190 }),
     requestKey: varchar("requestKey", { length: 190 }).notNull(),
-    approvedBy: int("approvedBy").notNull().references(() => users.id),
-    createdAt: timestamp("createdAt", { precision: 3 }).default(sql`CURRENT_TIMESTAMP(3)`).notNull(),
+    approvedBy: int("approvedBy")
+      .notNull()
+      .references(() => users.id),
+    createdAt: timestamp("createdAt", { precision: 3 })
+      .default(sql`CURRENT_TIMESTAMP(3)`)
+      .notNull(),
   },
   table => [
     uniqueIndex("shipment_price_override_request_unique").on(table.requestKey),
-    uniqueIndex("shipment_price_override_revision_unique").on(table.shipmentId, table.officeId, table.revision),
+    uniqueIndex("shipment_price_override_revision_unique").on(
+      table.shipmentId,
+      table.officeId,
+      table.revision
+    ),
     index("shipment_price_override_shipment_idx").on(table.shipmentId),
   ]
 );
-export type ShipmentPriceOverrideRow = typeof shipmentPriceOverrides.$inferSelect;
+export type ShipmentPriceOverrideRow =
+  typeof shipmentPriceOverrides.$inferSelect;
 
 /** Transactional mutex for opening cash sessions; no legacy register is rewritten. */
 export const cashRegisterLocks = pgTable(
@@ -740,6 +935,9 @@ export const cashRegisterLocks = pgTable(
     createdAt: timestamp("createdAt").defaultNow().notNull(),
   },
   table => [
-    uniqueIndex("cash_register_locks_office_currency_uq").on(table.officeId, table.currency),
+    uniqueIndex("cash_register_locks_office_currency_uq").on(
+      table.officeId,
+      table.currency
+    ),
   ]
 );

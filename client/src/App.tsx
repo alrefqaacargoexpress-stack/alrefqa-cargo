@@ -20,6 +20,7 @@ const ShipmentPacking = lazy(() => import("./pages/ShipmentPacking"));
 const Customers = lazy(() => import("./pages/Customers"));
 const Reports = lazy(() => import("./pages/Reports"));
 const Tracking = lazy(() => import("./pages/Tracking"));
+const MarketWarehouse = lazy(() => import("./pages/MarketWarehouse"));
 const OfficeSettings = lazy(() => import("./pages/OfficeSettings"));
 const OfficeDashboard = lazy(() => import("./pages/OfficeDashboard"));
 const FinanceInvoices = lazy(() => import("./pages/FinanceInvoices"));
@@ -77,6 +78,7 @@ function Router() {
       <Route path="/operations/reports" component={Reports} />
       <Route path="/operations/tracking/:id" component={Tracking} />
       <Route path="/operations/tracking" component={Tracking} />
+      <Route path="/operations/market-warehouse" component={MarketWarehouse} />
       <Route path="/operations/offices" component={OfficeDashboard} />
       <Route path="/operations/warehouse" component={WarehouseStorage} />
       <Route path="/operations/settings" component={OfficeSettings} />

@@ -38,6 +38,7 @@ describe("operations home routing", () => {
       "/operations/shipments/new",
       "/operations/shipments",
       "/operations/tracking",
+      "/operations/market-warehouse",
     ]);
     expect(viewer.map(item => item.href)).toEqual(["/operations/tracking"]);
     expect(

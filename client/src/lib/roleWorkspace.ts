@@ -28,6 +28,7 @@ export type RoleWorkspaceTaskId =
   | "offices"
   | "employees"
   | "tracking"
+  | "market-warehouse"
   | "warehouse-arrivals"
   | "warehouse-storage"
   | "warehouse-rack"
@@ -110,6 +111,14 @@ const taskCatalog: readonly RoleWorkspaceTask[] = [
     level: "view",
     priority: 3,
     group: "shipping",
+  },
+  {
+    id: "market-warehouse",
+    href: "/operations/market-warehouse",
+    permission: "market_warehouse",
+    level: "view",
+    priority: 4,
+    group: "warehouse",
   },
   {
     id: "warehouse-arrivals",
