@@ -47,7 +47,20 @@ vi.mock("@/lib/trpc", () => ({
         useMutation: () => ({ isPending: false, mutateAsync: vi.fn() }),
       },
     },
-    useUtils: () => ({ duty: { list: { invalidate: vi.fn() } } }),
+    operations: {
+      publicContact: {
+        useQuery: () => ({
+          data: { publicPhone: null, publicPhoneVisible: false },
+        }),
+      },
+      updatePublicContact: {
+        useMutation: () => ({ isPending: false, mutateAsync: vi.fn() }),
+      },
+    },
+    useUtils: () => ({
+      duty: { list: { invalidate: vi.fn() } },
+      operations: { publicContact: { invalidate: vi.fn() } },
+    }),
   },
 }));
 

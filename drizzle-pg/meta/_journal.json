@@ -15,6 +15,13 @@
       "when": 1793297068213,
       "tag": "0001_ambitious_moonstone",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1793301885644,
+      "tag": "0002_calm_frank_castle",
+      "breakpoints": true
     }
   ]
 }

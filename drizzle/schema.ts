@@ -39,6 +39,9 @@ export const users = pgTable("users", {
   passwordHash: varchar("passwordHash", { length: 255 }),
   mustChangePassword: boolean("mustChangePassword").default(false).notNull(),
   role: enumText("role", ["user", "admin"]).default("user").notNull(),
+  /** Employee-controlled public contact; never used for authentication. */
+  publicPhone: varchar("publicPhone", { length: 40 }),
+  publicPhoneVisible: boolean("publicPhoneVisible").default(false).notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().notNull(),
   lastSignedIn: timestamp("lastSignedIn").defaultNow().notNull(),

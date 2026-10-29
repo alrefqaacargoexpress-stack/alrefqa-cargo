@@ -606,6 +606,74 @@ export const appRouter = router({
   financialVoids: financialVoidsRouter,
   lifecycle: lifecycleAdminRouter,
   operations: router({
+    publicContact: protectedProcedure.query(async ({ ctx }) => {
+      if (ctx.user.accountType !== "employee")
+        throw forbidden("employee_account_required");
+      const db = await dbOrThrow();
+      const rows = await db
+        .select({
+          publicPhone: users.publicPhone,
+          publicPhoneVisible: users.publicPhoneVisible,
+        })
+        .from(users)
+        .where(eq(users.id, ctx.user.id))
+        .limit(1);
+      return rows[0] ?? { publicPhone: null, publicPhoneVisible: false };
+    }),
+    updatePublicContact: protectedProcedure
+      .input(
+        z
+          .object({
+            publicPhone: z.string().trim().max(40),
+            publicPhoneVisible: z.boolean(),
+          })
+          .strict()
+      )
+      .mutation(async ({ ctx, input }) => {
+        const rawPhone = input.publicPhone.replace(/[^0-9+]/g, "");
+        if (rawPhone && !/^\+?[1-9][0-9]{4,19}$/.test(rawPhone))
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "public_phone_invalid",
+          });
+        const db = await dbOrThrow();
+        return db.transaction(async (tx: any) => {
+          const user = await lockEmployee(tx, ctx.user);
+          const scope = await readOfficeScope(tx, user, new Set(), true);
+          if (!scope.role || !scope.homeOffice)
+            throw forbidden("employee_membership_required");
+          const visible = Boolean(rawPhone && input.publicPhoneVisible);
+          await tx
+            .update(users)
+            .set({
+              publicPhone: rawPhone || null,
+              publicPhoneVisible: visible,
+              updatedAt: new Date(),
+            })
+            .where(eq(users.id, user.id));
+          await appendAudit(tx, {
+            actor: {
+              id: user.id,
+              name: user.name ?? "Employee",
+              role: scope.role,
+            },
+            entity: "user",
+            recordId: String(user.id),
+            action: "public_contact_updated",
+            after: {
+              userId: user.id,
+              officeId: scope.homeOffice,
+              publicPhoneVisible: visible,
+              hasPublicPhone: Boolean(rawPhone),
+            },
+            requestKey: `public-contact:${user.id}:${Date.now()}`,
+          });
+          return {
+            publicPhone: rawPhone || null,
+            publicPhoneVisible: visible,
+          };
+        });
+      }),
     access: protectedProcedure
       .input(readOwnerInputSchema)
       .query(async ({ ctx, input }) => {

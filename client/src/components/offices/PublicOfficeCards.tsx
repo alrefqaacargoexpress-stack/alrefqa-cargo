@@ -30,13 +30,21 @@ import {
 } from "@shared/publicShipping";
 
 type LegacyOffice = (typeof officeConfig)[number];
+type PublicActiveEmployee = {
+  key: string;
+  name: string;
+  phone: string | null;
+};
+type PublicProfile = VersionedOfficeProfile & {
+  activeEmployees?: PublicActiveEmployee[];
+};
 
 export default function PublicOfficeCards({
   profiles,
   loading = false,
   error = false,
 }: {
-  profiles?: VersionedOfficeProfile[];
+  profiles?: PublicProfile[];
   loading?: boolean;
   error?: boolean;
 }) {
@@ -116,7 +124,7 @@ function PublicOfficeCard({
   language,
 }: {
   office: LegacyOffice;
-  profile?: VersionedOfficeProfile;
+  profile?: PublicProfile;
   copy: PublicCopy;
   c: ReturnType<typeof branchDashboardCopy>;
   shippingCopy: ReturnType<typeof publicShippingCopyFor>;
@@ -286,6 +294,52 @@ function PublicOfficeCard({
           </div>
         </div>
       )}
+      {profile?.activeEmployees?.length ? (
+        <div className="mt-4 border-t border-[#edf0f0] pt-4">
+          <div className="mb-2 flex items-center justify-between gap-2 text-xs font-bold text-[#092d50]">
+            <span className="inline-flex items-center gap-2">
+              <Users size={14} aria-hidden="true" />
+              {c.availableEmployees}
+            </span>
+            <span className="rounded-full bg-emerald-50 px-2 py-1 text-[10px] text-emerald-800">
+              {c.availableBadge}
+            </span>
+          </div>
+          <div className="space-y-2">
+            {profile.activeEmployees.map(employee => {
+              const href = employee.phone
+                ? `https://wa.me/${employee.phone.replace(/\D/g, "")}?text=${encodeURIComponent(`${c.whatsappEmployee}: ${employee.name}`)}`
+                : null;
+              return (
+                <div
+                  key={employee.key}
+                  className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-[#f5f8f6] px-3 py-2 text-xs"
+                >
+                  <span className="font-semibold text-[#243f52]">
+                    {employee.name}
+                  </span>
+                  {href ? (
+                    <a
+                      href={href}
+                      target="_blank"
+                      rel="noreferrer"
+                      dir="ltr"
+                      className="font-bold text-[#2b7656] underline underline-offset-2"
+                    >
+                      <MessageCircle
+                        size={13}
+                        className="me-1 inline"
+                        aria-hidden="true"
+                      />
+                      {c.whatsappEmployee}
+                    </a>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
       {(seaAddress || hasSavedRates) && (
         <div className="mt-4 border-t border-[#edf0f0] pt-4">
           <div className="mb-2 text-xs font-bold text-[#092d50]">

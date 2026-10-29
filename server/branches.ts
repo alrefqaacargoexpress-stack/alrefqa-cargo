@@ -59,6 +59,7 @@ import {
   officeProfiles,
   syncReceipts,
   shipmentTrackingEvents,
+  dutyEvents,
   users,
 } from "../drizzle/schema";
 import type { User } from "../drizzle/schema";
@@ -381,12 +382,76 @@ async function readProfileRows(db: any): Promise<VersionedOfficeProfile[]> {
     }
   });
 }
-export async function publicProfiles(
-  db?: any
-): Promise<VersionedOfficeProfile[]> {
-  if (!db) return officeIds.map(defaultOfficeProfile);
+export async function publicProfiles(db?: any): Promise<PublicOfficeProfile[]> {
+  if (!db)
+    return officeIds.map(officeId => ({
+      ...defaultOfficeProfile(officeId),
+      activeEmployees: [],
+    }));
   const profiles = await readProfileRows(db);
   const retired = await loadLifecycle(db);
+  const now = Date.now();
+  const dutyRows = (await db.select().from(dutyEvents)) as Array<{
+    id: number;
+    userId: number;
+    officeId: OfficeId;
+    role: string;
+    status: "on" | "off";
+    expiresAt: Date | null;
+  }>;
+  const latestDuty = new Map<number, (typeof dutyRows)[number]>();
+  for (const row of dutyRows) {
+    const previous = latestDuty.get(row.userId);
+    if (!previous || row.id > previous.id) latestDuty.set(row.userId, row);
+  }
+  const memberRows = (await db
+    .select({
+      id: users.id,
+      name: users.name,
+      publicPhone: users.publicPhone,
+      publicPhoneVisible: users.publicPhoneVisible,
+      rootRole: users.role,
+      memberRole: memberRoles.role,
+    })
+    .from(users)
+    .leftJoin(memberRoles, eq(memberRoles.userId, users.id))) as Array<{
+    id: number;
+    name: string | null;
+    publicPhone: string | null;
+    publicPhoneVisible: boolean;
+    rootRole: "user" | "admin";
+    memberRole: string | null;
+  }>;
+  const activeEmployees = new Map<OfficeId, PublicActiveEmployee[]>();
+  for (const employee of memberRows) {
+    const event = latestDuty.get(employee.id);
+    if (
+      !event ||
+      event.status !== "on" ||
+      (event.expiresAt && event.expiresAt.getTime() <= now) ||
+      !employee.name?.trim()
+    )
+      continue;
+    const office = event.officeId;
+    const list = activeEmployees.get(office) ?? [];
+    list.push({
+      key: createHash("sha256")
+        .update(`public-employee:${employee.id}`)
+        .digest("hex")
+        .slice(0, 16),
+      name: employee.name.trim(),
+      officeId: office,
+      role:
+        employee.rootRole === "admin"
+          ? "admin"
+          : (employee.memberRole ?? "staff"),
+      phone:
+        employee.publicPhoneVisible && employee.publicPhone
+          ? employee.publicPhone
+          : null,
+    });
+    activeEmployees.set(office, list);
+  }
   return profiles.map(profile => ({
     ...profile,
     employees: profile.employees.filter(
@@ -402,8 +467,21 @@ export async function publicProfiles(
           String((person as any).linkedUserId ?? "")
         )
     ),
+    activeEmployees: activeEmployees.get(profile.officeId) ?? [],
   }));
 }
+
+export type PublicActiveEmployee = {
+  key: string;
+  name: string;
+  officeId: OfficeId;
+  role: string;
+  phone: string | null;
+};
+
+export type PublicOfficeProfile = VersionedOfficeProfile & {
+  activeEmployees: PublicActiveEmployee[];
+};
 export async function readProfile(
   db: any,
   officeId: OfficeId

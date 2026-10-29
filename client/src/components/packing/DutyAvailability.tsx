@@ -42,6 +42,12 @@ type DutyCopy = {
   retry: string;
   error: string;
   noRoster: string;
+  publicPhone: string;
+  publicPhoneHint: string;
+  publicPhoneVisible: string;
+  savePublicContact: string;
+  publicContactSaved: string;
+  invalidPublicPhone: string;
   roles: Record<string, string>;
 };
 
@@ -69,6 +75,12 @@ const dutyCopies: Record<"ar" | "en" | "zh" | "tr", DutyCopy> = {
     retry: "إعادة المحاولة",
     error: "تعذر إقرار حالة العمل. بقيت الحالة غير مفعّلة.",
     noRoster: "لا يوجد موظف معيّن ظاهر في هذا النطاق.",
+    publicPhone: "رقم واتساب للعمل",
+    publicPhoneHint: "اختياري. لن يظهر للزبائن إلا بعد تفعيل الموافقة والحضور.",
+    publicPhoneVisible: "السماح بعرض الرقم للعامة",
+    savePublicContact: "حفظ رقم التواصل",
+    publicContactSaved: "تم حفظ إعدادات رقم التواصل.",
+    invalidPublicPhone: "أدخل رقمًا دوليًا صحيحًا أو اترك الحقل فارغًا.",
     roles: {
       admin: "المدير الجذري",
       office_manager: "مدير مكتب",
@@ -107,6 +119,13 @@ const dutyCopies: Record<"ar" | "en" | "zh" | "tr", DutyCopy> = {
     retry: "Retry",
     error: "The duty state was not acknowledged. It remains inactive.",
     noRoster: "No assigned employee is visible in this scope.",
+    publicPhone: "Work WhatsApp number",
+    publicPhoneHint:
+      "Optional. Customers see it only after consent and active duty.",
+    publicPhoneVisible: "Allow this number to be shown publicly",
+    savePublicContact: "Save contact number",
+    publicContactSaved: "Contact visibility settings saved.",
+    invalidPublicPhone: "Enter a valid international number or leave it blank.",
     roles: {
       admin: "Root administrator",
       office_manager: "Office manager",
@@ -142,6 +161,12 @@ const dutyCopies: Record<"ar" | "en" | "zh" | "tr", DutyCopy> = {
     retry: "重试",
     error: "服务器未确认工作状态，状态保持未激活。",
     noRoster: "此范围内没有可见的已分配员工。",
+    publicPhone: "工作 WhatsApp 电话",
+    publicPhoneHint: "可选。只有在同意公开且已激活工作状态后，客户才能看到。",
+    publicPhoneVisible: "允许公开显示此号码",
+    savePublicContact: "保存联系号码",
+    publicContactSaved: "联系号码显示设置已保存。",
+    invalidPublicPhone: "请输入有效的国际号码，或留空。",
     roles: {
       admin: "根管理员",
       office_manager: "办公室经理",
@@ -181,6 +206,14 @@ const dutyCopies: Record<"ar" | "en" | "zh" | "tr", DutyCopy> = {
     error:
       "Çalışma durumu sunucu tarafından onaylanmadı; etkin değil olarak kaldı.",
     noRoster: "Bu kapsamda atanmış görünür çalışan yok.",
+    publicPhone: "İş WhatsApp numarası",
+    publicPhoneHint:
+      "İsteğe bağlıdır. Müşteriler yalnızca onay ve aktif görevden sonra görür.",
+    publicPhoneVisible: "Bu numaranın herkese açık gösterilmesine izin ver",
+    savePublicContact: "İletişim numarasını kaydet",
+    publicContactSaved: "İletişim görünürlük ayarları kaydedildi.",
+    invalidPublicPhone:
+      "Geçerli bir uluslararası numara girin veya boş bırakın.",
     roles: {
       admin: "Kök yönetici",
       office_manager: "Ofis müdürü",
@@ -241,8 +274,14 @@ export default function DutyAvailability({
     retry: false,
     refetchOnWindowFocus: false,
   });
+  const publicContactQuery = trpc.operations.publicContact.useQuery(undefined, {
+    enabled,
+    retry: false,
+    refetchOnWindowFocus: false,
+  });
   const activate = trpc.duty.activate.useMutation();
   const deactivate = trpc.duty.deactivate.useMutation();
+  const savePublicContact = trpc.operations.updatePublicContact.useMutation();
   const utils = trpc.useUtils();
   const [selectedOffice, setSelectedOffice] = useState<OfficeId | "">(
     assignedOffices[0] ?? ""
@@ -255,6 +294,15 @@ export default function DutyAvailability({
     text: string;
     kind: "ok" | "pending" | "error";
   } | null>(null);
+  const [publicPhone, setPublicPhone] = useState("");
+  const [publicPhoneVisible, setPublicPhoneVisible] = useState(false);
+  const [publicContactMessage, setPublicContactMessage] = useState("");
+
+  useEffect(() => {
+    if (!publicContactQuery.data) return;
+    setPublicPhone(publicContactQuery.data.publicPhone ?? "");
+    setPublicPhoneVisible(publicContactQuery.data.publicPhoneVisible);
+  }, [publicContactQuery.data]);
 
   useEffect(() => {
     if (!assignedOffices.includes(selectedOffice as OfficeId))
@@ -281,6 +329,23 @@ export default function DutyAvailability({
   const nextAction: DutyAction =
     pendingAction ?? (acknowledgedOn ? "deactivate" : "activate");
   const busy = activate.isPending || deactivate.isPending;
+  const saveContact = async () => {
+    setPublicContactMessage("");
+    try {
+      await savePublicContact.mutateAsync({
+        publicPhone,
+        publicPhoneVisible,
+      });
+      setPublicContactMessage(c.publicContactSaved);
+      await utils.operations.publicContact.invalidate();
+    } catch (error) {
+      setPublicContactMessage(
+        error instanceof Error && error.message.includes("public_phone_invalid")
+          ? c.invalidPublicPhone
+          : c.error
+      );
+    }
+  };
 
   const submit = async (action: DutyAction) => {
     setMessage(null);
@@ -400,6 +465,52 @@ export default function DutyAvailability({
                     ? c.pending
                     : c.off}
               </span>
+            </div>
+            <div className="mt-4 rounded-xl border border-[#dce4e7] bg-white p-3">
+              <label className="grid gap-1 text-xs font-bold text-[#52636e]">
+                <span>{c.publicPhone}</span>
+                <input
+                  className={packingInputClass}
+                  type="tel"
+                  inputMode="tel"
+                  dir="ltr"
+                  value={publicPhone}
+                  onChange={event => setPublicPhone(event.target.value)}
+                  placeholder="+222…"
+                  maxLength={40}
+                  disabled={savePublicContact.isPending}
+                />
+                <span className="font-normal leading-5 text-[#718088]">
+                  {c.publicPhoneHint}
+                </span>
+              </label>
+              <label className="mt-2 flex items-start gap-2 text-xs font-semibold text-[#52636e]">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 size-4 accent-[#2b7656]"
+                  checked={publicPhoneVisible}
+                  onChange={event =>
+                    setPublicPhoneVisible(event.target.checked)
+                  }
+                  disabled={savePublicContact.isPending}
+                />
+                <span>{c.publicPhoneVisible}</span>
+              </label>
+              <button
+                className={`${packingSecondaryClass} mt-3`}
+                disabled={savePublicContact.isPending || !workspace.online}
+                onClick={() => void saveContact()}
+              >
+                {c.savePublicContact}
+              </button>
+              {publicContactMessage && (
+                <p
+                  className="mt-2 text-xs font-semibold text-[#2b7656]"
+                  role="status"
+                >
+                  {publicContactMessage}
+                </p>
+              )}
             </div>
             <div className="mt-4 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
               <label className="grid gap-1 text-xs font-bold text-[#52636e]">
