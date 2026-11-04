@@ -226,6 +226,9 @@ export function useFinanceWorkspace() {
   const [conflicts, setConflicts] = useState<FinanceSyncResult["conflicts"]>(
     []
   );
+  const [snapshotRefreshPending, setSnapshotRefreshPending] = useState(false);
+  const networkSnapshotIdentity = useRef<string | null>(null);
+  const currentSnapshotIdentity = `${base.userId ?? ""}:${scopeFingerprint ?? ""}`;
   const denied =
     query.error?.data?.code === "FORBIDDEN" ||
     query.error?.data?.code === "UNAUTHORIZED";
@@ -239,7 +242,11 @@ export function useFinanceWorkspace() {
       base.state.shipments
     );
     if (office) return office;
-    if (command.kind === "opening_balance") return command.payload.officeId;
+    if (
+      command.kind === "opening_balance" ||
+      command.kind === "profit_withdrawal"
+    )
+      return command.payload.officeId;
     return undefined;
   };
   const commandPermission = (command: FinanceCommand) =>
@@ -310,11 +317,22 @@ export function useFinanceWorkspace() {
       cancelled = true;
     };
   }, [base.userId, query.data, denied, financeCacheUser, scopeFingerprint]);
+  useEffect(() => {
+    if (!base.userId || !query.data || query.error || query.isFetching) return;
+    networkSnapshotIdentity.current = currentSnapshotIdentity;
+  }, [
+    base.userId,
+    currentSnapshotIdentity,
+    query.data,
+    query.error,
+    query.isFetching,
+  ]);
   const writePermission = canWriteFinance({
     role: base.role,
     offices: base.offices,
     homeOffice:
       query.data?.homeOffice ?? workspace?.snapshot.homeOffice ?? null,
+    permissions: base.permissions,
   });
   const canEdit =
     writePermission &&
@@ -360,6 +378,7 @@ export function useFinanceWorkspace() {
           settlement: "تحصيل فاتورة",
           customer_movement: "حركة حساب عميل",
           opening_balance: "رصيد افتتاحي",
+          profit_withdrawal: "سحب ربح",
           shipment_price: "تحديد سعر شحنة",
         },
         en: {
@@ -368,6 +387,7 @@ export function useFinanceWorkspace() {
           settlement: "invoice settlement",
           customer_movement: "customer movement",
           opening_balance: "opening balance",
+          profit_withdrawal: "profit withdrawal",
           shipment_price: "shipment price",
         },
         zh: {
@@ -376,6 +396,7 @@ export function useFinanceWorkspace() {
           settlement: "发票收款",
           customer_movement: "客户账户变动",
           opening_balance: "期初余额",
+          profit_withdrawal: "利润提取",
           shipment_price: "货运定价",
         },
         tr: {
@@ -384,6 +405,7 @@ export function useFinanceWorkspace() {
           settlement: "fatura tahsilatı",
           customer_movement: "müşteri hareketi",
           opening_balance: "açılış bakiyesi",
+          profit_withdrawal: "kâr çekimi",
           shipment_price: "gönderi fiyatı",
         },
       }[language];
@@ -573,7 +595,11 @@ export function useFinanceWorkspace() {
             ? w.synced
             : w.conflict
       );
-      void query.refetch();
+      setSnapshotRefreshPending(true);
+      void query.refetch().then(
+        () => setSnapshotRefreshPending(false),
+        () => setSnapshotRefreshPending(false)
+      );
       if (result.applied.some(item => item.priceProjection))
         await base.reload();
       return result;
@@ -638,6 +664,21 @@ export function useFinanceWorkspace() {
     }
   };
   const snapshot = workspace?.snapshot ?? emptyFinanceSnapshot();
+  // A local workspace may contain an older projection, but it cannot establish
+  // posting authority. This flag is intentionally derived from the authenticated
+  // network query and the current permission scope only.
+  const snapshotReady = Boolean(
+    base.online &&
+      !base.localOnly &&
+      base.accessReady &&
+      Boolean(base.userId) &&
+      permission &&
+      networkSnapshotIdentity.current === currentSnapshotIdentity &&
+      query.data &&
+      !query.error &&
+      !query.isFetching &&
+      !snapshotRefreshPending
+  );
   const visible =
     permission &&
     base.accessReady &&
@@ -681,6 +722,7 @@ export function useFinanceWorkspace() {
     busy: mutation.isPending,
     store: workspace,
     snapshotError: query.error && !denied ? w.fetchFailed : null,
+    snapshotReady,
     autoSyncStatus: base.autoSyncStatus,
     autoSyncQueue: base.autoSyncQueue,
     paymentSettings: settingsByOffice,

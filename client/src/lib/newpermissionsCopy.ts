@@ -78,6 +78,7 @@ const ar: PermissionCopy = {
     invoice_void: "إلغاء الفواتير",
     entry_void: "إلغاء القيود",
     employee_disable: "تعطيل الموظفين",
+    profit_withdrawal: "سحب الأرباح من الصندوق",
   },
 };
 
@@ -134,6 +135,7 @@ const en: PermissionCopy = {
     invoice_void: "Void invoices",
     entry_void: "Void entries",
     employee_disable: "Disable employees",
+    profit_withdrawal: "Profit withdrawal from cash",
   },
 };
 
@@ -190,6 +192,7 @@ const zh: PermissionCopy = {
     invoice_void: "作废发票",
     entry_void: "作废账目",
     employee_disable: "停用员工",
+    profit_withdrawal: "从现金中提取利润",
   },
 };
 
@@ -244,8 +247,9 @@ const tr: PermissionCopy = {
     audit: "Denetim günlüğü",
     office_assign: "Ofis atama",
     invoice_void: "Faturaları iptal et",
-    entry_void: "Kayıtları iptal et",
+    entry_void: "Kayıt iptali",
     employee_disable: "Çalışanları devre dışı bırak",
+    profit_withdrawal: "Kasadan kâr çekimi",
   },
 };
 

@@ -495,20 +495,28 @@ async function voidEntryTransaction(
   const cashRows =
     entry.kind === "daily_expense" ||
     entry.kind === "monthly_expense" ||
-    entry.kind === "shipment_cost"
+    entry.kind === "shipment_cost" ||
+    entry.kind === "profit_withdrawal" ||
+    entry.kind === "customer_credit" ||
+    entry.kind === "customer_debit"
       ? await tx
           .select()
           .from(cashMovements)
           .where(
             and(
               eq(cashMovements.officeId, entry.officeId),
-              eq(cashMovements.kind, "expense")
+              eq(
+                cashMovements.kind,
+                entry.kind === "customer_credit" ? "receipt" : "expense"
+              )
             )
           )
           .for("update")
       : [];
   const hasRealPayment = cashRows.some((cash: any) => {
     const data = cash.data && typeof cash.data === "object" ? cash.data : {};
+    if (cash.officeId !== entry.officeId || cash.currency !== entry.currency)
+      return false;
     return (
       data.entryId === entry.id ||
       data.expenseId === entry.id ||

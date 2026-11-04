@@ -27,22 +27,32 @@ export async function lockCashRegisterMutex(
   currency: FinanceCurrency
 ) {
   const id = cashRegisterMutexId(officeId, currency);
+  const values = { id, officeId, currency };
   const insert = tx.insert(cashRegisterLocks);
   if (typeof insert.ignore === "function") {
     try {
-      await insert
-        .ignore()
-        .values({ id, officeId, currency });
+      await insert.ignore().values(values);
     } catch (error) {
       // MySQL INSERT IGNORE suppresses the duplicate-key branch. Some fake
       // builders expose ignore() but still throw, so preserve that contract.
       if (!isDuplicateInsert(error)) throw error;
     }
   } else {
-    try {
-      await insert.values({ id, officeId, currency });
-    } catch (error) {
-      if (!isDuplicateInsert(error)) throw error;
+    // Drizzle's PostgreSQL builder exposes onConflictDoNothing() on the
+    // statement returned by values(), not on the initial insert builder.
+    const statement = insert.values(values);
+    if (statement && typeof statement.onConflictDoNothing === "function") {
+      await statement.onConflictDoNothing();
+    } else {
+      // Compatibility fallback for isolated in-memory fakes whose values()
+      // executes immediately and returns no conflict builder. A real Pg
+      // statement always takes the branch above, so duplicate errors from the
+      // database are never swallowed here.
+      try {
+        await statement;
+      } catch (error) {
+        if (!isDuplicateInsert(error)) throw error;
+      }
     }
   }
 

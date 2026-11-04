@@ -51,6 +51,7 @@ export const permissionGroups = [
       "opening_balance",
       "shipment_prices",
       "office_wallets",
+      "profit_withdrawal",
       "invoice_void",
       "entry_void",
     ] as const,

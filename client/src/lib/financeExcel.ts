@@ -63,6 +63,15 @@ const openingHeaders = [
   "المبلغ",
   "الملاحظة",
 ];
+const withdrawalHeaders = [
+  "رقم مسودة السحب",
+  "المكتب",
+  "المبلغ",
+  "العملة",
+  "التاريخ",
+  "السبب",
+  "مرجع التصدير",
+];
 const shipmentPriceHeaders = [
   "الشحنة",
   "الجانب",
@@ -106,6 +115,7 @@ export function buildFinanceWorkbook(
     goodsRows: unknown[][] = [],
     movementRows: unknown[][] = [],
     openingRows: unknown[][] = [],
+    withdrawalRows: unknown[][] = [],
     shipmentPriceRows: unknown[][] = [];
   for (const c of commands) {
     if (c.kind === "invoice") {
@@ -153,6 +163,18 @@ export function buildFinanceWorkbook(
         p.note,
       ]);
     }
+    if (c.kind === "profit_withdrawal") {
+      const p = c.payload;
+      withdrawalRows.push([
+        p.withdrawalId,
+        p.officeId,
+        p.amount,
+        p.currency,
+        p.date,
+        p.description,
+        "مرجع فقط — مسودة محلية، لا تُستورد كسحب",
+      ]);
+    }
     if (c.kind === "shipment_price") {
       const p = c.payload;
       shipmentPriceRows.push([
@@ -189,6 +211,12 @@ export function buildFinanceWorkbook(
   addSheet(wb, "مسودات المصروفات", expenseHeaders, expenseRows);
   addSheet(wb, "بنود المسودات", goodsHeaders, goodsRows);
   addSheet(wb, "مسودات الأرصدة الافتتاحية", openingHeaders, openingRows);
+  addSheet(
+    wb,
+    "مسودات سحب الأرباح (مرجع فقط)",
+    withdrawalHeaders,
+    withdrawalRows
+  );
   addSheet(wb, "مسودات أسعار الشحنات", shipmentPriceHeaders, shipmentPriceRows);
   addSheet(
     wb,
@@ -234,6 +262,7 @@ export function buildFinanceWorkbook(
       "العميل",
       "الموظف",
       "وقت التسجيل",
+      "طبيعة الاستيراد",
     ],
     snapshot.entries.map(e => [
       e.id,
@@ -248,6 +277,7 @@ export function buildFinanceWorkbook(
       e.customerId ?? "",
       e.actorName,
       e.recordedAt,
+      "مرجع فقط — لا يُستورد كتغيير نقدي",
     ])
   );
   addSheet(

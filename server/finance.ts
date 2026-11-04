@@ -32,6 +32,9 @@ import {
   deriveShipmentReceivables,
   openingBalanceInputSchema,
   shipmentPriceInputSchema,
+  profitWithdrawalInputSchema,
+  financeCashBalance,
+  availableProfitWithdrawal,
 } from "@shared/finance";
 import { isShipmentSent } from "@shared/finance";
 import {
@@ -121,6 +124,8 @@ function assertFinanceCommand(
   command: FinanceMutationCommand
 ) {
   if (scope.role === "cashier") {
+    if (command.kind === "profit_withdrawal")
+      throw new Error("finance_forbidden");
     const payload = command.payload as {
       paymentMode?: string;
       payment?: unknown;
@@ -128,8 +133,7 @@ function assertFinanceCommand(
     const nonCashInvoice =
       command.kind === "invoice" && payload.paymentMode !== "cash";
     const nonCashMovement =
-      command.kind === "customer_movement" &&
-      payload.paymentMode !== "cash";
+      command.kind === "customer_movement" && payload.paymentMode !== "cash";
     const nonCashSettlement =
       command.kind === "settlement" && payload.payment != null;
     if (nonCashInvoice || nonCashMovement || nonCashSettlement)
@@ -188,7 +192,10 @@ function entry(
 async function insertEntry(tx: any, value: FinanceEntry) {
   await tx.insert(financeEntries).values({
     id: value.id,
-    kind: value.kind,
+    // The database enum is extended independently of the shared application
+    // contract. Keep this server write compatible with the phase-3 entry kind
+    // without widening the schema in this incremental change.
+    kind: value.kind as any,
     officeId: value.officeId,
     currency: value.currency,
     data: value,
@@ -196,6 +203,20 @@ async function insertEntry(tx: any, value: FinanceEntry) {
     shipmentId: value.shipmentId ?? null,
     actorId: value.actorId,
   });
+}
+
+async function currentOriginalFinanceEntries(tx: any): Promise<FinanceEntry[]> {
+  const originals = (await tx.select().from(financeEntries)).map((row: any) =>
+    asEntry(row.data)
+  );
+  return originals;
+}
+
+/** Read the current ledger projection with immutable reversals applied. */
+async function currentNetFinanceEntries(tx: any): Promise<FinanceEntry[]> {
+  const originals = await currentOriginalFinanceEntries(tx);
+  const reversals = await tx.select().from(financeReversals);
+  return buildNetAccountingEntries(originals, reversals);
 }
 
 async function ensureOpenCashRegister(
@@ -245,6 +266,13 @@ async function lockCashForCommand(
       command.payload.currency
     );
     return null;
+  } else if (command.kind === "profit_withdrawal") {
+    await lockCashRegisterMutex(
+      tx,
+      employeeFinanceOffice(scope, command.payload.officeId),
+      command.payload.currency
+    );
+    return null;
   } else if (command.kind === "expense") {
     await lockCashRegisterMutex(
       tx,
@@ -264,7 +292,7 @@ async function lockCashForCommand(
     return null;
   } else if (
     command.kind === "settlement" &&
-    command.payload.payment?.methodId === "cash"
+    (!command.payload.payment || command.payload.payment.methodId === "cash")
   ) {
     // Resolve the lock identity from the stored invoice, never from the
     // settlement payload. This read must stay non-locking: the mutex is the
@@ -373,7 +401,36 @@ export async function financeSnapshot(
     asEntry(row.data)
   );
   const reversals = await db.select().from(financeReversals);
-  for (const parsed of buildNetAccountingEntries(originals, reversals)) {
+  const netEntries = buildNetAccountingEntries(originals, reversals);
+  const cashBalances: NonNullable<FinanceSnapshot["cashBalances"]> = [];
+  if (financeCan(permissionSubject(scope), "profit_withdrawal", "view")) {
+    const currencies = new Map<
+      string,
+      { officeId: OfficeId; currency: FinanceEntry["currency"] }
+    >();
+    for (const fact of originals) {
+      if (inScope(scope, fact.officeId))
+        currencies.set(`${fact.officeId}:${fact.currency}`, {
+          officeId: fact.officeId,
+          currency: fact.currency,
+        });
+    }
+    for (const { officeId, currency } of currencies.values()) {
+      const cashBalance = financeCashBalance(originals, officeId, currency);
+      cashBalances.push({
+        officeId,
+        currency,
+        cashBalance,
+        availableProfitWithdrawal: availableProfitWithdrawal(
+          netEntries,
+          officeId,
+          currency,
+          cashBalance
+        ),
+      });
+    }
+  }
+  for (const parsed of netEntries) {
     if (isRetired(retired, "finance_entry", parsed.id)) continue;
     if (
       inScope(scope, parsed.officeId) &&
@@ -435,6 +492,7 @@ export async function financeSnapshot(
       (scope.offices?.length === 1 ? scope.offices[0] : null),
     offices: scope.offices,
     lastReadAt: isoNow(),
+    cashBalances,
     receivables: financeCan(permissionSubject(scope), "shipment_prices", "view")
       ? deriveShipmentReceivables(
           shipments,
@@ -797,6 +855,20 @@ async function applyExpense(
     .limit(1)
     .for("update");
   if (duplicate[0]) throw new Error("expense_exists");
+  await ensureOpenCashRegister(
+    tx,
+    financialOfficeId,
+    input.currency,
+    user.id,
+    command.id,
+    true
+  );
+  const currentEntries = await currentOriginalFinanceEntries(tx);
+  if (
+    financeCashBalance(currentEntries, financialOfficeId, input.currency) <
+    input.amount
+  )
+    throw new Error("insufficient_cash_balance");
   const row = entry(
     input.category,
     input.expenseId,
@@ -850,6 +922,94 @@ async function applyExpense(
     entity: "finance_entry",
     recordId: row.id,
     action: "finance_expense",
+    before: null,
+    after: row,
+    requestKey: `finance:${command.id}`,
+  });
+  return { entries: [row] };
+}
+
+async function applyProfitWithdrawal(
+  tx: any,
+  user: FinanceActor,
+  scope: FinanceScope,
+  command: Extract<FinanceMutationCommand, { kind: "profit_withdrawal" }>
+) {
+  const input = profitWithdrawalInputSchema.parse(command.payload);
+  const financialOfficeId = employeeFinanceOffice(scope, input.officeId);
+  if (financialOfficeId !== input.officeId)
+    throw new Error("financial_office_mismatch");
+  assertOffice(scope, financialOfficeId);
+
+  const duplicate = await tx
+    .select()
+    .from(financeEntries)
+    .where(eq(financeEntries.id, input.withdrawalId))
+    .limit(1)
+    .for("update");
+  if (duplicate[0]) throw new Error("withdrawal_exists");
+
+  await ensureOpenCashRegister(
+    tx,
+    financialOfficeId,
+    input.currency,
+    user.id,
+    command.id,
+    true
+  );
+  const currentCashEntries = await currentOriginalFinanceEntries(tx);
+  const currentEntries = await currentNetFinanceEntries(tx);
+  const cashBalance = financeCashBalance(
+    currentCashEntries,
+    financialOfficeId,
+    input.currency
+  );
+  if (input.amount > cashBalance) throw new Error("insufficient_cash_balance");
+  if (
+    input.amount >
+    availableProfitWithdrawal(
+      currentEntries,
+      financialOfficeId,
+      input.currency,
+      cashBalance
+    )
+  )
+    throw new Error("insufficient_profit_balance");
+
+  const row = entry(
+    "profit_withdrawal",
+    input.withdrawalId,
+    financialOfficeId,
+    input.currency,
+    input.amount,
+    input.description,
+    user,
+    { date: input.date }
+  );
+  await insertEntry(tx, row);
+  const registerId = await ensureOpenCashRegister(
+    tx,
+    financialOfficeId,
+    input.currency,
+    user.id,
+    command.id,
+    true
+  );
+  await tx.insert(cashMovements).values({
+    id: `cash-movement:${command.id}`,
+    registerId,
+    officeId: financialOfficeId,
+    kind: "expense",
+    amount: input.amount.toFixed(2),
+    currency: input.currency,
+    actorId: user.id,
+    data: { source: "profit_withdrawal", entryId: row.id },
+  });
+  await appendAudit(tx, {
+    actor: { id: user.id, name: actorName(user), role: scope.role! },
+    entity: "finance_entry",
+    recordId: row.id,
+    action: "finance_profit_withdrawal",
     before: null,
     after: row,
     requestKey: `finance:${command.id}`,
@@ -953,7 +1113,7 @@ async function applySettlement(
       .digest("hex"),
     data: { source: "finance_settlement" },
   });
-  if (payment?.methodId === "cash") {
+  if (!payment || payment.methodId === "cash") {
     const registerId = await ensureOpenCashRegister(
       tx,
       finance.financialOfficeId,
@@ -1059,6 +1219,14 @@ async function applyCustomerMovement(
       ...(isWallet ? { cashEffect: "none" as const } : {}),
     }
   );
+  if (!isWallet && input.direction === "debit") {
+    const currentEntries = await currentOriginalFinanceEntries(tx);
+    if (
+      financeCashBalance(currentEntries, financialOfficeId, input.currency) <
+      input.amount
+    )
+      throw new Error("insufficient_cash_balance");
+  }
   await insertEntry(tx, row);
   if (isWallet && payment) {
     await recordWalletReceipt(tx, {
@@ -1230,13 +1398,17 @@ export async function applyFinanceCommand(
     await assertActiveEntity(tx, "invoice", command.payload.invoiceId);
   if (command.kind === "invoice") return applyInvoice(tx, user, scope, command);
   if (command.kind === "expense") return applyExpense(tx, user, scope, command);
+  if (command.kind === "profit_withdrawal")
+    return applyProfitWithdrawal(tx, user, scope, command);
   if (command.kind === "customer_movement")
     return applyCustomerMovement(tx, user, scope, command);
   if (command.kind === "opening_balance")
     return applyOpeningBalance(tx, user, scope, command);
   if (command.kind === "shipment_price")
     return applyShipmentPrice(tx, user, scope, command);
-  return applySettlement(tx, user, scope, command, cashLock);
+  if (command.kind === "settlement")
+    return applySettlement(tx, user, scope, command, cashLock);
+  throw new Error("finance_command_unhandled");
 }
 
 export async function financeSync(

@@ -179,6 +179,31 @@ function sourceDb() {
   return db;
 }
 
+function seedSourceCash(db: any, amount = 100) {
+  const id = "opening-dubai-AED";
+  const data = {
+    id,
+    kind: "opening_balance",
+    officeId: "dubai",
+    currency: "AED",
+    amount,
+    date: "2026-10-24",
+    description: "fixture opening cash",
+    actorId: actor.id,
+    actorName: actor.name,
+    recordedAt: now,
+    direction: "credit",
+  };
+  db.rows.get(financeEntries).push({
+    id,
+    kind: data.kind,
+    officeId: data.officeId,
+    currency: data.currency,
+    actorId: actor.id,
+    data,
+  });
+}
+
 function sourceCommand(
   id: string,
   options: { referenceKey?: string; description?: string } = {}
@@ -226,6 +251,7 @@ describe("strict cost transaction coverage", () => {
 
   it("rejects a second expense id for the same stable source approval", async () => {
     const db = sourceDb();
+    seedSourceCash(db);
     const first = await financeSync(
       db,
       actor,
@@ -240,7 +266,7 @@ describe("strict cost transaction coverage", () => {
       [sourceCommand("source-new-expense", { referenceKey: "carrier-approval-1" })]
     );
     expect(second.conflicts[0]?.code).toBe("shipment_cost_duplicate");
-    expect(db.rows.get(financeEntries)).toHaveLength(1);
+    expect(db.rows.get(financeEntries)).toHaveLength(2);
     expect(db.rows.get(cashMovements)).toHaveLength(1);
     expect(db.rows.get(shipmentCostApprovals)).toHaveLength(1);
     expect(db.rows.get(financeReceipts)).toHaveLength(1);
@@ -248,6 +274,7 @@ describe("strict cost transaction coverage", () => {
 
   it("rolls back a source cash expense and approval when the audit append fails", async () => {
     const db = sourceDb();
+    seedSourceCash(db);
     const result = await financeSync(
       db,
       actor,
@@ -255,7 +282,8 @@ describe("strict cost transaction coverage", () => {
       [sourceCommand("source-audit-fails", { description: "FAIL-AUDIT" })]
     );
     expect(result.conflicts[0]?.code).toBe("simulated_audit_failure");
-    expect(db.rows.get(financeEntries)).toHaveLength(0);
+    expect(db.rows.get(financeEntries)).toHaveLength(1);
+    expect(db.rows.get(financeEntries)[0].id).toBe("opening-dubai-AED");
     expect(db.rows.get(cashRegisters)).toHaveLength(0);
     expect(db.rows.get(cashMovements)).toHaveLength(0);
     expect(db.rows.get(shipmentCostApprovals)).toHaveLength(0);

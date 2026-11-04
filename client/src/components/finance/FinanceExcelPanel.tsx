@@ -47,6 +47,7 @@ const copy = {
     settlement: "سداد دين",
     movement: "حركة حساب العميل",
     openingBalance: "رصيد افتتاحي",
+    profitWithdrawal: "سحب ربح",
     shipmentPrice: "سعر شحنة",
     reason: "بيانات الصف غير صالحة أو معرفه مكرر؛ لن يُستبدل سجل موجود.",
   },
@@ -82,6 +83,7 @@ const copy = {
     settlement: "Debt payment",
     movement: "Customer account movement",
     openingBalance: "Opening balance",
+    profitWithdrawal: "Profit withdrawal",
     shipmentPrice: "Shipment price",
     reason:
       "Invalid row data or duplicate identifier; existing records will not be replaced.",
@@ -115,6 +117,7 @@ const copy = {
     settlement: "偿还欠款",
     movement: "客户账户流水",
     openingBalance: "期初余额",
+    profitWithdrawal: "利润提取",
     shipmentPrice: "货件价格",
     reason: "数据无效或标识重复，不会替换现有记录。",
   },
@@ -149,6 +152,7 @@ const copy = {
     settlement: "Borç ödemesi",
     movement: "Müşteri hesap hareketi",
     openingBalance: "Açılış bakiyesi",
+    profitWithdrawal: "Kâr çekimi",
     shipmentPrice: "Gönderi fiyatı",
     reason: "Geçersiz veri veya yinelenen kimlik; mevcut kayıt değiştirilmez.",
   },
@@ -167,6 +171,7 @@ export default function FinanceExcelPanel({
     role: f.role,
     offices: f.offices,
     homeOffice: f.homeOffice,
+    permissions: f.permissions,
   });
   const read = async (file?: File) => {
     if (!file) return;
@@ -331,9 +336,11 @@ export default function FinanceExcelPanel({
                     ? `${c.expense}: ${x.payload.amount} ${x.payload.currency} · ${x.payload.officeId}`
                     : x.kind === "customer_movement"
                       ? `${c.movement}: ${x.payload.customerId} · ${x.payload.amount} ${x.payload.currency} · ${x.payload.officeId}`
-                      : x.kind === "opening_balance"
-                        ? `${c.openingBalance}: ${x.payload.officeId} · ${x.payload.amount} ${x.payload.currency} · ${x.payload.direction}`
-                        : x.kind === "shipment_price"
+                        : x.kind === "opening_balance"
+                          ? `${c.openingBalance}: ${x.payload.officeId} · ${x.payload.amount} ${x.payload.currency} · ${x.payload.direction}`
+                          : x.kind === "profit_withdrawal"
+                            ? `${c.profitWithdrawal}: ${x.payload.officeId} · ${x.payload.amount} ${x.payload.currency}`
+                          : x.kind === "shipment_price"
                           ? `${c.shipmentPrice}: ${x.payload.shipmentId} · ${x.payload.pricePerKg}`
                           : c.settlement}
               </p>
@@ -389,9 +396,11 @@ export default function FinanceExcelPanel({
                       ? `${c.expense}: ${x.payload.category} · ${x.payload.amount} ${x.payload.currency} · ${x.payload.officeId}`
                       : x.kind === "customer_movement"
                         ? `${c.movement}: ${x.payload.customerId} · ${x.payload.amount} ${x.payload.currency} · ${x.payload.officeId}`
-                        : x.kind === "opening_balance"
-                          ? `${c.openingBalance}: ${x.payload.officeId} · ${x.payload.amount} ${x.payload.currency}`
-                          : x.kind === "shipment_price"
+                          : x.kind === "opening_balance"
+                            ? `${c.openingBalance}: ${x.payload.officeId} · ${x.payload.amount} ${x.payload.currency}`
+                            : x.kind === "profit_withdrawal"
+                              ? `${c.profitWithdrawal}: ${x.payload.officeId} · ${x.payload.amount} ${x.payload.currency}`
+                            : x.kind === "shipment_price"
                             ? `${c.shipmentPrice}: ${x.payload.shipmentId} · ${x.payload.pricePerKg}`
                             : `${c.settlement}: ${x.payload.invoiceId} · ${x.payload.amount}`}
                 </p>

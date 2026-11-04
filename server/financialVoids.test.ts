@@ -366,6 +366,50 @@ describe("financial void service", () => {
       db.rows.get(financeEntries)!.find(row => row.id === "expense-2")?.data
     ).toEqual(expense);
   });
+  it.each(["customer_credit", "customer_debit"] as const)(
+    "requires cash reconciliation before voiding a posted %s",
+    async kind => {
+      const db = setup();
+      const cashEntry = entry(`customer-${kind}`, "daily_expense", {
+        kind,
+        invoiceId: undefined,
+      });
+      db.rows
+        .get(financeEntries)!
+        .push({
+          id: cashEntry.id,
+          kind,
+          officeId: cashEntry.officeId,
+          currency: cashEntry.currency,
+          actorId: actor.id,
+          data: cashEntry,
+        });
+      db.rows
+        .get(cashMovements)!
+        .push({
+          id: `cash-${kind}`,
+          officeId: "nouakchott",
+          kind: kind === "customer_credit" ? "receipt" : "expense",
+          amount: "100.00",
+          currency: "MRU",
+          actorId: actor.id,
+          data: { source: "customer_movement", entryId: cashEntry.id },
+        });
+      const before = structuredClone(db.rows.get(financeEntries));
+      await expect(
+        voidEntry(db, actor, {
+          requestKey: `void-${kind}`,
+          entryId: cashEntry.id,
+          confirmation: cashEntry.id,
+          reason: "Review",
+        })
+      ).rejects.toThrow("entry_refund_required");
+      expect(db.rows.get(financeEntries)).toEqual(before);
+      expect(db.rows.get(financeReversals)).toHaveLength(0);
+      expect(db.rows.get(entityLifecycle)).toHaveLength(0);
+      expect(db.rows.get(cashMovements)).toHaveLength(1);
+    }
+  );
   it("does not replay a void after losing access to its office", async () => {
     const db = setup();
     await voidInvoice(db, actor, invoiceRequest);

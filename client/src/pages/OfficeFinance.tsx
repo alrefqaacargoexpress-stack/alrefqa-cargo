@@ -17,6 +17,7 @@ import PackingLayout from "@/components/packing/PackingLayout";
 import ShipmentPriceOverrideForm from "@/components/packing/ShipmentPriceOverrideForm";
 import FinanceExcelPanel from "@/components/finance/FinanceExcelPanel";
 import OfficeExpenseForm from "@/components/finance/OfficeExpenseForm";
+import OfficeProfitWithdrawalForm from "@/components/finance/OfficeProfitWithdrawalForm";
 import ShipmentSettlementPanel from "@/components/finance/ShipmentSettlementPanel";
 import FinancialVoidPanel from "@/components/finance/FinancialVoidPanel";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -28,6 +29,7 @@ import {
   officeFinanceCopyFor,
   type OfficeFinanceCopy,
 } from "@/lib/officeFinanceCopy";
+import { financeCashProjectionFromSnapshot } from "@/lib/financeProjections";
 import {
   PackingField,
   packingInputClass,
@@ -66,43 +68,10 @@ export function createOpeningBalanceCommand(input: {
   };
 }
 
+export { financeCashBalance } from "@shared/finance";
+
 function moneyRound(value: number) {
   return Math.round(value * 100) / 100;
-}
-
-export function financeCashBalance(
-  entries: readonly FinanceEntry[],
-  officeId: OfficeId,
-  currency: FinanceCurrency
-) {
-  let cents = 0;
-  for (const entry of entries) {
-    if (entry.officeId !== officeId || entry.currency !== currency) continue;
-    if (
-      entry.cashEffect === "none" ||
-      (entry.payment && entry.payment.methodId !== "cash")
-    )
-      continue;
-    const signed =
-      entry.kind === "opening_balance"
-        ? entry.direction === "debit"
-          ? -entry.amount
-          : entry.amount
-        : entry.kind === "collection" || entry.kind === "debt_payment"
-          ? entry.amount
-          : entry.kind === "customer_credit"
-            ? entry.cashEffect === "none"
-              ? 0
-              : entry.amount
-            : entry.kind === "customer_debit" ||
-                entry.kind === "daily_expense" ||
-                entry.kind === "monthly_expense" ||
-                entry.kind === "shipment_cost"
-              ? -entry.amount
-              : 0;
-    cents += Math.round(signed * 100);
-  }
-  return cents / 100;
 }
 
 /** Prefer the explicit API field, but keep older cached snapshots readable. */
@@ -172,6 +141,7 @@ const kindLabels = (
   customer_credit: c.customerCredit,
   customer_debit: c.customerDebit,
   opening_balance: c.openingBalance,
+  profit_withdrawal: c.profitWithdrawal,
 });
 
 function formatMoney(
@@ -288,15 +258,48 @@ export default function OfficeFinance() {
     () => summarizeCustomerDebts(visibleEntries),
     [visibleEntries]
   );
-  const summaryByCurrency = useMemo(
-    () =>
-      [...summaries].sort((a, b) =>
-        `${a.officeId}:${a.currency}`.localeCompare(
-          `${b.officeId}:${b.currency}`
-        )
-      ),
-    [summaries]
-  );
+  const summaryByCurrency = useMemo(() => {
+    const rows = new Map(
+      summaries.map(summary => [
+        `${summary.officeId}:${summary.currency}`,
+        summary,
+      ])
+    );
+    for (const projection of finance.store?.snapshot.cashBalances ?? []) {
+      if (
+        !allowedOffices.includes(projection.officeId) ||
+        (selectedOffice !== "all" && projection.officeId !== selectedOffice)
+      )
+        continue;
+      const key = `${projection.officeId}:${projection.currency}`;
+      if (rows.has(key)) continue;
+      rows.set(key, {
+        officeId: projection.officeId,
+        currency: projection.currency,
+        shipmentRevenue: 0,
+        invoiceRevenue: 0,
+        revenue: 0,
+        shipmentCosts: 0,
+        dailyExpenses: 0,
+        monthlyExpenses: 0,
+        expenses: 0,
+        net: 0,
+        debts: 0,
+        collections: 0,
+        openingBalance: 0,
+        withdrawals: 0,
+        retainedNet: 0,
+      });
+    }
+    return [...rows.values()].sort((a, b) =>
+      `${a.officeId}:${a.currency}`.localeCompare(`${b.officeId}:${b.currency}`)
+    );
+  }, [
+    allowedOffices,
+    finance.store?.snapshot.cashBalances,
+    selectedOffice,
+    summaries,
+  ]);
   const canUseFinance = canReadAnyFinance({
     role: finance.role,
     offices: finance.offices,
@@ -608,16 +611,63 @@ export default function OfficeFinance() {
                     />
                     <Metric
                       label={c.cashBalance}
-                      value={formatMoney(
-                        financeCashBalance(
-                          visibleEntries,
+                      value={
+                        financeCashProjectionFromSnapshot(
+                          snapshot,
                           summary.officeId,
                           summary.currency
-                        ),
+                        )
+                          ? formatMoney(
+                              financeCashProjectionFromSnapshot(
+                                snapshot,
+                                summary.officeId,
+                                summary.currency
+                              )!.cashBalance,
+                              summary.currency,
+                              language
+                            )
+                          : "—"
+                      }
+                      tone="blue"
+                    />
+                    <Metric
+                      label={c.withdrawals}
+                      value={formatMoney(
+                        summary.withdrawals,
+                        summary.currency,
+                        language
+                      )}
+                      tone="red"
+                    />
+                    <Metric
+                      label={c.retainedNet}
+                      value={formatMoney(
+                        summary.retainedNet,
                         summary.currency,
                         language
                       )}
                       tone="blue"
+                    />
+                    <Metric
+                      label={c.availableProfitWithdrawal}
+                      value={
+                        financeCashProjectionFromSnapshot(
+                          snapshot,
+                          summary.officeId,
+                          summary.currency
+                        )
+                          ? formatMoney(
+                              financeCashProjectionFromSnapshot(
+                                snapshot,
+                                summary.officeId,
+                                summary.currency
+                              )!.availableProfitWithdrawal,
+                              summary.currency,
+                              language
+                            )
+                          : "—"
+                      }
+                      tone="green"
                     />
                   </dl>
                 </article>
@@ -914,6 +964,21 @@ export default function OfficeFinance() {
 
                 </>
               )}
+              <OfficeProfitWithdrawalForm
+                key={`${finance.base.userId ?? "local"}:${selectedOffice}:withdrawal`}
+                allowedOffices={allowedOffices}
+                initialOffice={selectedOffice}
+                entries={visibleEntries}
+                commands={finance.commands}
+                cashBalances={snapshot?.cashBalances}
+                snapshotReady={finance.snapshotReady}
+                online={finance.online}
+                canEdit={finance.canEdit}
+                role={finance.role}
+                homeOffice={finance.homeOffice}
+                permissions={finance.permissions}
+                saveCommand={finance.saveCommand}
+              />
               <FinanceExcelPanel
                 key={finance.base.userId ?? "local"}
                 workspace={finance}

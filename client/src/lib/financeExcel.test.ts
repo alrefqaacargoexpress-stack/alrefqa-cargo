@@ -62,6 +62,19 @@ const shipmentPrice: FinanceCommand = {
     expectedVersion: 3,
   },
 };
+const withdrawal: FinanceCommand = {
+  id: "withdrawal-command",
+  kind: "profit_withdrawal",
+  createdAt: now,
+  payload: {
+    withdrawalId: "withdrawal-one",
+    officeId: "nouakchott",
+    currency: "MRU",
+    amount: 25,
+    date: "2026-10-21",
+    description: "Owner distribution",
+  },
+};
 const buffer = (wb: XLSX.WorkBook) =>
   XLSX.write(wb, { type: "array", bookType: "xlsx" }) as ArrayBuffer;
 describe("Financial Excel import and export", () => {
@@ -227,6 +240,14 @@ describe("Financial Excel import and export", () => {
         reason: "shipment_price_override_fields_required",
       },
     ]);
+  });
+
+  it("exports withdrawal drafts as reference-only and never imports them", () => {
+    const wb = buildFinanceWorkbook(emptyFinanceSnapshot(), [withdrawal]);
+    expect(wb.SheetNames).toContain("مسودات سحب الأرباح (مرجع فقط)");
+    const result = parseFinanceBuffer(buffer(wb));
+    expect(result.commands).toEqual([]);
+    expect(result.readOnlySheets).toContain("مسودات سحب الأرباح (مرجع فقط)");
   });
 
   it("rejects a zero modern shipment price without creating a financial command", () => {

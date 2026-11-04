@@ -18,6 +18,8 @@ export function financeCommandPermissionKey(
       return "opening_balance";
     case "shipment_price":
       return "shipment_prices";
+    case "profit_withdrawal":
+      return "profit_withdrawal";
     case "settlement":
     case "customer_movement":
       return "payments";
@@ -40,6 +42,7 @@ export function financeCommandOffice(
     case "expense":
     case "customer_movement":
     case "opening_balance":
+    case "profit_withdrawal":
       return command.payload.officeId;
     case "shipment_price": {
       const shipment = shipments.find(

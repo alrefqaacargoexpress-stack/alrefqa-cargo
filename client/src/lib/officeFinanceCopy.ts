@@ -30,6 +30,8 @@ export type OfficeFinanceCopy = {
   dailyExpenses: string;
   monthlyExpenses: string;
   net: string;
+  withdrawals: string;
+  retainedNet: string;
   debts: string;
   collections: string;
   noEntries: string;
@@ -79,6 +81,19 @@ export type OfficeFinanceCopy = {
   remaining: string;
   unpriced: string;
   cashBalance: string;
+  availableProfitWithdrawal: string;
+  availableProfitWithdrawalHint: string;
+  profitWithdrawal: string;
+  profitWithdrawalHint: string;
+  withdrawalReason: string;
+  saveWithdrawal: string;
+  withdrawalSaved: string;
+  withdrawalRequired: string;
+  withdrawalInvalidAmount: string;
+  withdrawalAlreadyPending: string;
+  withdrawalExceedsAvailable: string;
+  withdrawalUnavailable: string;
+  withdrawalNotPosted: string;
   sourceReceivables: string;
   sourceReceivablesHint: string;
   noSourceReceivables: string;
@@ -137,6 +152,8 @@ const ar: OfficeFinanceCopy = {
   dailyExpenses: "مصروف يومي",
   monthlyExpenses: "مصروف شهري",
   net: "الصافي",
+  withdrawals: "السحوبات",
+  retainedNet: "صافي الربح المحتفظ به",
   debts: "الديون",
   collections: "التحصيل",
   noEntries: "لا توجد قيود في هذا النطاق.",
@@ -193,6 +210,21 @@ const ar: OfficeFinanceCopy = {
   remaining: "المتبقي غير المباع",
   unpriced: "غير مسعّر",
   cashBalance: "الرصيد النقدي",
+  availableProfitWithdrawal: "المتاح لسحب الربح",
+  availableProfitWithdrawalHint:
+    "الحد الأدنى بين النقد الفعلي وصافي الربح الدفتري المحتفظ به؛ ليس ربحًا قانونيًا مدققًا.",
+  profitWithdrawal: "سحب ربح",
+  profitWithdrawalHint:
+    "مسودة سحب محلية للمراجعة. لا تُنقص الأرصدة الرسمية حتى يؤكدها الخادم.",
+  withdrawalReason: "سبب السحب",
+  saveWithdrawal: "حفظ مسودة السحب",
+  withdrawalSaved: "حُفظت مسودة سحب الربح محليًا؛ لم تُسجل كقيد منشور.",
+  withdrawalRequired: "أدخل التاريخ وسبب السحب.",
+  withdrawalInvalidAmount: "أدخل مبلغًا موجبًا بدقة منزلتين عشريتين.",
+  withdrawalAlreadyPending: "توجد مسودة سحب معلقة لهذا المكتب والعملة.",
+  withdrawalExceedsAvailable: "لا يمكن أن يتجاوز السحب المتاح النقد والربح الدفتري.",
+  withdrawalUnavailable: "سحب الأرباح غير متاح في نطاقك المالي الحالي.",
+  withdrawalNotPosted: "يتطلب اتصالًا وبيانات حديثة وصلاحية إدارة فعلية؛ الحفظ مسودة فقط.",
   sourceReceivables: "مستحقات المصدر حسب الشحنة",
   sourceReceivablesHint:
     "من مكتب المصدر وبعملة المصدر؛ تخفّض الفواتير قيمة غير المباع عند إصدارها، ويبقى الدين دينَ العميل. لا يوجد تحويل تلقائي إلى MRU.",
@@ -249,6 +281,8 @@ const en: OfficeFinanceCopy = {
   dailyExpenses: "Daily expense",
   monthlyExpenses: "Monthly expense",
   net: "Net",
+  withdrawals: "Withdrawals",
+  retainedNet: "Retained net",
   debts: "Debts",
   collections: "Collections",
   noEntries: "No entries in this scope.",
@@ -308,6 +342,21 @@ const en: OfficeFinanceCopy = {
   remaining: "Remaining unsold",
   unpriced: "Unpriced",
   cashBalance: "Cash balance",
+  availableProfitWithdrawal: "Available profit withdrawal",
+  availableProfitWithdrawalHint:
+    "The lower of actual cash and booked retained net; this is not audited legal profit.",
+  profitWithdrawal: "Profit withdrawal",
+  profitWithdrawalHint:
+    "Local withdrawal draft for review. Official balances change only after server acknowledgement.",
+  withdrawalReason: "Withdrawal reason",
+  saveWithdrawal: "Save withdrawal draft",
+  withdrawalSaved: "Profit-withdrawal draft saved locally; no posted entry was created.",
+  withdrawalRequired: "Enter a date and withdrawal reason.",
+  withdrawalInvalidAmount: "Enter a positive amount with at most two decimal places.",
+  withdrawalAlreadyPending: "A withdrawal draft is already pending for this office and currency.",
+  withdrawalExceedsAvailable: "The withdrawal cannot exceed actual cash and booked retained net.",
+  withdrawalUnavailable: "Profit withdrawal is unavailable in your current finance scope.",
+  withdrawalNotPosted: "Requires online, fresh data, and actual manage permission; saving creates a draft only.",
   sourceReceivables: "Source receivables by shipment",
   sourceReceivablesHint:
     "From the source office in its source currency; issued invoices reduce unsold value, while the debt remains customer debt. No automatic MRU conversion.",
@@ -364,6 +413,8 @@ const zh: OfficeFinanceCopy = {
   dailyExpenses: "日常费用",
   monthlyExpenses: "月度费用",
   net: "净额",
+  withdrawals: "提取",
+  retainedNet: "留存净额",
   debts: "债务",
   collections: "收款",
   noEntries: "此范围没有账目。",
@@ -417,6 +468,20 @@ const zh: OfficeFinanceCopy = {
   remaining: "未售剩余",
   unpriced: "未定价",
   cashBalance: "现金余额",
+  availableProfitWithdrawal: "可提取利润",
+  availableProfitWithdrawalHint:
+    "取实际现金与账面留存净额的较小值；这不是经审计的法律利润。",
+  profitWithdrawal: "利润提取",
+  profitWithdrawalHint: "用于审核的本地提取草稿。服务器确认前不会改变正式余额。",
+  withdrawalReason: "提取原因",
+  saveWithdrawal: "保存提取草稿",
+  withdrawalSaved: "利润提取草稿已保存在本地；未创建已登记账目。",
+  withdrawalRequired: "请输入日期和提取原因。",
+  withdrawalInvalidAmount: "请输入最多两位小数的正数金额。",
+  withdrawalAlreadyPending: "该办公室和币种已有待处理的提取草稿。",
+  withdrawalExceedsAvailable: "提取金额不能超过实际现金和账面留存净额。",
+  withdrawalUnavailable: "当前财务范围不支持利润提取。",
+  withdrawalNotPosted: "需要联网、最新数据和实际管理权限；保存仅创建草稿。",
   sourceReceivables: "按货件的来源地应收款",
   sourceReceivablesHint:
     "来自来源办公室并使用来源币种；开具发票时会减少未售价值，债务仍属于客户债务。不自动换算为 MRU。",
@@ -472,6 +537,8 @@ const tr: OfficeFinanceCopy = {
   dailyExpenses: "Günlük gider",
   monthlyExpenses: "Aylık gider",
   net: "Net",
+  withdrawals: "Çekimler",
+  retainedNet: "Elde tutulan net",
   debts: "Borçlar",
   collections: "Tahsilatlar",
   noEntries: "Bu kapsamda kayıt yok.",
@@ -531,6 +598,21 @@ const tr: OfficeFinanceCopy = {
   remaining: "Kalan satılmamış",
   unpriced: "Fiyatlandırılmamış",
   cashBalance: "Nakit bakiyesi",
+  availableProfitWithdrawal: "Kullanılabilir kâr çekimi",
+  availableProfitWithdrawalHint:
+    "Gerçek nakit ile kayıtlı elde tutulan netin düşük olanı; denetlenmiş yasal kâr değildir.",
+  profitWithdrawal: "Kâr çekimi",
+  profitWithdrawalHint:
+    "İnceleme için yerel çekim taslağı. Resmi bakiyeler yalnızca sunucu onayından sonra değişir.",
+  withdrawalReason: "Çekim nedeni",
+  saveWithdrawal: "Çekim taslağını kaydet",
+  withdrawalSaved: "Kâr çekimi taslağı yerelde kaydedildi; yayınlanmış kayıt oluşturulmadı.",
+  withdrawalRequired: "Tarih ve çekim nedeni girin.",
+  withdrawalInvalidAmount: "En fazla iki ondalık basamaklı pozitif bir tutar girin.",
+  withdrawalAlreadyPending: "Bu ofis ve para birimi için zaten bekleyen çekim taslağı var.",
+  withdrawalExceedsAvailable: "Çekim gerçek nakit ve kayıtlı elde tutulan neti aşamaz.",
+  withdrawalUnavailable: "Mevcut mali kapsamınızda kâr çekimi kullanılamıyor.",
+  withdrawalNotPosted: "Çevrimiçi, güncel veri ve gerçek yönetme izni gerekir; kayıt yalnızca taslaktır.",
   sourceReceivables: "Gönderiye göre kaynak alacakları",
   sourceReceivablesHint:
     "Kaynak ofisten ve kaynak para biriminde gösterilir; fatura kesilince satılmamış değer azalır, borç müşteri borcu olarak kalır. MRU'ya otomatik dönüşüm yoktur.",

@@ -29,6 +29,7 @@ export const permissionKeys = [
   "invoice_void",
   "entry_void",
   "employee_disable",
+  "profit_withdrawal",
 ] as const;
 export type PermissionKey = (typeof permissionKeys)[number];
 export const permissionLevels = ["none", "view", "manage"] as const;
@@ -62,6 +63,7 @@ export const financialPermissionKeys: readonly PermissionKey[] = [
   "office_wallets",
   "invoice_void",
   "entry_void",
+  "profit_withdrawal",
 ];
 export function blankPermissions(
   level: PermissionLevel = "none"
@@ -151,6 +153,7 @@ export function defaultPermissions(subject: PermissionSubject): PermissionMap {
         "opening_balance",
         "shipment_prices",
         "excel",
+        "profit_withdrawal",
       ],
       "manage"
     );

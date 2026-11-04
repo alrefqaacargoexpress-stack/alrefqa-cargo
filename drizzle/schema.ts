@@ -295,6 +295,7 @@ export const financeEntryKinds = [
   "collection",
   "customer_credit",
   "customer_debit",
+  "profit_withdrawal",
 ] as const;
 export const financeCurrencies = [
   "MRU",

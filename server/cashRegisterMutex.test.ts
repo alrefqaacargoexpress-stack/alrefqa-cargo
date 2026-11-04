@@ -20,6 +20,7 @@ const audit = vi.hoisted(() =>
 vi.mock("./audit", () => ({ appendAudit: audit }));
 
 import { financeSync } from "./finance";
+import { lockCashRegisterMutex } from "./cashRegisterMutex";
 
 const now = "2026-10-25T12:00:00.000Z";
 const scope = (office: "nouakchott" | "dubai") => ({
@@ -262,9 +263,73 @@ function seedCashInvoice(db: any, currency: "MRU" | "AED" = "MRU") {
   ]);
 }
 
+function seedCashBalance(
+  db: any,
+  office: "nouakchott" | "dubai",
+  currency: "MRU" | "AED",
+  amount = 100
+) {
+  const id = `opening-${office}-${currency}`;
+  const data = {
+    id,
+    kind: "opening_balance",
+    officeId: office,
+    currency,
+    amount,
+    date: "2026-10-25",
+    description: "fixture opening cash",
+    actorId: 7,
+    actorName: "First actor",
+    recordedAt: now,
+    direction: "credit",
+  };
+  db.rows.get(financeEntries).push({
+    id,
+    kind: data.kind,
+    officeId: office,
+    currency,
+    actorId: 7,
+    data,
+  });
+}
+
 describe("cash register mutex (isolated fake transactions)", () => {
+  it("uses PostgreSQL onConflictDoNothing on the statement returned by values", async () => {
+    let inserted: any;
+    let conflictIgnored = false;
+    const tx: any = {
+      insert: () => ({
+        values(value: any) {
+          inserted = structuredClone(value);
+          return {
+            async onConflictDoNothing() {
+              conflictIgnored = true;
+            },
+          };
+        },
+      }),
+      select: () => ({
+        from: () => ({
+          where: () => ({
+            limit: () => ({
+              for: async () => [inserted],
+            }),
+          }),
+        }),
+      }),
+    };
+    const row = await lockCashRegisterMutex(tx, "nouakchott", "MRU");
+    expect(conflictIgnored).toBe(true);
+    expect(row).toMatchObject({
+      id: "cash-lock:nouakchott:MRU",
+      officeId: "nouakchott",
+      currency: "MRU",
+    });
+  });
+
   it("serializes different actors into one open register for one office/currency", async () => {
     const db = database();
+    seedCashBalance(db, "nouakchott", "MRU");
     const first = financeSync(
       db,
       actor(7, "First actor"),
@@ -287,6 +352,8 @@ describe("cash register mutex (isolated fake transactions)", () => {
 
   it("keeps different office/currency mutexes isolated", async () => {
     const db = database();
+    seedCashBalance(db, "nouakchott", "MRU");
+    seedCashBalance(db, "dubai", "AED");
     const [nouakchott, dubai] = await Promise.all([
       financeSync(db, actor(7, "First actor"), scope("nouakchott"), [
         expense("isolated-mru", "nouakchott", "MRU"),
@@ -303,6 +370,7 @@ describe("cash register mutex (isolated fake transactions)", () => {
 
   it("rolls back mutex, register, movement, ledger, receipt, and audit atomically", async () => {
     const db = database();
+    seedCashBalance(db, "nouakchott", "MRU");
     const result = await financeSync(
       db,
       actor(7, "First actor"),
@@ -314,7 +382,8 @@ describe("cash register mutex (isolated fake transactions)", () => {
     expect(db.rows.get(cashRegisterLocks)).toHaveLength(0);
     expect(db.rows.get(cashRegisters)).toHaveLength(0);
     expect(db.rows.get(cashMovements)).toHaveLength(0);
-    expect(db.rows.get(financeEntries)).toHaveLength(0);
+    expect(db.rows.get(financeEntries)).toHaveLength(1);
+    expect(db.rows.get(financeEntries)[0].id).toBe("opening-nouakchott-MRU");
     expect(db.rows.get(financeReceipts)).toHaveLength(0);
     expect(db.events).toHaveLength(0);
   });

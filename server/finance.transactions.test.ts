@@ -223,6 +223,30 @@ function expense(id: string, description = "Test expense"): FinanceCommand {
     },
   };
 }
+function seedExpenseCash(db: any) {
+  const id = "opening-nouakchott-MRU";
+  const data = {
+    id,
+    kind: "opening_balance",
+    officeId: "nouakchott",
+    currency: "MRU",
+    amount: 100,
+    date: "2026-10-21",
+    description: "fixture opening cash",
+    actorId: user.id,
+    actorName: user.name,
+    recordedAt: now,
+    direction: "credit",
+  };
+  db.rows.get(financeEntries).push({
+    id,
+    kind: data.kind,
+    officeId: data.officeId,
+    currency: data.currency,
+    actorId: user.id,
+    data,
+  });
+}
 describe("Financial command transactions (isolated memory database)", () => {
   it("creates a debt for a real customer in a consolidated shipment and charges the employee office", async () => {
     const db = database();
@@ -269,13 +293,14 @@ describe("Financial command transactions (isolated memory database)", () => {
   it("rolls back an expense if later audit fails, while keeping a previously accepted command", async () => {
     const db = database();
     seed(db);
+    seedExpenseCash(db);
     const result = await financeSync(db, user, copiedScope(), [
       expense("good"),
       expense("bad", "FAIL-AUDIT"),
     ]);
     expect(result.applied).toHaveLength(1);
     expect(result.conflicts).toHaveLength(1);
-    expect(db.rows.get(financeEntries)).toHaveLength(1);
+    expect(db.rows.get(financeEntries)).toHaveLength(2);
     expect(db.rows.get(financeReceipts)).toHaveLength(1);
     expect(db.events).toHaveLength(1);
   });

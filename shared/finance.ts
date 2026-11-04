@@ -166,6 +166,19 @@ export const expenseInputSchema = z
       c.addIssue({ code: "custom", message: "cost_reference_mismatch" });
   });
 export type FinanceExpenseInput = z.infer<typeof expenseInputSchema>;
+export const profitWithdrawalInputSchema = z
+  .object({
+    withdrawalId: z.string().trim().min(1).max(64),
+    officeId: officeIdSchema,
+    amount: financeMoneySchema.refine(n => n > 0, "withdrawal_required"),
+    currency: currencySchema,
+    date: dateSchema,
+    description: z.string().trim().min(1).max(500),
+  })
+  .strict();
+export type FinanceProfitWithdrawalInput = z.infer<
+  typeof profitWithdrawalInputSchema
+>;
 export const openingBalanceDirections = ["debit", "credit"] as const;
 export const openingBalanceDirectionSchema = z.enum(openingBalanceDirections);
 export const openingBalanceInputSchema = z
@@ -235,6 +248,13 @@ export const financeCommandSchema = z.discriminatedUnion("kind", [
   z
     .object({
       ...commandMeta,
+      kind: z.literal("profit_withdrawal"),
+      payload: profitWithdrawalInputSchema,
+    })
+    .strict(),
+  z
+    .object({
+      ...commandMeta,
       kind: z.literal("settlement"),
       payload: settlementInputSchema,
     })
@@ -267,6 +287,7 @@ export const financeEntryKinds = [
   "daily_expense",
   "monthly_expense",
   "shipment_cost",
+  "profit_withdrawal",
   "shipment_revenue",
   "invoice_revenue",
   "customer_debt",
@@ -320,6 +341,19 @@ export const financeSnapshotSchema = z
     homeOffice: officeIdSchema.nullable(),
     offices: z.array(officeIdSchema).nullable(),
     lastReadAt: z.string().datetime().nullable(),
+    cashBalances: z
+      .array(
+        z
+          .object({
+            officeId: officeIdSchema,
+            currency: currencySchema,
+            cashBalance: z.number().finite(),
+            availableProfitWithdrawal: z.number().finite().nonnegative(),
+          })
+          .strict()
+      )
+      .optional()
+      .default([]),
     receivables: z
       .array(
         z
@@ -389,6 +423,13 @@ export type FinanceSnapshot = {
   receivables?: FinanceReceivable[];
   shipmentReceivables?: FinanceReceivable[];
   pricingProjections?: PriceProjection[];
+  cashBalances?: FinanceCashProjection[];
+};
+export type FinanceCashProjection = {
+  officeId: OfficeId;
+  currency: FinanceCurrency;
+  cashBalance: number;
+  availableProfitWithdrawal: number;
 };
 export type FinanceReceivableShipment = {
   shipmentId: string;
@@ -476,6 +517,7 @@ export function canWriteFinance(scope: FinancePermissionScope) {
         "finance_reports",
         "excel",
         "office_wallets",
+        "profit_withdrawal",
       ].includes(key)
   );
   if (!hasManage) return false;
@@ -493,10 +535,12 @@ export function financePermissionForCommand(
     | "settlement"
     | "customer_movement"
     | "opening_balance"
-    | "shipment_price",
+    | "shipment_price"
+    | "profit_withdrawal",
   expenseCategory?: FinanceExpenseInput["category"]
 ): PermissionKey {
   if (kind === "invoice") return "invoices";
+  if (kind === "profit_withdrawal") return "profit_withdrawal";
   if (kind === "expense")
     return expenseCategory === "shipment_cost" ? "shipment_cost" : "expenses";
   if (kind === "opening_balance") return "opening_balance";
@@ -506,6 +550,7 @@ export function financePermissionForCommand(
 export function financePermissionForEntry(
   kind: FinanceEntry["kind"]
 ): PermissionKey {
+  if (kind === "profit_withdrawal") return "profit_withdrawal";
   if (["daily_expense", "monthly_expense", "shipment_cost"].includes(kind))
     return "expenses";
   if (kind === "opening_balance") return "opening_balance";
@@ -769,6 +814,8 @@ export type OfficeFinanceSummary = {
   debts: number;
   collections: number;
   openingBalance: number;
+  withdrawals: number;
+  retainedNet: number;
 };
 export function summarizeOfficeFinance(
   entries: readonly FinanceEntry[]
@@ -790,6 +837,8 @@ export function summarizeOfficeFinance(
       debts: 0,
       collections: 0,
       openingBalance: 0,
+      withdrawals: 0,
+      retainedNet: 0,
     };
     const add = (a: number, b: number) => {
       const cents = Math.round(a * 100) + Math.round(b * 100);
@@ -806,6 +855,8 @@ export function summarizeOfficeFinance(
       row.dailyExpenses = add(row.dailyExpenses, e.amount);
     if (e.kind === "monthly_expense")
       row.monthlyExpenses = add(row.monthlyExpenses, e.amount);
+    if (e.kind === "profit_withdrawal")
+      row.withdrawals = add(row.withdrawals, e.amount);
     if (e.kind === "customer_debt") row.debts = add(row.debts, e.amount);
     if (e.kind === "debt_payment") row.debts = add(row.debts, -e.amount);
     if (e.kind === "collection" || e.kind === "debt_payment")
@@ -825,9 +876,66 @@ export function summarizeOfficeFinance(
       row.monthlyExpenses
     );
     row.net = add(row.revenue, -row.expenses);
+    row.retainedNet = add(row.net, -row.withdrawals);
     map.set(key, row);
   }
   return [...map.values()];
+}
+
+/** Actual cash only: receivables, unbilled goods and wallet receipts are not cash. */
+export function financeCashBalance(
+  entries: readonly FinanceEntry[],
+  officeId: OfficeId,
+  currency: FinanceCurrency
+) {
+  let cents = 0;
+  for (const e of entries) {
+    if (
+      e.officeId !== officeId ||
+      e.currency !== currency ||
+      e.cashEffect === "none" ||
+      (e.payment && e.payment.methodId !== "cash")
+    )
+      continue;
+    const sign =
+      e.kind === "opening_balance"
+        ? e.direction === "debit"
+          ? -1
+          : 1
+        : ["collection", "debt_payment", "customer_credit"].includes(e.kind)
+          ? 1
+          : [
+                "customer_debit",
+                "daily_expense",
+                "monthly_expense",
+                "shipment_cost",
+                "profit_withdrawal",
+              ].includes(e.kind)
+            ? -1
+            : 0;
+    cents += sign * Math.round(e.amount * 100);
+    if (!Number.isSafeInteger(cents)) throw new Error("totals_too_large");
+  }
+  return cents / 100;
+}
+
+/** Distribution is limited by both booked retained net and actual available cash. */
+export function availableProfitWithdrawal(
+  entries: readonly FinanceEntry[],
+  officeId: OfficeId,
+  currency: FinanceCurrency,
+  actualCashBalance?: number
+) {
+  const summary = summarizeOfficeFinance(
+    entries.filter(e => e.officeId === officeId && e.currency === currency)
+  )[0];
+  return Math.max(
+    0,
+    Math.min(
+      actualCashBalance ?? financeCashBalance(entries, officeId, currency),
+      summary?.retainedNet ?? 0
+    )
+  );
 }
 export function summarizeCustomerDebts(entries: readonly FinanceEntry[]) {
   const map = new Map<
