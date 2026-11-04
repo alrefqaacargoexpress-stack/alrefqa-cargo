@@ -17,7 +17,10 @@ import {
 } from "@/lib/warehouseStore";
 import { useOperationsWorkspace } from "@/hooks/useOperationsWorkspace";
 import type { Shipment } from "@shared/operations";
-import type { DestinationStorageItem } from "@shared/warehouse";
+import type {
+  DestinationStorageItem,
+  WarehouseBilling,
+} from "@shared/warehouse";
 import type { OfficeId } from "@shared/branches";
 import { permissionAllowed, type PermissionMap } from "@shared/permissions";
 
@@ -43,6 +46,7 @@ type GoodRow = {
   name: string;
   phone: string;
   location?: DestinationStorageItem;
+  billing?: WarehouseBilling;
 };
 function rowsFrom(shipments: Shipment[]): GoodRow[] {
   return shipments.flatMap(shipment =>
@@ -55,6 +59,7 @@ function rowsFrom(shipments: Shipment[]): GoodRow[] {
           carton: carton.number,
           name: goods.name,
           phone: goods.phone,
+          billing: shipment.warehouseBilling,
           location: (
             shipment as Shipment & {
               destinationStorage?: DestinationStorageItem[];
@@ -370,6 +375,7 @@ function LocationCard({
           />
         </label>
       </div>
+      {row.billing && <BillingSummary billing={row.billing} copy={c} />}
       {canEdit && (
         <button
           type="button"
@@ -381,6 +387,53 @@ function LocationCard({
       )}
     </article>
   );
+}
+function BillingSummary({
+  billing,
+  copy: c,
+}: {
+  billing: WarehouseBilling;
+  copy: ReturnType<typeof warehouseCopy>;
+}) {
+  const label =
+    billing.status === "unbilled"
+      ? c.unbilled
+      : billing.status === "partial"
+        ? c.partial
+        : billing.status === "paid"
+          ? c.paid
+          : billing.status === "debt"
+            ? c.debt
+            : c.unpriced;
+  const tone =
+    billing.status === "paid"
+      ? "bg-emerald-50 text-emerald-800"
+      : billing.status === "unpriced"
+        ? "bg-slate-100 text-slate-700"
+        : "bg-amber-50 text-amber-900";
+  return (
+    <div className="mt-3 rounded-xl border border-[#dce4e7] bg-[#fbfdfd] p-3 text-xs">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className={`rounded-full px-2 py-1 font-black ${tone}`}>
+          {c.billing}: {label}
+        </span>
+        <span className="font-bold text-[#5f7480]">
+          {c.due}:{" "}
+          {formatBillingMoney(billing.remainingAmount, billing.currency)}
+        </span>
+      </div>
+      <div className="mt-2 text-[#5f7480]">
+        {formatBillingMoney(billing.amount, billing.currency)} ·{" "}
+        {billing.currency}
+      </div>
+    </div>
+  );
+}
+function formatBillingMoney(amount: number, currency: string) {
+  return `${new Intl.NumberFormat("ar-MR-u-nu-latn", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(amount)} ${currency}`;
 }
 function Panel({ children }: { children: React.ReactNode }) {
   return (

@@ -3,7 +3,7 @@ import type { PackingSession } from "./packing";
 import type { ShipmentJourney } from "./tracking";
 import type { InvoicePayment } from "./office";
 import type { FinancialInvoiceDetails } from "./finance";
-import type { DestinationStorageItem } from "./warehouse";
+import type { DestinationStorageItem, WarehouseBilling } from "./warehouse";
 export const APP_ROLES = [
   "admin",
   "office_manager",
@@ -49,6 +49,7 @@ export type Shipment = {
   packing?: PackingSession;
   journey?: ShipmentJourney;
   destinationStorage?: DestinationStorageItem[];
+  warehouseBilling?: WarehouseBilling;
   deleted?: { at: string; reason: string };
   accountingModelVersion?: 2;
   officeId?: OfficeId;

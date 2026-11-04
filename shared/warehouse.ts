@@ -34,6 +34,17 @@ export type DestinationStorageItem = z.infer<
   typeof destinationStorageItemSchema
 >;
 
+export const warehouseBillingSchema = z
+  .object({
+    status: z.enum(["unbilled", "partial", "paid", "debt", "unpriced"]),
+    amount: z.number().nonnegative(),
+    billedAmount: z.number().nonnegative(),
+    remainingAmount: z.number().nonnegative(),
+    currency: z.enum(["MRU", "AED", "TRY", "CNY", "USD", "EUR"]),
+  })
+  .strict();
+export type WarehouseBilling = z.infer<typeof warehouseBillingSchema>;
+
 export const warehouseCommandSchema = z
   .object({
     requestId: text(128),

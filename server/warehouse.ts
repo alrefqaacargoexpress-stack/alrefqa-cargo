@@ -17,10 +17,12 @@ import {
   hideForOfficeScope,
 } from "./branches";
 import { actorFromUser } from "./tracking";
-import type { AppRole, Shipment } from "@shared/operations";
+import type { AppRole, Invoice, Shipment } from "@shared/operations";
+import { sourceReceivable } from "@shared/finance";
 import {
   destinationStorageSchema,
   warehouseCommandSchema,
+  type WarehouseBilling,
   type DestinationStorageItem,
   type WarehouseCommand,
 } from "@shared/warehouse";
@@ -142,6 +144,37 @@ function storageOf(shipment: Shipment): DestinationStorageItem[] {
   const parsed = destinationStorageSchema.safeParse(candidate ?? []);
   return parsed.success ? parsed.data : [];
 }
+function billingOf(
+  shipment: Shipment,
+  invoices: readonly Invoice[]
+): WarehouseBilling | undefined {
+  const [group] = sourceReceivable([shipment], null, invoices);
+  const row = group?.shipments[0];
+  if (!row || !group) return undefined;
+  const billedAmount = row.soldAmount ?? 0;
+  const remainingAmount = row.remainingAmount ?? row.amount;
+  const hasDebt = invoices.some(
+    invoice =>
+      invoice.finance?.shipmentId === shipment.id && invoice.status === "دين"
+  );
+  const status: WarehouseBilling["status"] =
+    row.pricingStatus === "unpriced"
+      ? "unpriced"
+      : billedAmount <= 0
+        ? "unbilled"
+        : remainingAmount > 0
+          ? "partial"
+          : hasDebt
+            ? "debt"
+            : "paid";
+  return {
+    status,
+    amount: Math.max(0, row.amount),
+    billedAmount: Math.max(0, billedAmount),
+    remainingAmount: Math.max(0, remainingAmount),
+    currency: group.currency,
+  };
+}
 function warehousePublicShipment(
   shipment: Shipment,
   role: AppRole | null,
@@ -191,6 +224,15 @@ export async function readWarehouseSnapshot(
   if (!canReadWarehouse(scope)) forbidden();
   const retired = await loadLifecycle(db);
   const rows = await rowsFor(db);
+  const invoiceRows = await db
+    .select()
+    .from(records)
+    .where(eq(records.entity, "invoice"));
+  const invoices = invoiceRows
+    .filter((row: any) =>
+      recordIsActive(retired, "invoice", row.data as Invoice)
+    )
+    .map((row: any) => row.data as Invoice);
   const pricingProjections: PriceProjection[] = [];
   const shipments: Shipment[] = [];
   for (const row of rows as Array<{ data: Shipment; version: number }>) {
@@ -214,8 +256,16 @@ export async function readWarehouseSnapshot(
         )
       );
     }
+    const publicShipment = warehousePublicShipment(
+      shipment,
+      scope.role,
+      scope.offices
+    );
+    const billing = billingOf(shipment, invoices);
     shipments.push(
-      warehousePublicShipment(shipment, scope.role, scope.offices)
+      billing
+        ? { ...publicShipment, warehouseBilling: billing }
+        : publicShipment
     );
   }
   return {

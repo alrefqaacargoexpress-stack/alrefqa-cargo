@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { destinationStorageSchema, warehouseCommandSchema } from "./warehouse";
+import {
+  destinationStorageSchema,
+  warehouseBillingSchema,
+  warehouseCommandSchema,
+} from "./warehouse";
 
 describe("warehouse contracts", () => {
   it("accepts one location and rejects duplicate goods", () => {
@@ -34,6 +38,19 @@ describe("warehouse contracts", () => {
         expectedVersion: 1,
         amount: 99,
       })
+    ).toThrow();
+  });
+  it("keeps the warehouse billing summary coarse and currency-bound", () => {
+    const summary = warehouseBillingSchema.parse({
+      status: "unbilled",
+      amount: 370,
+      billedAmount: 0,
+      remainingAmount: 370,
+      currency: "AED",
+    });
+    expect(summary.status).toBe("unbilled");
+    expect(() =>
+      warehouseBillingSchema.parse({ ...summary, paymentMethod: "bankily" })
     ).toThrow();
   });
 });
