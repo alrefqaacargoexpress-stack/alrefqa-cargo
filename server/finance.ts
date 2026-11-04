@@ -120,6 +120,21 @@ function assertFinanceCommand(
   scope: FinanceScope,
   command: FinanceMutationCommand
 ) {
+  if (scope.role === "cashier") {
+    const payload = command.payload as {
+      paymentMode?: string;
+      payment?: unknown;
+    };
+    const nonCashInvoice =
+      command.kind === "invoice" && payload.paymentMode !== "cash";
+    const nonCashMovement =
+      command.kind === "customer_movement" &&
+      payload.paymentMode !== "cash";
+    const nonCashSettlement =
+      command.kind === "settlement" && payload.payment != null;
+    if (nonCashInvoice || nonCashMovement || nonCashSettlement)
+      throw new Error("cashier_cash_only");
+  }
   if (
     !financeCan(
       permissionSubject(scope),

@@ -5,7 +5,7 @@ import {
   splitRoleWorkspaceTasks,
   workspaceSyncStatus,
 } from "./roleWorkspace";
-import { blankPermissions } from "@shared/permissions";
+import { blankPermissions, defaultPermissions } from "@shared/permissions";
 
 describe("role workspace", () => {
   it("derives tasks from effective permissions rather than role labels", () => {
@@ -85,6 +85,20 @@ describe("role workspace", () => {
       permissions: blankPermissions(),
     });
     expect(tasks).toEqual([]);
+  });
+  it("keeps cashier work limited to cash invoices while full accountants get finance first", () => {
+    const cashier = defaultPermissions({ role: "cashier", offices: ["dubai"] });
+    expect(cashier.invoices).toBe("manage");
+    expect(cashier.payments).toBe("manage");
+    expect(cashier.expenses).toBe("none");
+    expect(
+      roleWorkspaceTasks({ role: "cashier", offices: ["dubai"] }).some(
+        task => task.id === "cash"
+      )
+    ).toBe(false);
+    expect(
+      roleWorkspaceTasks({ role: "accountant", offices: ["dubai"] })[0].id
+    ).toBe("cash");
   });
   it("does not mutate a stored permission map when ordering or grouping", () => {
     const permissions = {

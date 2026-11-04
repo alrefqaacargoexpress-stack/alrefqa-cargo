@@ -159,7 +159,11 @@ export function defaultPermissions(subject: PermissionSubject): PermissionMap {
     if (subject.offices?.includes("nouakchott"))
       put(["arrival_cost"], "manage");
   } else if (subject.role === "cashier") {
-    put(["customers", "invoices", "payments", "expenses"], "manage");
+    // Cashier is the simplified invoice clerk: cash invoices and cash
+    // collection only. Expenses, wallet operations and full accounting stay
+    // with the full accountant role.
+    put(["customers"], "view");
+    put(["invoices", "payments"], "manage");
     put(["reports"], "view");
   } else if (subject.role === "destination_warehouse") {
     if (subject.offices?.includes("nouakchott"))

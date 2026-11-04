@@ -102,7 +102,14 @@ export default function OperationsHome() {
     permissions: workspace.permissions,
     canUpdateTracking: workspace.canUpdateTracking,
   };
-  const groups = groupedWorkspaceTasks(subject);
+  const groups = groupedWorkspaceTasks(subject)
+    .map(group => ({
+      ...group,
+      tasks: group.tasks.filter(
+        task => !(workspace.role === "cashier" && task.id === "cash")
+      ),
+    }))
+    .filter(group => group.tasks.length > 0);
   return (
     <PackingLayout
       workspace={workspace}

@@ -268,12 +268,21 @@ export function workspaceGroupOrder(
       "warehouse",
       "management",
     ];
-  if (subject.role === "accountant" || subject.role === "cashier")
+  if (subject.role === "accountant")
     return [
-      "sales",
       "finance",
+      "sales",
       "shipping",
       "insights",
+      "warehouse",
+      "management",
+    ];
+  if (subject.role === "cashier")
+    return [
+      "sales",
+      "insights",
+      "finance",
+      "shipping",
       "warehouse",
       "management",
     ];
@@ -294,6 +303,7 @@ export function roleWorkspaceTasks(
   return taskCatalog
     .filter(
       task =>
+        !(subject.role === "cashier" && task.id === "cash") &&
         permissionAllowed(subject, task.permission, task.level) &&
         (task.id !== "audit" ||
           subject.role === "admin" ||

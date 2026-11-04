@@ -79,18 +79,22 @@ export default function WorkspaceNavigation({
   const c = workspaceLayoutCopy[language];
   const taskCopy = roleWorkspaceCopy[language];
   const groups = groupedWorkspaceTasks(subject);
-  const tasks = groups.flatMap(group => group.tasks);
+  const tasks = groups
+    .flatMap(group => group.tasks)
+    .filter(task => !(subject.role === "cashier" && task.id === "cash"));
   const preferred: RoleWorkspaceTaskId[] =
     subject.role === "admin" || subject.role === "office_manager"
       ? ["offices", "employees", "shipments"]
       : subject.role === "destination_warehouse" ||
           (subject.role === "staff" && subject.offices?.[0] === "nouakchott")
         ? ["warehouse-arrivals", "warehouse-storage", "warehouse-delivery"]
-        : subject.role === "accountant" || subject.role === "cashier"
-          ? ["invoices", "customers", "cash"]
-          : subject.role === "general_accountant"
-            ? ["shipment-cost", "arrival-cost", "invoices"]
-            : ["new-shipment", "shipments", "tracking"];
+        : subject.role === "cashier"
+          ? ["invoices"]
+          : subject.role === "accountant"
+            ? ["finance-summary", "expenses", "invoices"]
+            : subject.role === "general_accountant"
+              ? ["shipment-cost", "arrival-cost", "invoices"]
+              : ["new-shipment", "shipments", "tracking"];
   const primary = preferred
     .flatMap(id => tasks.find(task => task.id === id) ?? [])
     .slice(0, 3);
